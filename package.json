@@ -1,0 +1,11 @@
+{
+  "name": "breeze-ide-frontend",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
