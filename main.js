@@ -388,7 +388,7 @@ ipcMain.handle('term:run', async (_e, command) => {
   if (cd) return cd;
   const { tools, pathValue } = await getTools();
   const id = nextTermId++;
-  const child = spawn(command, { shell: true, cwd: termCwd, env: toolEnv(process.env, tools.binDirs, process.platform, pathValue), windowsHide: true });
+  const child = spawn(command, { shell: true, cwd: termCwd, env: toolEnv(process.env, [...tools.binDirs, ...agentDirs()], process.platform, pathValue), windowsHide: true });
   terms.set(id, child);
   child.stdin.on('error', ignoreEpipe);
   const send = chunk => win?.webContents.send('term:data', id, chunk.toString());
@@ -566,6 +566,8 @@ const AGENTS = [
   },
 ];
 const agentBins = new Map(); // agent id -> executable found by the last scan
+// Folders of the agents found off PATH (e.g. Claude desktop's bundled Claude Code), so the Terminal panel can run them by name.
+const agentDirs = () => [...new Set([...agentBins.values()].filter(b => !b.endsWith('.app')).map(b => path.dirname(b)))];
 
 function which(cmd) {
   return new Promise(res => {
