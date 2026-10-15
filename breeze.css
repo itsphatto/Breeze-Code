@@ -672,6 +672,8 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .term-field { position: relative; flex: 1; min-width: 0; display: flex; }
 .term-ghost { position: absolute; inset: 0; white-space: pre; overflow: hidden; color: var(--text-3); pointer-events: none; }
 .term-ghost .typed { color: transparent; }
+.editor-ghost { position: fixed; z-index: 2; pointer-events: none; white-space: pre; color: var(--text-3); font: 13px/21px var(--font-code); }
+.editor-ghost:empty { display: none; }
 .term-line .term-field input { position: relative; }
 .tint-local { --tint: #34d399; }
 .agent-opt .key-row .input.url { flex: 2; }

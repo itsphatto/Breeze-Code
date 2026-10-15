@@ -3165,6 +3165,11 @@ const suggestEl = document.createElement('div');
 suggestEl.className = 'suggest hidden';
 suggestEl.setAttribute('role', 'listbox');
 document.body.append(suggestEl);
+// Greyed-out rest of the selected suggestion, drawn right after the editor's caret.
+const editorGhost = document.createElement('span');
+editorGhost.className = 'editor-ghost';
+editorGhost.setAttribute('aria-hidden', 'true');
+document.body.append(editorGhost);
 suggestEl.addEventListener('mousedown', e => e.preventDefault()); // keep focus where the user is typing
 suggestEl.addEventListener('click', e => {
     const row = e.target.closest('[data-sg]');
@@ -3180,6 +3185,7 @@ function renderSuggest() {
         return `<div class="${i === sel ? 'on' : ''}" data-sg="${i}" role="option"><span><b>${esc(s.text.slice(0, typed))}</b>${esc(s.text.slice(typed))}</span>${hint}</div>`;
     }).join('');
     suggestEl.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+    suggest.onRender?.();
 }
 // Shows suggestions under (x, y), or above `above` when they don't fit below.
 function showSuggest(state, x, y, above) {
@@ -3197,6 +3203,7 @@ function showSuggest(state, x, y, above) {
 function hideSuggest() {
     suggest = null;
     suggestEl.classList.add('hidden');
+    editorGhost.textContent = '';
 }
 // Arrow keys move, Tab or Enter accepts, Escape closes. True when the key was used.
 function suggestKeys(e, owner) {
@@ -3277,14 +3284,24 @@ function editorSuggest(b, force = false) {
         hideSuggest();
         return;
     }
-    const pos = ta.selectionStart, ls = lineStart(b.text, pos);
+    const pos = ta.selectionStart, ls = lineStart(b.text, pos), line = b.text.slice(ls, pos);
     const cw = measureChar();
     const r = ta.getBoundingClientRect();
-    const x = r.left + 4 + visualCol(b.text.slice(ls, pos), pos - ls - prefix.length) * cw - ta.scrollLeft;
+    const x = r.left + 4 + visualCol(line, pos - ls - prefix.length) * cw - ta.scrollLeft;
     const top = r.top + 10 + lineAt(b.text, pos) * LINE_H - ta.scrollTop;
+    // Only where nothing follows on the line, so the hint never covers real text.
+    const lineEnd = b.text.indexOf('\n', pos);
+    const clear = !b.text.slice(pos, lineEnd < 0 ? undefined : lineEnd).trim();
+    const ghost = () => {
+        const s = suggest?.items[suggest.sel];
+        editorGhost.textContent = clear && s?.text.startsWith(prefix) ? s.text.slice(prefix.length) : '';
+        editorGhost.style.left = `${r.left + 4 + visualCol(line, pos - ls) * cw - ta.scrollLeft}px`;
+        editorGhost.style.top = `${top}px`;
+    };
     showSuggest({
         owner: ta, items: editorCandidates(b, prefix), sel: 0, typed: prefix.length,
         accept: s => { hideSuggest(); replaceRange(ta, pos - prefix.length, ta.selectionStart, s.text); },
+        onRender: ghost,
     }, x - 8, top + LINE_H + 2, top - 2);
 }
 /* ----- Terminal: files and folders, commands, and your history ----- */
@@ -3293,15 +3310,49 @@ const SUBCOMMANDS = {
     git: ['status', 'add', 'commit', 'push', 'pull', 'fetch', 'switch', 'checkout', 'branch', 'log', 'diff', 'init', 'clone', 'merge', 'stash', 'restore'],
     npm: ['install', 'run', 'start', 'test', 'init', 'uninstall', 'update'],
 };
+// The project's npm scripts, so `npm s` hints `npm start` and `npm run b` hints `npm run build`.
+let npmScripts = [];
+async function loadNpmScripts() {
+    const r = await api.fs.readFile('package.json').catch(() => null);
+    try {
+        npmScripts = Object.keys(JSON.parse(r?.text ?? '{}').scripts ?? {});
+    }
+    catch {
+        npmScripts = [];
+    }
+}
+background(loadNpmScripts());
+api.fs.onChange(paths => { if (paths.includes('package.json'))
+    background(loadNpmScripts()); });
+function subcommandsOf(cmd) {
+    return cmd === 'npm' ? [...new Set([...SUBCOMMANDS.npm, ...npmScripts.filter(s => ['start', 'test'].includes(s))])] : SUBCOMMANDS[cmd] ?? [];
+}
+// The known words that can finish the last word of `words`.
+function knownWords(words) {
+    if (words.length === 1)
+        return [...new Set([...term.history.map(h => h.split(' ')[0]), ...COMMANDS])];
+    if (words.length === 2)
+        return subcommandsOf(words[0]);
+    if (words.length === 3 && words[0] === 'npm' && words[1] === 'run')
+        return npmScripts;
+    return [];
+}
 const termGhost = $('#termGhost');
-// Greyed-out rest of the last matching command from history; → accepts it.
-function historyMatch(value) {
+// Greyed-out rest of the line: the last matching command from history, else a known command; → accepts it.
+function ghostMatch(value) {
     if (!value)
         return '';
-    return [...term.history].reverse().find(h => h.startsWith(value) && h !== value) ?? '';
+    const past = [...term.history].reverse().find(h => h.startsWith(value) && h !== value);
+    if (past)
+        return past;
+    const words = value.split(' '), token = words.at(-1) ?? '';
+    if (!token)
+        return '';
+    const word = knownWords(words).find(w => w.startsWith(token) && w !== token);
+    return word ? value + word.slice(token.length) : '';
 }
 function updateGhost() {
-    const v = termInput.value, match = historyMatch(v);
+    const v = termInput.value, match = ghostMatch(v);
     termGhost.innerHTML = match ? `<span class="typed">${esc(v)}</span>${esc(match.slice(v.length))}` : '';
 }
 // Width of text in an input's own font.
@@ -3326,12 +3377,12 @@ async function terminalCandidates(line) {
     const words = line.split(' ');
     const token = words.at(-1) ?? '';
     if (words.length === 1) {
-        const known = [...new Set([...term.history.map(h => h.split(' ')[0]), ...COMMANDS])];
-        const commands = known.filter(c => c.startsWith(token) && c !== token).map(c => ({ text: c, hint: 'command' }));
+        const commands = knownWords(words).filter(c => c.startsWith(token) && c !== token).map(c => ({ text: c, hint: 'command' }));
         const files = token ? await api.term.complete(token).catch(() => []) : [];
         return { token, items: [...commands, ...files.map(f => ({ text: f.text, hint: f.dir ? 'folder' : 'file' }))].slice(0, 40) };
     }
-    const subs = words.length === 2 ? (SUBCOMMANDS[words[0]] ?? []).filter(c => c.startsWith(token) && c !== token).map(c => ({ text: c, hint: words[0] })) : [];
+    const hint = words.length === 3 ? 'script' : words[0];
+    const subs = knownWords(words).filter(c => c.startsWith(token) && c !== token).map(c => ({ text: c, hint }));
     const files = await api.term.complete(token).catch(() => []);
     return { token, items: [...subs, ...files.map(f => ({ text: f.text, hint: f.dir ? 'folder' : 'file' }))].slice(0, 40) };
 }
@@ -3365,7 +3416,7 @@ function terminalAutofillKeys(e) {
         return true;
     }
     const atEnd = termInput.selectionStart === termInput.value.length;
-    const match = historyMatch(termInput.value);
+    const match = ghostMatch(termInput.value);
     if (e.key === 'ArrowRight' && atEnd && match) {
         e.preventDefault();
         termInput.value = match;
