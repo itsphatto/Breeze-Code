@@ -1512,6 +1512,7 @@ interface Buffer {
   url?: string;          // images: where the picture loads from
   diags?: Diag[];        // syntax errors from the last check
   diagLines?: number;    // line count the errors were found at (they're hidden while it differs)
+  runDiags?: Diag[];     // the entries of `diags` that came from the last failed run (cleared by the next run or lint)
   lintSeq?: number;
   lintTimer?: number;
   undo: Snapshot[];      // the editor keeps its own history (see "Undo & redo")
@@ -1651,7 +1652,7 @@ async function lintBuffer(b: Buffer): Promise<void> {
     }
   }
   const had = !!b.diags?.length;
-  b.diags = diags;
+  b.diags = diags; b.runDiags = undefined;
   b.diagLines = text.split('\n').length;
   if (had !== !!diags.length) renderTabs();
   if (b.path === active) renderCode();
@@ -2681,19 +2682,128 @@ async function reloadPreview(): Promise<void> {
 function stopPreview(): void { running = false; previewPath = null; renderPreview(); }
 
 /* ================= Terminal ================= */
-const term = { cwd: '', proc: null as number | null, runId: null as number | null, history: [] as string[], hIdx: 0 };
+const term = {
+  cwd: '', proc: null as number | null, runId: null as number | null, history: [] as string[], hIdx: 0,
+  runCwd: '',                                  // folder of the file being run: relative paths in its output resolve here
+  pending: null as { el: HTMLElement; text: string } | null, // the run's unfinished last line, shown as plain text until it ends
+  refs: [] as ErrorRef[],                      // the project errors the run has printed so far
+};
 const termOut = $('#termOut');
 const termInput = $<HTMLInputElement>('#termInput');
 // Colour codes and lone carriage returns don't render in the panel.
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+// Where compilers and Python say the trouble is: `file:line:col: error: msg` (GCC, clang) and `File "file", line N`.
+interface ErrorRef { path: string; line: number; col: number; msg: string; error: boolean; start: number; end: number; }
+const GCC_REF = /^((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
+const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
+// Turns a path from the output into a project-relative one, or null when it points outside the project.
+// Windows paths (drive letter) compare without regard to case or slash direction.
+function projectPath(p: string, cwd: string, root: string): string | null {
+  const slash = (x: string) => x.replaceAll('\\', '/');
+  const parts = (x: string) => { const out: string[] = []; for (const seg of slash(x).split('/')) { if (seg === '..') out.pop(); else if (seg && seg !== '.') out.push(seg); } return out; };
+  const given = slash(p);
+  const full = parts(/^(?:[A-Za-z]:)?\//.test(given) ? given : `${slash(cwd)}/${given}`);
+  const base = parts(root);
+  const same = (a: string, b: string) => (/^[A-Za-z]:/.test(base[0] ?? '') ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (full.length <= base.length || !base.every((seg, i) => same(seg, full[i]))) return null;
+  return full.slice(base.length).join('/');
+}
+function parseErrorRefs(text: string, cwd: string, root: string): ErrorRef[] {
+  const refs: ErrorRef[] = [];
+  for (const m of text.matchAll(GCC_REF)) {
+    const path = projectPath(m[1], cwd, root);
+    if (path == null) continue;
+    const end = m.index + m[1].length + 1 + m[2].length + (m[3] ? m[3].length + 1 : 0);
+    refs.push({ path, line: Number(m[2]) - 1, col: m[3] ? Number(m[3]) - 1 : 0, msg: m[5].replace(/\r$/, ''), error: m[4] !== 'warning' && m[4] !== 'note', start: m.index, end });
+  }
+  for (const m of text.matchAll(PY_REF)) {
+    const path = projectPath(m[2], cwd, root);
+    if (path == null) continue;
+    const start = m.index + m[0].indexOf(m[1]);
+    refs.push({ path, line: Number(m[3]) - 1, col: 0, msg: 'Python error (see the terminal)', error: true, start, end: start + m[1].length });
+  }
+  return refs.sort((a, b) => a.start - b.start);
+}
 function renderPs(): void { $('#termPs').textContent = `${term.cwd || '~'}>`; }
-function termWrite(text: string, cls = ''): void {
-  const span = document.createElement('span');
-  if (cls) span.className = cls;
-  span.textContent = text.replaceAll(ANSI, '').replaceAll(/\r(?!\n)/g, '');
-  termOut.appendChild(span);
+const cleanOut = (text: string) => text.replaceAll(ANSI, '').replaceAll(/\r(?!\n)/g, '');
+function termAppend(el: HTMLElement): void {
+  termOut.appendChild(el);
   while (termOut.childNodes.length > 3000) termOut.firstChild?.remove();
   $('#termBody').scrollTop = $('#termBody').scrollHeight;
+}
+function termWrite(text: string, cls = ''): HTMLElement {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = cleanOut(text);
+  term.pending = null; // anything written here ends the run's open line
+  termAppend(span);
+  return span;
+}
+// A run's output: finished lines show their error locations as links; the unfinished last line stays
+// plain (a prompt like "Name: " has no newline) and is swapped for the linked version once it ends.
+function runOutput(chunk: string): void {
+  const full = (term.pending?.text ?? '') + cleanOut(chunk);
+  term.pending?.el.remove();
+  term.pending = null;
+  const nl = full.lastIndexOf('\n');
+  if (nl >= 0) termLinked(full.slice(0, nl + 1));
+  const rest = full.slice(nl + 1);
+  if (rest) term.pending = { el: termWrite(rest), text: rest }; // termWrite cleared `pending`; set it after
+}
+function termLinked(text: string): void {
+  const refs = rootInfo ? parseErrorRefs(text, term.runCwd, rootInfo.root) : [];
+  term.refs.push(...refs.filter(r => r.error));
+  const span = document.createElement('span');
+  let at = 0;
+  for (const r of refs) {
+    if (r.start < at) continue;
+    span.append(text.slice(at, r.start));
+    const a = document.createElement('a');
+    a.className = 'term-ref';
+    a.textContent = text.slice(r.start, r.end);
+    a.dataset.path = r.path; a.dataset.line = String(r.line); a.dataset.col = String(r.col);
+    span.append(a);
+    at = r.end;
+  }
+  span.append(text.slice(at));
+  termAppend(span);
+}
+termOut.addEventListener('click', e => {
+  const a = (e.target as HTMLElement).closest<HTMLElement>('.term-ref');
+  if (a) openFile(a.dataset.path as string, { line: Number(a.dataset.line), col: Number(a.dataset.col) });
+});
+// A failed run underlines its errors in the open files (next to the editor's own findings); the next run
+// or the next lint of a file takes them away again.
+function clearRunDiags(): void {
+  let any = false;
+  for (const b of buffers.values()) {
+    if (!b.runDiags) continue;
+    const mine = b.runDiags;
+    b.diags = b.diags?.filter(d => !mine.includes(d));
+    b.runDiags = undefined; any = true;
+  }
+  if (any) { renderTabs(); renderCode(); }
+}
+function showRunErrors(refs: ErrorRef[]): void {
+  for (const b of buffers.values()) {
+    if (b.kind !== 'text') continue;
+    const lines = b.text.split('\n');
+    const diags = b.diags ?? [];
+    const add: Diag[] = [];
+    for (const r of refs) {
+      if (r.path !== b.path || r.line >= lines.length || diags.some(d => d.line === r.line) || add.some(d => d.line === r.line)) continue;
+      const lt = lines[r.line];
+      const col = r.col || Math.max(0, lt.search(/\S/));
+      add.push({ line: r.line, col, len: r.col ? (/^\S+/.exec(lt.slice(col))?.[0].length ?? 1) : Math.max(1, lt.trimEnd().length - col), msg: r.msg });
+    }
+    if (!add.length) continue;
+    const had = diags.length > 0;
+    b.diags = [...diags, ...add].sort((x, y) => x.line - y.line);
+    b.runDiags = add;
+    b.diagLines = lines.length;
+    if (!had) renderTabs();
+    if (b.path === active) renderCode();
+  }
 }
 function killCommand(): void {
   if (term.proc == null) return;
@@ -2719,6 +2829,7 @@ async function runFile(): Promise<void> {
   if (term.proc != null && term.runId == null) { toast('A command is still running — press Ctrl+C to stop it'); return; }
   if (isDirty(b) && !(await saveFile(active))) return;
   layout.termOpen = true; applyLayout();
+  term.runCwd = joinPath(rootInfo?.root ?? '', dirName(active)); term.refs = []; term.pending = null;
   const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
   if (r.error) termWrite(r.error + '\n', 'err');
   else if (r.id != null) { term.proc = term.runId = r.id; $('#termPs').classList.add('busy'); }
@@ -2739,7 +2850,7 @@ termInput.addEventListener('keydown', e => {
   termGhost.innerHTML = '';
   void runCommand(cmd);
 });
-api.term.onData((id, chunk) => { if (id === term.proc) termWrite(chunk); });
+api.term.onData((id, chunk) => { if (id !== term.proc) return; if (id === term.runId) runOutput(chunk); else termWrite(chunk); });
 api.term.onExit((id, code) => {
   if (id !== term.proc) return;
   const runId = term.runId;

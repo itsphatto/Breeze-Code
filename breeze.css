@@ -322,6 +322,8 @@ body.resizing-h .term-body { transition: none; }
 #termOut { white-space: pre-wrap; word-break: break-all; }
 #termOut .cmd { color: var(--text); }
 #termOut .err { color: var(--err); }
+#termOut .term-ref { color: var(--blue); cursor: pointer; }
+#termOut .term-ref:hover { text-decoration: underline; }
 .term-line { display: flex; gap: 8px; }
 .term-line input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; padding: 0; }
 
