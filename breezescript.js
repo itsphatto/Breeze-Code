@@ -168,10 +168,8 @@ function demoApi() {
     const under = (p, rel) => (rel ? p.startsWith(rel + '/') : true);
     const exists = (p) => files.has(p) || dirs.has(p);
     const inside = (k, rel) => k === rel || k.startsWith(rel + '/');
-    const needOpen = () => {
-        if (!store.get('breeze.demoOpen', false))
-            throw new Error('No folder is open');
-    };
+    const needOpen = () => { if (!store.get('breeze.demoOpen', false))
+        throw new Error('No folder is open'); };
     const feeds = () => store.get('breeze.demoVibe', {});
     return {
         fs: {
@@ -300,10 +298,8 @@ function demoApi() {
         llm: {
             async connect(url) {
                 await wait(500);
-                if (!/^https?:\/\/\S+/i.test(url.trim()))
-                    throw new Error('Enter the server address, for example http://localhost:11434/v1');
                 store.set('breeze.demoLlm', 'llama3.1');
-                return { model: 'llama3.1', models: ['llama3.1', 'qwen2.5-coder'] };
+                return { url: url.trim() || 'http://127.0.0.1:11434/v1', model: 'llama3.1', models: ['llama3.1', 'qwen2.5-coder'] };
             },
             async setModel(model) { store.set('breeze.demoLlm', model); },
             async disconnect() { store.del('breeze.demoLlm'); },
@@ -320,20 +316,16 @@ function demoApi() {
         },
         git: {
             async status() {
-                return {
-                    repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
-                    files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }]
-                };
+                return { repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
+                    files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }] };
             },
             async log() {
-                return {
-                    head: 'd4f0b19aa', commits: [
+                return { head: 'd4f0b19aa', commits: [
                         { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
                         { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
                         { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
                         { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
-                    ]
-                };
+                    ] };
             },
             async show(hash) { return { hash, author: 'You', email: 'you@example.com', when: 'a few minutes ago', message: 'Demo checkpoint', files: [{ path: 'styles.css', added: 11, removed: 2 }] }; },
             async diff() { return '@@ -1,3 +1,3 @@\n /* Cozy, warm palette */\n-:root {\n+:root { /* demo change */\n   --bean: #2b1d12;'; },
@@ -390,6 +382,10 @@ function demoApi() {
             async mute() { },
             async hide() { },
         },
+        discord: {
+            async set() { return { user: null }; },
+            async clear() { },
+        },
         win: {
             async reload() { location.reload(); },
             async toggleDevTools() { toast('Developer tools are available in the desktop app'); },
@@ -409,6 +405,7 @@ const isDesktop = !!window.breeze;
 const api = window.breeze ?? demoApi();
 const appState = {
     onboarded: false, step: 0, user: null, agent: null, detect: null, vibeArmed: false, vibeSites: [], vibeSite: null, mode: 'ide',
+    discord: false, discordDetails: true,
     ...store.get('breeze.app', {}),
 };
 const saveApp = () => store.set('breeze.app', appState);
@@ -602,12 +599,10 @@ async function renderFeedChoices(root) {
                 background(toggleFeed(id).then(draw));
             };
             card.onclick = e => pick(!!e.target.closest('[data-connect]'));
-            card.onkeydown = e => {
-                if ((e.key === 'Enter' || e.key === ' ') && e.target === card) {
-                    e.preventDefault();
-                    pick(false);
-                }
-            };
+            card.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === card) {
+                e.preventDefault();
+                pick(false);
+            } };
         });
     };
     draw();
@@ -672,21 +667,15 @@ function fixSelectedAgent() {
     saveApp();
 }
 const pillClass = (on) => (on ? 'blue' : 'ok');
-const LLM_DEFAULT_URL = 'http://localhost:11434/v1';
-function trimSlashes(s) {
-    let end = s.length;
-    while (end > 0 && s[end - 1] === '/')
-        end--;
-    return s.slice(0, end);
-}
-// The local LLM card: server address to connect, or (once connected) its address and a model picker.
+// The local LLM card: an API key to connect with (the server is found on this computer),
+// or (once connected) its address and a model picker.
 function localAgentHtml(a, on, mark) {
     const name = `<span class="nm">${esc(a.name)} <small>API</small></span>`;
     if (!a.found) {
         return `<div class="agent-opt api missing">${mark}${name}
       <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ↗</button>
-      <span class="sub">Ollama, LM Studio or any OpenAI-compatible server</span>
-      <div class="key-row"><input class="input url" data-llm-url aria-label="Server address" placeholder="${LLM_DEFAULT_URL}" value="${LLM_DEFAULT_URL}" spellcheck="false"><input class="input" type="password" data-llm-key aria-label="API key (optional)" placeholder="API key (optional)" autocomplete="off"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
+      <span class="sub">Finds Ollama or LM Studio running on this computer</span>
+      <div class="key-row"><input class="input" type="password" data-llm-key aria-label="API key" placeholder="API key" autocomplete="off" spellcheck="false"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
       <div class="key-err hidden"></div></div>`;
     }
     const label = on ? 'Selected' : 'Ready';
@@ -721,14 +710,14 @@ function bindLocalLlm(root, onChange) {
     const local = () => appState.detect?.agents.find(a => a.id === 'local');
     const connect = root.querySelector('[data-llm-connect]');
     if (connect) {
-        const url = $('[data-llm-url]', root), key = $('[data-llm-key]', root);
+        const key = $('[data-llm-key]', root);
         const save = async () => {
             const err = root.querySelector('.key-err');
             connect.disabled = true;
             connect.textContent = 'Connecting…';
             try {
-                const r = await api.llm.connect(url.value, key.value);
-                Object.assign(local() ?? {}, { found: true, path: trimSlashes(url.value.trim()), version: r.model, models: r.models });
+                const r = await api.llm.connect('', key.value);
+                Object.assign(local() ?? {}, { found: true, path: r.url ?? null, version: r.model, models: r.models });
                 if (!selectedAgent())
                     appState.agent = 'local';
                 saveApp();
@@ -745,11 +734,8 @@ function bindLocalLlm(root, onChange) {
             }
         };
         connect.onclick = () => void save();
-        for (const input of [url, key])
-            input.onkeydown = e => {
-                if (e.key === 'Enter')
-                    void save();
-            };
+        key.onkeydown = e => { if (e.key === 'Enter')
+            void save(); };
     }
     const model = root.querySelector('[data-llm-model]');
     if (model)
@@ -771,16 +757,12 @@ function bindLocalLlm(root, onChange) {
 function bindAgentOptions(root, onChange) {
     $$('[data-agent]', root).forEach(el => {
         const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onChange(); };
-        el.onclick = e => {
-            if (!e.target.closest('button, input, select'))
-                pick();
-        };
-        el.onkeydown = e => {
-            if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
-                e.preventDefault();
-                pick();
-            }
-        };
+        el.onclick = e => { if (!e.target.closest('button, input, select'))
+            pick(); };
+        el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
+            e.preventDefault();
+            pick();
+        } };
     });
     $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
     bindLocalLlm(root, onChange);
@@ -831,7 +813,8 @@ function renderAgentPill() {
     $('#agentPill').textContent = a ? a.name : 'Choose an agent';
     const model = a?.api && a.version ? ' · ' + a.version : '';
     $('#boxModel').textContent = a ? `${a.name}${model} ▾` : 'Choose an agent ▾';
-    agentsDef.planner.model = agentsDef.builder.model = modelLabel(a);
+    for (const k of Object.values(agentsDef))
+        k.model = modelLabel(a);
     renderAgents();
 }
 $('#agentPill').onclick = openAgentPicker;
@@ -881,10 +864,39 @@ $('#startBuilding').onclick = () => {
     saveApp();
     enterMode(appState.mode);
 };
+// Switching between the onboarding, the IDE and Breeze Box: the old screen fades back, the new one rises in.
+let swapTimer;
+let booted = false;
+function swapScreen(to) {
+    const next = $(to);
+    const screens = ['#onboard', '#ide', '#box'].map(id => $(id));
+    // At launch the remembered screen just appears; the animation is for switching.
+    if (!booted) {
+        for (const el of screens)
+            el.classList.toggle('hidden', el !== next);
+        return;
+    }
+    const prev = screens.find(el => el !== next && !el.classList.contains('hidden') && !el.classList.contains('screen-out'));
+    clearTimeout(swapTimer);
+    for (const el of screens)
+        if (el !== next && el !== prev) {
+            el.classList.remove('screen-out');
+            el.classList.add('hidden');
+        }
+    if (!next.classList.contains('hidden') && !next.classList.contains('screen-out'))
+        return; // already showing
+    next.classList.remove('hidden', 'screen-out', 'screen-in');
+    void next.offsetWidth; // restart the entrance animation
+    next.classList.add('screen-in');
+    next.addEventListener('animationend', () => next.classList.remove('screen-in'), { once: true });
+    queueDiscord();
+    if (!prev)
+        return;
+    prev.classList.add('screen-out');
+    swapTimer = setTimeout(() => { prev.classList.remove('screen-out'); prev.classList.add('hidden'); }, 260);
+}
 function showIde() {
-    $('#onboard').classList.add('hidden');
-    $('#box').classList.add('hidden');
-    $('#ide').classList.remove('hidden');
+    swapScreen('#ide');
     useSurface('ide');
     renderUser();
     applyLayout();
@@ -892,6 +904,7 @@ function showIde() {
 }
 /* ================= Agents (data) ================= */
 const agentsDef = {
+    assistant: { name: 'Assistant', letter: 'A', tint: 'assistant', model: 'no agent', status: 'idle', task: 'Waiting for a question', used: 0 },
     planner: { name: 'Planner', letter: 'P', tint: 'planner', model: 'no agent', status: 'idle', task: 'Waiting for a prompt', used: 0 },
     builder: { name: 'Builder', letter: 'B', tint: 'builder', model: 'no agent', status: 'idle', task: 'Waiting for a plan', used: 0 },
 };
@@ -915,7 +928,7 @@ function langOf(path) {
 }
 const either = (...patterns) => new RegExp(patterns.map(p => p.source).join('|'));
 const lexer = (rules, flags = 'g') => new RegExp(rules.map(([kind, p]) => `(?<${kind}>${p.source})`).join('|'), flags);
-const keywords = (list) => new RegExp(String.raw`\b(?:${list.replaceAll(' ', '|')})\b`);
+const keywords = (list) => new RegExp(String.raw `\b(?:${list.replaceAll(' ', '|')})\b`);
 const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return super switch this throw try typeof var void while with yield async await static get set type interface enum implements private public protected readonly declare as true false null undefined';
 const PY_KW = 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self';
 const LINE_COMMENT = /\/\/[^\n]*/;
@@ -1227,7 +1240,7 @@ class JsonChecker {
             this.i++;
             return;
         }
-        for (; ;) {
+        for (;;) {
             item();
             this.ws();
             if (this.t[this.i] === close) {
@@ -1848,10 +1861,8 @@ function createTextarea(b) {
     });
     ta.addEventListener('blur', hideSuggest);
     ta.addEventListener('mousedown', hideSuggest);
-    ta.addEventListener('scroll', () => {
-        if (suggest?.owner === ta)
-            editorSuggest(b);
-    }); // follow the caret
+    ta.addEventListener('scroll', () => { if (suggest?.owner === ta)
+        editorSuggest(b); }); // follow the caret
     ta.addEventListener('scroll', syncScroll);
     ta.addEventListener('keydown', editorKeys);
     for (const ev of ['keyup', 'mouseup', 'select', 'selectionchange', 'focus'])
@@ -2027,17 +2038,13 @@ function askName(title, initial, okLabel) {
             input.focus();
             const dot = initial.lastIndexOf('.');
             input.setSelectionRange(0, dot > 0 ? dot : initial.length);
-            const ok = () => {
-                const v = input.value.trim(); if (v) {
-                    finish(v);
-                    closeModal();
-                }
-            };
+            const ok = () => { const v = input.value.trim(); if (v) {
+                finish(v);
+                closeModal();
+            } };
             $('#nameOk', m).onclick = ok;
-            input.onkeydown = e => {
-                if (e.key === 'Enter')
-                    ok();
-            };
+            input.onkeydown = e => { if (e.key === 'Enter')
+                ok(); };
         }, () => finish(null));
     });
 }
@@ -2200,6 +2207,8 @@ function setActive(path) {
     renderTree();
     saveSession();
     if (changed)
+        queueDiscord();
+    if (changed)
         for (const el of [$('#hl'), $('#gutter')])
             el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
     if (running && path && /\.(html?|css|js)$/i.test(path))
@@ -2268,10 +2277,8 @@ function closeTabs(paths) {
         $('#tabsDontSave', m).onclick = () => { closeModal(); finish(); };
         $('#tabsSave', m).onclick = () => {
             closeModal();
-            background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => {
-                if (saved.every(Boolean))
-                    finish();
-            }));
+            background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => { if (saved.every(Boolean))
+                finish(); }));
         };
     });
 }
@@ -2389,12 +2396,8 @@ function closeTab(path) {
     openModal(`<h3>Save changes to ${esc(baseName(path))}?</h3><p class="sub">Your changes will be lost if you don't save them.</p>
     <div class="row end"><button class="btn" data-close>Cancel</button><button class="btn" id="dontSave">Don't Save</button><button class="btn btn-primary" id="doSave">Save</button></div>`, m => {
         $('#dontSave', m).onclick = () => { closeModal(); finish(); };
-        $('#doSave', m).onclick = () => {
-            closeModal(); background(saveFile(path).then(ok => {
-                if (ok)
-                    finish();
-            }));
-        };
+        $('#doSave', m).onclick = () => { closeModal(); background(saveFile(path).then(ok => { if (ok)
+            finish(); })); };
     });
 }
 async function saveFile(path = active) {
@@ -2751,12 +2754,53 @@ function enterKey(ta) {
         replaceRange(ta, s, en, `\n${indent}${extra}`);
 }
 const plainKey = (e) => !e.ctrlKey && !e.altKey && !e.metaKey;
+// Auto-closing pairs: typing an opener adds its closer, typing the closer steps over it,
+// Backspace inside an empty pair removes both, and a selection gets wrapped.
+const AUTO_PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '`': '`' };
+const AUTO_CLOSERS = new Set(Object.values(AUTO_PAIRS));
+function pairKey(e, ta) {
+    if (!plainKey(e) || e.isComposing)
+        return false;
+    const v = ta.value, s = ta.selectionStart, en = ta.selectionEnd, ch = e.key;
+    if (ch === 'Backspace') {
+        if (s !== en || s === 0 || AUTO_PAIRS[v[s - 1]] !== v[s])
+            return false;
+        replaceRange(ta, s - 1, s + 1, '', s - 1);
+        return true;
+    }
+    if (ch.length !== 1)
+        return false;
+    if (s === en && AUTO_CLOSERS.has(ch) && v[s] === ch) {
+        ta.setSelectionRange(s + 1, s + 1);
+        updateCaret();
+        return true;
+    }
+    const close = AUTO_PAIRS[ch];
+    if (!close)
+        return false;
+    if (s !== en) {
+        replaceRange(ta, s, en, ch + v.slice(s, en) + close, s + 1, en + 1);
+        return true;
+    }
+    const prev = v[s - 1] ?? '', next = v[s] ?? '';
+    // Quotes after a letter are apostrophes (don't), and a pair only opens before a space, a closer or punctuation.
+    if (ch === close && (/[\w\\]/.test(prev) || prev === ch))
+        return false;
+    if (next && !/[\s)\]};,:.>]/.test(next))
+        return false;
+    replaceRange(ta, s, en, ch + close, s + 1);
+    return true;
+}
 function editorKeys(e) {
     const ta = e.target;
     const b = textareaOwner.get(ta);
     const k = e.key.toLowerCase();
     if (suggestKeys(e, ta))
         return;
+    if (b && pairKey(e, ta)) {
+        e.preventDefault();
+        return;
+    }
     if (b && e.ctrlKey && e.key === ' ') {
         e.preventDefault();
         editorSuggest(b, true);
@@ -3015,10 +3059,8 @@ async function quickOpen() {
 /* ================= Search across files ================= */
 let searchCase = false;
 $('#searchCase').onclick = () => { searchCase = !searchCase; $('#searchCase').classList.toggle('on', searchCase); void runSearch(); };
-$('#searchInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter')
-        void runSearch();
-});
+$('#searchInput').addEventListener('keydown', e => { if (e.key === 'Enter')
+    void runSearch(); });
 function hitLineHtml(h, i, qLen) {
     const start = Math.max(0, h.col - 30);
     const pre = h.text.slice(start, h.col).trimStart(), hit = h.text.slice(h.col, h.col + qLen), post = h.text.slice(h.col + qLen, h.col + qLen + 80);
@@ -3128,14 +3170,12 @@ const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
 // Windows paths (drive letter) compare without regard to case or slash direction.
 function projectPath(p, cwd, root) {
     const slash = (x) => x.replaceAll('\\', '/');
-    const parts = (x) => {
-        const out = []; for (const seg of slash(x).split('/')) {
-            if (seg === '..')
-                out.pop();
-            else if (seg && seg !== '.')
-                out.push(seg);
-        } return out;
-    };
+    const parts = (x) => { const out = []; for (const seg of slash(x).split('/')) {
+        if (seg === '..')
+            out.pop();
+        else if (seg && seg !== '.')
+            out.push(seg);
+    } return out; };
     const given = slash(p);
     const full = parts(/^(?:[A-Za-z]:)?\//.test(given) ? given : `${slash(cwd)}/${given}`);
     const base = parts(root);
@@ -3355,13 +3395,11 @@ termInput.addEventListener('keydown', e => {
     termGhost.innerHTML = '';
     void runCommand(cmd);
 });
-api.term.onData((id, chunk) => {
-    if (id !== term.proc)
-        return; if (id === term.runId)
-        runOutput(chunk);
-    else
-        termWrite(chunk);
-});
+api.term.onData((id, chunk) => { if (id !== term.proc)
+    return; if (id === term.runId)
+    runOutput(chunk);
+else
+    termWrite(chunk); });
 api.term.onExit((id, code) => {
     if (id !== term.proc)
         return;
@@ -3383,14 +3421,10 @@ api.term.onExit((id, code) => {
     if (code)
         showRunErrors(term.refs);
 });
-$('#termBody').addEventListener('mouseup', () => {
-    if (!getSelection()?.toString())
-        termInput.focus();
-});
-$('#termToggle').addEventListener('click', e => {
-    if (!e.target.closest('button'))
-        run('term.toggle');
-});
+$('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString())
+    termInput.focus(); });
+$('#termToggle').addEventListener('click', e => { if (!e.target.closest('button'))
+    run('term.toggle'); });
 let suggest = null;
 const suggestEl = document.createElement('div');
 suggestEl.className = 'suggest hidden';
@@ -3553,10 +3587,8 @@ async function loadNpmScripts() {
     }
 }
 background(loadNpmScripts());
-api.fs.onChange(paths => {
-    if (paths.includes('package.json'))
-        background(loadNpmScripts());
-});
+api.fs.onChange(paths => { if (paths.includes('package.json'))
+    background(loadNpmScripts()); });
 function subcommandsOf(cmd) {
     return cmd === 'npm' ? [...new Set([...SUBCOMMANDS.npm, ...npmScripts.filter(s => ['start', 'test'].includes(s))])] : SUBCOMMANDS[cmd] ?? [];
 }
@@ -3664,10 +3696,8 @@ function terminalAutofillKeys(e) {
     }
     return false;
 }
-termInput.addEventListener('input', () => {
-    updateGhost(); if (suggest?.owner === termInput)
-        hideSuggest();
-});
+termInput.addEventListener('input', () => { updateGhost(); if (suggest?.owner === termInput)
+    hideSuggest(); });
 termInput.addEventListener('blur', () => { termGhost.innerHTML = ''; hideSuggest(); });
 termInput.addEventListener('focus', updateGhost);
 const DEFAULT_LAYOUT = { side: 240, agents: 340, term: 200, preview: 460, sideOpen: true, agentsOpen: true, termOpen: false, previewOpen: true, view: 'files' };
@@ -3694,22 +3724,14 @@ function applyLayout() {
 window.addEventListener('resize', applyLayout);
 // Dragging below a threshold collapses the panel; dragging back out reopens it.
 const SASH_DRAG = {
-    side: (start, dx) => {
-        const w = start.side + dx; layout.sideOpen = w >= 120; if (layout.sideOpen)
-            layout.side = clamp(w, 170, 640);
-    },
-    agents: (start, dx) => {
-        const w = start.agents - dx; layout.agentsOpen = w >= 180; if (layout.agentsOpen)
-            layout.agents = clamp(w, 260, 720);
-    },
-    preview: (start, dx) => {
-        const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen)
-            layout.preview = clamp(w, 220, $('#work').clientWidth - 220);
-    },
-    term: (start, _dx, dy) => {
-        const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen)
-            layout.term = clamp(h, 80, innerHeight - 220);
-    },
+    side: (start, dx) => { const w = start.side + dx; layout.sideOpen = w >= 120; if (layout.sideOpen)
+        layout.side = clamp(w, 170, 640); },
+    agents: (start, dx) => { const w = start.agents - dx; layout.agentsOpen = w >= 180; if (layout.agentsOpen)
+        layout.agents = clamp(w, 260, 720); },
+    preview: (start, dx) => { const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen)
+        layout.preview = clamp(w, 220, $('#work').clientWidth - 220); },
+    term: (start, _dx, dy) => { const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen)
+        layout.term = clamp(h, 80, innerHeight - 220); },
 };
 function startSashDrag(sash, kind, e) {
     const sx = e.clientX, sy = e.clientY, start = { ...layout };
@@ -3766,10 +3788,8 @@ const commands = {
     'file.openRecent': openRecentPicker,
     'file.save': () => saveFile(),
     'file.saveAll': saveAll,
-    'file.closeEditor': () => {
-        if (active)
-            closeTab(active);
-    },
+    'file.closeEditor': () => { if (active)
+        closeTab(active); },
     'file.closeFolder': closeFolderCmd,
     'file.exit': () => api.win.quit(),
     'edit.undo': () => editRole('undo'),
@@ -3801,26 +3821,20 @@ const commands = {
     'run.file': runFile,
     'run.start': () => (runnable(active) ? run('run.file') : running ? reloadPreview() : startPreview()),
     'run.reload': reloadPreview,
-    'run.stop': () => {
-        if (term.runId != null)
-            killCommand();
-        else {
-            stopPreview();
-            toast('Preview stopped');
-        }
-    },
-    'term.toggle': () => {
-        layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
-            termInput.focus();
-    },
+    'run.stop': () => { if (term.runId != null)
+        killCommand();
+    else {
+        stopPreview();
+        toast('Preview stopped');
+    } },
+    'term.toggle': () => { layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
+        termInput.focus(); },
     'term.focus': () => { layout.termOpen = true; applyLayout(); termInput.focus(); },
     'term.clear': () => { termOut.innerHTML = ''; },
-    'term.kill': () => {
-        if (term.proc == null)
-            toast('Nothing is running');
-        else
-            killCommand();
-    },
+    'term.kill': () => { if (term.proc == null)
+        toast('Nothing is running');
+    else
+        killCommand(); },
     'explorer.refresh': refreshTree,
     'explorer.collapse': () => { expanded.clear(); renderTree(); saveSession(); },
     'help.welcome': () => setActive(null),
@@ -3918,8 +3932,7 @@ function confirmDiscard() {
     });
 }
 const MENUS = [
-    {
-        name: 'File', items: [
+    { name: 'File', items: [
             { label: 'New File…', act: 'file.newFile', key: 'Ctrl+N' },
             { label: 'New Folder…', act: 'file.newFolder' },
             { sep: true },
@@ -3933,10 +3946,8 @@ const MENUS = [
             { label: 'Close Folder', act: 'file.closeFolder', enabled: () => !!rootInfo },
             { sep: true },
             { label: 'Exit', act: 'file.exit' },
-        ]
-    },
-    {
-        name: 'Edit', items: [
+        ] },
+    { name: 'Edit', items: [
             { label: 'Undo', act: 'edit.undo', key: 'Ctrl+Z', native: true },
             { label: 'Redo', act: 'edit.redo', key: 'Ctrl+Y', native: true },
             { sep: true },
@@ -3948,20 +3959,16 @@ const MENUS = [
             { label: 'Find in Files', act: 'view.search', key: 'Ctrl+Shift+F' },
             { sep: true },
             { label: 'Toggle Line Comment', act: 'edit.comment', key: 'Ctrl+/', enabled: hasFile },
-        ]
-    },
-    {
-        name: 'Selection', items: [
+        ] },
+    { name: 'Selection', items: [
             { label: 'Select All', act: 'edit.selectAll', key: 'Ctrl+A', native: true },
             { label: 'Select Line', act: 'sel.line', key: 'Ctrl+L', enabled: hasFile },
             { sep: true },
             { label: 'Copy Line Down', act: 'sel.dup', key: 'Shift+Alt+Down', enabled: hasFile },
             { label: 'Move Line Up', act: 'sel.up', key: 'Alt+Up', enabled: hasFile },
             { label: 'Move Line Down', act: 'sel.down', key: 'Alt+Down', enabled: hasFile },
-        ]
-    },
-    {
-        name: 'View', items: [
+        ] },
+    { name: 'View', items: [
             { label: 'Explorer', act: 'view.files', key: 'Ctrl+Shift+E' },
             { label: 'Search', act: 'view.search', key: 'Ctrl+Shift+F' },
             { label: 'Checkpoints', act: 'view.git', key: 'Ctrl+Shift+G' },
@@ -3974,60 +3981,49 @@ const MENUS = [
             { sep: true },
             { label: 'Reload Window', act: 'win.reload', key: 'Ctrl+R' },
             { label: 'Toggle Developer Tools', act: 'win.devtools', key: 'Ctrl+Shift+I' },
-        ]
-    },
-    {
-        name: 'Go', items: [
+        ] },
+    { name: 'Go', items: [
             { label: 'Go to File…', act: 'go.file', key: 'Ctrl+P' },
             { label: 'Go to Line…', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
             { label: 'Next Problem', act: 'go.nextProblem', key: 'F8', enabled: hasFile },
             { sep: true },
             { label: 'Next Editor', act: 'go.nextEditor', key: 'Ctrl+Tab' },
             { label: 'Previous Editor', act: 'go.prevEditor', key: 'Ctrl+Shift+Tab' },
-        ]
-    },
-    {
-        name: 'Run', items: [
+        ] },
+    { name: 'Run', items: [
             { label: 'Run File', act: 'run.file', enabled: () => runnable(active) },
             { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
             { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
             { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
-        ]
-    },
-    {
-        name: 'Terminal', items: [
+        ] },
+    { name: 'Terminal', items: [
             { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
             { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
             { sep: true },
             { label: 'Clear Terminal', act: 'term.clear' },
             { label: 'Stop Running Command', act: 'term.kill', enabled: () => term.proc != null },
-        ]
-    },
-    {
-        name: 'Help', items: [
+        ] },
+    { name: 'Help', items: [
             { label: 'Welcome', act: 'help.welcome' },
             { label: 'Keyboard Shortcuts', act: 'help.keys' },
             { label: 'Run Setup Again', act: 'help.setup' },
             { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
             { sep: true },
             { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
-            { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
+            { label: 'Breeze Box (chat only)', act: 'mode.box', checked: () => appState.mode === 'box' },
             { sep: true },
             { label: 'Add Account…', act: 'account.signIn' },
             { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
             { sep: true },
             { label: 'About Breeze IDE', act: 'help.about' },
-        ]
-    },
+        ] },
 ];
 // Go, Run and Help stay out of the menu bar; their shortcuts still work and Help lives under the gear button.
 const BAR_MENUS = MENUS.filter(m => !['Go', 'Run', 'Help'].includes(m.name));
 // Shortcuts handled by the editor itself or by keydown elsewhere, but listed for discoverability.
 const EXTRA_KEYS = [['F2', 'explorer.rename']];
-commands['explorer.rename'] = () => {
-    if (active)
-        return renameEntry(active);
-};
+commands['explorer.rename'] = () => { if (active)
+    return renameEntry(active); };
 const canonKey = (combo) => {
     const parts = combo.split('+');
     const key = parts.pop();
@@ -4065,10 +4061,8 @@ function cancelMenuClose() { clearTimeout(menuCloseTimer); }
 // A menu opened by hovering closes shortly after the pointer leaves both the bar and the menu.
 function scheduleMenuClose() {
     cancelMenuClose();
-    menuCloseTimer = setTimeout(() => {
-        if (openMenuIdx >= 0 && !menuPinned)
-            closeMenu();
-    }, 350);
+    menuCloseTimer = setTimeout(() => { if (openMenuIdx >= 0 && !menuPinned)
+        closeMenu(); }, 350);
 }
 function buildMenubar() {
     $('#menubar').innerHTML = BAR_MENUS.map((m, i) => `<button class="menu-top" data-menu="${i}" aria-haspopup="menu">${esc(m.name)}</button>`).join('');
@@ -4186,7 +4180,7 @@ function closeMenu() {
     cb?.();
 }
 document.addEventListener('mousedown', e => {
-    if (openMenuIdx !== -1 && !e.target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars'))
+    if (openMenuIdx !== -1 && !e.target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory'))
         closeMenu();
 });
 window.addEventListener('blur', closeMenu);
@@ -4292,19 +4286,52 @@ document.addEventListener('click', e => {
     }
 });
 /* ================= Agents (UI) ================= */
+// No agent cards show until a task is under way. Once the agent answers, the panel says how many
+// agents the task needs, and each card appears when that agent starts working.
+let team = [];
+let teamNeed = 0; // how many agents the current task needs
+const TEAM_SIZE = { ask: 1, build: 1, plan: 2 };
+const TEAM_LINE = {
+    ask: '1 agent on this: <b>Assistant</b> answers without changing files',
+    build: '1 agent on this: <b>Builder</b> makes the changes',
+    plan: '2 agents on this: <b>Planner</b> writes a plan, then <b>Builder</b> builds it once you approve',
+};
 function renderAgents() {
-    $('#agentCards').innerHTML = Object.values(agentsDef).map(a => `
-    <div class="agent ${a.status}">
+    const cards = $('#agentCards');
+    const shown = new Set($$('[data-agent-card]', cards).map(el => el.dataset.agentCard));
+    cards.classList.toggle('hidden', !team.length);
+    cards.innerHTML = team.map(k => {
+        const a = agentsDef[k];
+        return `<div class="agent ${a.status}${shown.has(k) ? '' : ' enter'}" data-agent-card="${k}">
       <div class="ava tint-${a.tint}">${a.letter}</div>
       <div><span class="name">${a.name}</span> <span class="fs-11 text-3">${esc(a.model)}</span></div>
       <div class="row gap-4"><span class="status ${a.status}">${statusLabel[a.status]}</span>
         ${a.status === 'working' ? '<button class="icon-btn" title="Stop" data-act="agent.stop">■</button>' : ''}</div>
       <div class="task">${esc(a.task)}</div>
       <div class="meter" title="${a.used} tool calls"><i class="tint-${a.tint}" data-used="${a.used}"></i></div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
     // The meter's fill is set through the DOM: the CSP allows no inline style attributes.
-    for (const i of $$('[data-used]', $('#agentCards')))
+    for (const i of $$('[data-used]', cards))
         i.style.width = `${Math.min(100, Number(i.dataset.used) * 4)}%`;
+    const count = $('#agentCount');
+    const n = Math.max(teamNeed, team.length);
+    count.textContent = String(n);
+    count.title = `${plural(n, 'agent')} on this task`;
+    count.classList.toggle('hidden', !n);
+}
+function joinTeam(k) {
+    if (team.includes(k))
+        return;
+    team.push(k);
+    renderAgents();
+}
+function resetTeam() {
+    team = [];
+    teamNeed = 0;
+    setAgent('assistant', 'idle', 'Waiting for a question', 0);
+    setAgent('planner', 'idle', 'Waiting for a prompt', 0);
+    setAgent('builder', 'idle', 'Waiting for a plan', 0);
 }
 function setAgent(k, status, task, used) {
     Object.assign(agentsDef[k], { status, task });
@@ -4312,6 +4339,9 @@ function setAgent(k, status, task, used) {
         agentsDef[k].used = used;
     renderAgents();
     vibeTick();
+    queueDiscord();
+    if (status === 'working' && agentRun?.phase === k)
+        showThinking(thinkingLabel(k), k);
 }
 const SURFACES = {
     ide: { name: 'ide', chat: $('#chat'), prompt: $('#prompt'), send: $('#send'), mode: $('#agentMode') },
@@ -4324,31 +4354,65 @@ function useSurface(name) {
     if (!agentRun)
         msgSurface = surface;
 }
+function scrollChat(s) {
+    const scroller = s.name === 'box' ? $('.box-main') : s.chat;
+    scroller.scrollTop = scroller.scrollHeight;
+}
 function addMsg(html) {
     const chat = msgSurface.chat;
     const d = document.createElement('div');
     d.innerHTML = html;
     const el = d.firstElementChild;
-    chat.appendChild(el);
-    const scroller = msgSurface.name === 'box' ? $('.box-main') : chat;
-    scroller.scrollTop = scroller.scrollHeight;
+    // The "thinking" indicator always stays last, under the newest message.
+    chat.insertBefore(el, chat.querySelector('.thinking'));
+    scrollChat(msgSurface);
     saveChat();
     return el;
 }
 const clockTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 // In the IDE replies come from the Planner or Builder; in Breeze Box from the agent itself (Claude Code, Codex…).
-function agentMsg(k, html) {
-    let { name, letter, tint } = agentsDef[k];
+function speaker(k, s = msgSurface) {
     const chosen = selectedAgent();
-    if (msgSurface.name === 'box' && chosen) {
+    if (s.name === 'box' && chosen) {
         const st = AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: 'default' };
-        ({ name } = chosen);
-        ({ letter, tint } = st);
+        return { name: chosen.name, ...st };
     }
+    const { name, letter, tint } = agentsDef[k];
+    return { name, letter, tint };
+}
+function agentMsg(k, html) {
+    const { name, letter, tint } = speaker(k);
     return addMsg(`<div class="msg"><div class="meta"><span class="avatar mini tint-${tint}">${letter}</span><b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
 }
 function userMsg(text) {
     addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${esc(text)}</div></div>`);
+}
+// Shown under the conversation while the agent works; never saved with the chat.
+function thinkingLabel(k) {
+    const who = speaker(k).name;
+    const task = agentsDef[k].task;
+    return msgSurface.name === 'box' || !task ? `${who} is thinking` : `${who} · ${task}`;
+}
+function showThinking(label, k = agentRun?.phase ?? 'assistant') {
+    const s = msgSurface;
+    let el = s.chat.querySelector('.thinking');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'thinking';
+        el.setAttribute('role', 'status');
+        el.innerHTML = '<span class="avatar mini"></span><span class="lbl"></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+        s.chat.append(el);
+        scrollChat(s);
+    }
+    const { letter, tint } = speaker(k, s);
+    const ava = $('.avatar', el);
+    ava.className = `avatar mini tint-${tint}`;
+    ava.textContent = letter;
+    $('.lbl', el).textContent = label;
+}
+function hideThinking() {
+    for (const s of Object.values(SURFACES))
+        s.chat.querySelector('.thinking')?.remove();
 }
 function emptyChat(s = SURFACES.ide) {
     if (s.name === 'box') {
@@ -4369,9 +4433,16 @@ const TOOL_ICON = { read: '◔', edit: '✎', run: '❯', search: '⌕', web: '�
 function toolLine(kind, label) {
     addMsg(`<div class="tool-line ${kind}"><span class="ti">${TOOL_ICON[kind] ?? '•'}</span><span class="tl">${esc(label)}</span></div>`);
 }
-// Chat history is kept per project folder (and once for Breeze Box) so a reload brings it back.
-const chatKey = (s = msgSurface) => (s.name === 'box' ? 'breeze.chat:box' : `breeze.chat:${rootInfo?.root ?? ''}`);
-const agentSessionKey = (s = msgSurface) => `breeze.agentSession:${s.name === 'box' ? 'box' : rootInfo?.root ?? ''}:${appState.agent ?? ''}`;
+// The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
+const chatScope = (s) => (s.name === 'box' ? 'box' : rootInfo?.root ?? '');
+const chatKey = (s = msgSurface) => `breeze.chat:${chatScope(s)}`;
+const agentSessionKey = (s = msgSurface) => `breeze.agentSession:${chatScope(s)}:${appState.agent ?? ''}`;
+// The chat's saveable HTML; empty when there is nothing to keep.
+function chatHtml(s) {
+    if (s.chat.querySelector('.empty'))
+        return '';
+    return [...s.chat.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+}
 let chatTimer;
 function saveChat() {
     clearTimeout(chatTimer);
@@ -4379,7 +4450,7 @@ function saveChat() {
     chatTimer = setTimeout(() => {
         if (s.name === 'ide' && !rootInfo)
             return;
-        const html = s.chat.querySelector('.empty') ? '' : s.chat.innerHTML;
+        const html = chatHtml(s);
         if (html && html.length < 400000)
             store.set(chatKey(s), html);
         else
@@ -4395,37 +4466,107 @@ function restoreChat(s = SURFACES.ide) {
     s.chat.innerHTML = html;
     // Buttons from an earlier run have no handlers any more; show them as settled.
     $$('[data-live]', s.chat).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
-    s.chat.scrollTop = s.chat.scrollHeight;
+    scrollChat(s);
 }
+const historyKey = (s) => `breeze.history:${chatScope(s)}`;
+const chatIdKey = (s) => `breeze.chatId:${chatScope(s)}`;
+const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
+const newChatId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const chatHistory = (s) => store.get(historyKey(s), []);
+function archiveChat(s) {
+    if (s.name === 'ide' && !rootInfo)
+        return;
+    const html = chatHtml(s);
+    if (!html)
+        return;
+    const id = store.get(chatIdKey(s), null) ?? newChatId();
+    const first = s.chat.querySelector('.msg.user .body')?.textContent ?? 'Chat';
+    const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || 'Chat';
+    const entry = { id, title, at: Date.now(), html, agent: appState.agent, session: store.get(agentSessionKey(s), null) };
+    let bytes = 0;
+    const list = [entry, ...chatHistory(s).filter(e => e.id !== id)].filter(e => (bytes += e.html.length) < HISTORY_BYTES).slice(0, HISTORY_MAX);
+    store.set(historyKey(s), list);
+    store.del(chatIdKey(s));
+}
+function openChat(s, e) {
+    if (agentRun) {
+        toast('Stop the agent before switching chats');
+        return;
+    }
+    archiveChat(s);
+    store.set(historyKey(s), chatHistory(s).filter(x => x.id !== e.id));
+    store.set(chatIdKey(s), e.id);
+    store.set(chatKey(s), e.html);
+    // The agent can carry on the conversation only if it is the one that had it.
+    if (e.session && e.agent === appState.agent)
+        store.set(agentSessionKey(s), e.session);
+    else
+        store.del(agentSessionKey(s));
+    restoreChat(s);
+    resetTeam();
+    s.prompt.focus();
+}
+function timeAgo(at) {
+    const m = Math.round((Date.now() - at) / 60000);
+    if (m < 1)
+        return 'just now';
+    if (m < 60)
+        return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24)
+        return `${h}h ago`;
+    const d = Math.round(h / 24);
+    return d < 30 ? `${d}d ago` : new Date(at).toLocaleDateString();
+}
+function showHistory(s, anchor) {
+    if (anchor.classList.contains('open')) {
+        closeMenu();
+        return;
+    }
+    closeMenu();
+    const list = chatHistory(s);
+    const items = list.length
+        ? list.map(e => ({ label: e.title, key: timeAgo(e.at), run: () => openChat(s, e) }))
+        : [{ label: 'No earlier chats yet', enabled: () => false }];
+    if (list.length)
+        items.push({ sep: true }, { label: 'Clear chat history', run: () => { store.del(historyKey(s)); toast('Chat history cleared'); } });
+    const r = anchor.getBoundingClientRect();
+    anchor.classList.add('open');
+    popupMenu(r.right - 300, r.bottom + 4, items, () => anchor.classList.remove('open'));
+    $('#menuRoot .menu').classList.add('history-menu');
+}
+$('#chatHistory').onclick = e => showHistory(SURFACES.ide, e.currentTarget);
+$('#boxHistory').onclick = e => showHistory(SURFACES.box, e.currentTarget);
+commands['chat.history'] = () => showHistory(surface, surface.name === 'box' ? $('#boxHistory') : $('#chatHistory'));
 let agentRun = null;
 let lastRunFiles = [];
 for (const s of Object.values(SURFACES)) {
     s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
-    s.prompt.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            void sendPrompt();
-        }
-    });
+    s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void sendPrompt();
+    } });
 }
 function newChat() {
     if (agentRun)
         stopAgent();
+    archiveChat(surface);
     store.del(agentSessionKey(surface));
     store.del(chatKey(surface));
+    store.del(chatIdKey(surface));
     emptyChat(surface);
-    setAgent('planner', 'idle', 'Waiting for a prompt', 0);
-    setAgent('builder', 'idle', 'Waiting for a plan', 0);
+    resetTeam();
     surface.prompt.focus();
 }
 $('#newChat').onclick = newChat;
 commands['chat.new'] = newChat;
 commands['agent.stop'] = () => stopAgent();
 function setBusy(on) {
-    for (const { send } of Object.values(SURFACES)) {
+    for (const { send, prompt } of Object.values(SURFACES)) {
         send.classList.toggle('stop', on);
         send.textContent = on ? '■ Stop' : 'Send ↵';
         send.title = on ? 'Stop the agent' : 'Send (Enter)';
+        prompt.closest('.composer-box')?.classList.toggle('busy', on);
     }
 }
 function stopAgent() {
@@ -4433,6 +4574,7 @@ function stopAgent() {
         background(api.agent.stop(agentRun.id));
 }
 const MODES = { build: 'build', ask: 'ask', plan: 'plan' };
+const phaseFor = (mode) => ({ build: 'builder', plan: 'planner', ask: 'assistant' }[mode]);
 async function sendPrompt() {
     const text = surface.prompt.value.trim();
     if (!text || agentRun)
@@ -4451,22 +4593,33 @@ async function sendPrompt() {
     surface.prompt.value = '';
     if (surface.chat.querySelector('.empty'))
         surface.chat.innerHTML = '';
+    // A new task: the cards from the last one go away until the agent has read this message.
+    team = [];
+    teamNeed = 0;
+    renderAgents();
     userMsg(text);
-    await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', text, uiMode);
+    await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', text, uiMode, true);
 }
-async function startAgentRun(agentId, mode, prompt, uiMode) {
-    const phase = mode === 'build' ? 'builder' : 'planner';
-    setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
-    if (phase === 'planner')
-        setAgent('builder', 'idle', 'Waiting for a plan', 0);
+async function startAgentRun(agentId, mode, prompt, uiMode, announce = false) {
+    const phase = phaseFor(mode);
+    showThinking(`${speaker(phase).name} is reading your message`, phase);
     setBusy(true);
+    agentsDef[phase].used = 0;
     try {
         const box = msgSurface.name === 'box';
         const id = await api.agent.run({ agent: agentId, mode, prompt, session: store.get(agentSessionKey(), null), box });
-        agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '' };
+        agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '', replied: false, announce };
+        // Events that arrived before the run id came back are replayed now.
+        for (const [runId, ev] of earlyEvents.splice(0))
+            if (runId === id)
+                handleAgentEvent(agentRun, ev);
+        if (agentRun?.id === id)
+            setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
     }
     catch (e) {
         setBusy(false);
+        hideThinking();
+        joinTeam(phase);
         setAgent(phase, 'idle', 'Could not start', 0);
         errorCard(errMsg(e));
     }
@@ -4490,34 +4643,44 @@ function onAgentError(r, ev) {
         r.lastMsg.remove();
     errorCard(ev.text ?? 'Unknown error', ev.hint, ev.action);
 }
+// The first sign of life from the agent: its card appears, and a new task says how many agents it needs.
+function onFirstReply(r) {
+    r.replied = true;
+    if (r.announce)
+        teamNeed = TEAM_SIZE[r.uiMode] ?? 1;
+    joinTeam(r.phase);
+    if (r.announce && msgSurface.name === 'ide')
+        addMsg(`<div class="team-line">${TEAM_LINE[r.uiMode] ?? TEAM_LINE[r.mode]}</div>`);
+}
 const AGENT_EVENTS = {
-    session: (_r, ev) => {
-        if (ev.id)
-            store.set(agentSessionKey(), ev.id);
-    },
-    text: (r, ev) => {
-        if (ev.text) {
-            r.lastText = ev.text;
-            r.lastMsg = agentMsg(r.phase, md(ev.text));
-        }
-    },
+    session: (_r, ev) => { if (ev.id)
+        store.set(agentSessionKey(), ev.id); },
+    text: (r, ev) => { if (ev.text) {
+        r.lastText = ev.text;
+        r.lastMsg = agentMsg(r.phase, md(ev.text));
+    } },
     tool: (r, ev) => { r.tools++; toolLine(ev.kind ?? 'tool', ev.label ?? ''); setAgent(r.phase, 'working', ev.label ?? 'Working', r.tools); },
-    file: (r, ev) => {
-        if (ev.path)
-            onAgentFile(r, ev.path);
-    },
+    file: (r, ev) => { if (ev.path)
+        onAgentFile(r, ev.path); },
     plan: (r, ev) => { r.plan = ev.text ?? ''; },
-    note: (_r, ev) => {
-        if (ev.text)
-            toolLine('note', ev.text);
-    },
+    note: (_r, ev) => { if (ev.text)
+        toolLine('note', ev.text); },
     error: onAgentError,
     done: finishRun,
 };
+function handleAgentEvent(r, ev) {
+    if (!r.replied && ev.t !== 'session' && ev.t !== 'done')
+        onFirstReply(r);
+    AGENT_EVENTS[ev.t]?.(r, ev);
+}
+// A run that fails at once can report before its id reaches the renderer; those events wait here.
+const earlyEvents = [];
 api.agent.onEvent((runId, ev) => {
     const r = agentRun;
     if (r?.id === runId)
-        AGENT_EVENTS[ev.t]?.(r, ev);
+        handleAgentEvent(r, ev);
+    else if (!r && earlyEvents.length < 200)
+        earlyEvents.push([runId, ev]);
 });
 function runSummary(r, ev) {
     const time = ev.ms ? `${Math.max(1, Math.round(ev.ms / 1000))}s` : '';
@@ -4555,29 +4718,34 @@ function showPlan(r) {
 }
 function finishRun(r, ev) {
     agentRun = null;
+    earlyEvents.length = 0;
+    hideThinking();
     setBusy(false);
     for (const k of Object.keys(locks))
         delete locks[k];
     renderTree();
     renderTabs();
     lastRunFiles = [...r.files];
-    vibeDone(!!ev.ok);
     queueGitRefresh();
     if (ev.stopped) {
         addMsg('<div class="handoff">Stopped by you</div>');
         setAgent(r.phase, 'idle', 'Stopped', r.tools);
+        vibeDone(false);
         return;
     }
     if (!ev.ok) {
         setAgent(r.phase, 'idle', 'Stopped with an error', r.tools);
+        vibeDone(false);
         return;
     }
     if (r.uiMode === 'plan' && r.mode === 'plan') {
         showPlan(r);
+        vibeDone(true, true);
         return;
     }
     const changed = r.files.size ? `Changed ${plural(r.files.size, 'file')}` : 'Answered';
     setAgent(r.phase, 'done', changed, r.tools);
+    vibeDone(true);
     const bits = runSummary(r, ev);
     const summary = bits.length ? ' · ' + bits.join(' · ') : '';
     const review = r.files.size ? '<button class="btn btn-sm" data-live data-review>Review changes</button>' : '';
@@ -4587,6 +4755,68 @@ function finishRun(r, ev) {
     if (r.files.size && running)
         void reloadPreview();
 }
+/* ----- Custom dropdowns: every select.select gets a button that opens Breeze's own menu ----- */
+// The native <select> stays in the page (hidden) so code and forms keep reading its value.
+function openDropdown(sel, btn) {
+    if (btn.classList.contains('open')) {
+        closeMenu();
+        return;
+    }
+    closeMenu();
+    const items = [...sel.options].map(o => ({
+        label: o.text,
+        checked: () => o.value === sel.value,
+        enabled: () => !o.disabled,
+        run: () => {
+            if (sel.value !== o.value) {
+                sel.value = o.value;
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            btn.focus();
+        },
+    }));
+    const r = btn.getBoundingClientRect();
+    btn.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+    popupMenu(r.left, r.bottom + 4, items, () => { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); });
+    const m = $('#menuRoot .menu');
+    m.classList.add('dd-menu');
+    m.style.minWidth = `${Math.max(150, r.width)}px`;
+    m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
+    // Near the bottom of the window (the chat composers) the menu opens upwards.
+    if (r.bottom + 4 + m.offsetHeight > innerHeight - 8) {
+        m.style.top = `${Math.max(8, r.top - m.offsetHeight - 4)}px`;
+        m.classList.add('up');
+    }
+}
+function enhanceSelect(sel) {
+    if (sel.dataset.dd)
+        return;
+    sel.dataset.dd = '1';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dd-btn';
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-label', sel.getAttribute('aria-label') ?? 'Choose');
+    sel.classList.add('dd-native');
+    sel.tabIndex = -1;
+    sel.setAttribute('aria-hidden', 'true');
+    sel.after(btn);
+    const label = () => { btn.innerHTML = `<span class="dd-val">${esc(sel.selectedOptions[0]?.text ?? '')}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`; };
+    label();
+    sel.addEventListener('change', label);
+    btn.onclick = () => openDropdown(sel, btn);
+    btn.onkeydown = e => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')
+            return;
+        e.preventDefault();
+        if (!btn.classList.contains('open'))
+            openDropdown(sel, btn);
+    };
+}
+$$('select.select').forEach(enhanceSelect);
+new MutationObserver(() => $$('select.select:not([data-dd])').forEach(enhanceSelect)).observe(document.body, { childList: true, subtree: true });
 /* ================= Source control (git) ================= */
 let gitState = { repo: false };
 let gitLog = { head: null, commits: [] };
@@ -4596,10 +4826,8 @@ const commitDetails = new Map();
 const scmCollapsed = new Set(store.get('breeze.scmCollapsed', []));
 let gitTimer;
 function queueGitRefresh() { clearTimeout(gitTimer); gitTimer = setTimeout(() => void refreshGit(), 400); }
-window.addEventListener('focus', () => {
-    if (rootInfo)
-        queueGitRefresh();
-});
+window.addEventListener('focus', () => { if (rootInfo)
+    queueGitRefresh(); });
 async function refreshGit() {
     if (!rootInfo) {
         gitState = { repo: false };
@@ -4719,12 +4947,10 @@ function renderScm() {
     const msg = $('#scmMsg', el);
     msg.value = scmDraft;
     msg.oninput = () => { scmDraft = msg.value; };
-    msg.onkeydown = e => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            run('git.commit');
-        }
-    };
+    msg.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        run('git.commit');
+    } };
 }
 let scmDraft = '';
 const seenScm = new Set();
@@ -4736,6 +4962,11 @@ function toggleScmSection(head) {
     else
         scmCollapsed.add(key);
     sec.classList.toggle('closed');
+    // Only a section opened by a click slides in; refreshes redraw without animating.
+    if (!sec.classList.contains('closed')) {
+        sec.classList.add('opening');
+        sec.addEventListener('animationend', () => sec.classList.remove('opening'), { once: true });
+    }
     store.set('breeze.scmCollapsed', [...scmCollapsed]);
 }
 function scmAll(kind) {
@@ -4936,19 +5167,55 @@ function commitDetailHtml(d) {
     <div class="row mt-8"><button class="btn btn-sm" data-branch-from="${d.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${d.hash}">Copy id</button></div>
   </div>`;
 }
-async function toggleCommit(hash) {
-    openCommit = openCommit === hash ? null : hash;
-    renderScm();
-    if (openCommit && !commitDetails.has(hash)) {
-        try {
-            commitDetails.set(hash, await api.git.show(hash));
-        }
-        catch (e) {
-            toast(errMsg(e));
-            openCommit = null;
-        }
-        renderScm();
+// Opens or closes one checkpoint's details in place; the rest of the panel is left alone.
+const commitRow = (hash) => $(`#scm .commit[data-commit="${hash}"]`);
+function closeCommitDetail(hash) {
+    const row = commitRow(hash);
+    row?.classList.remove('on');
+    const d = row?.nextElementSibling;
+    if (d?.classList.contains('commit-detail'))
+        d.remove();
+}
+function placeCommitDetail(hash) {
+    const row = commitRow(hash);
+    if (!row)
+        return;
+    const holder = document.createElement('div');
+    holder.innerHTML = commitDetailHtml(commitDetails.get(hash));
+    const fresh = holder.firstElementChild;
+    const old = row.nextElementSibling;
+    // Loading → loaded swaps the contents only, so the box doesn't animate in twice.
+    if (old?.classList.contains('commit-detail'))
+        old.innerHTML = fresh.innerHTML;
+    else {
+        fresh.classList.add('enter');
+        row.after(fresh);
     }
+    row.classList.add('on');
+}
+async function toggleCommit(hash) {
+    const was = openCommit;
+    openCommit = openCommit === hash ? null : hash;
+    if (was)
+        closeCommitDetail(was);
+    if (!openCommit)
+        return;
+    placeCommitDetail(hash);
+    if (commitDetails.has(hash))
+        return;
+    try {
+        commitDetails.set(hash, await api.git.show(hash));
+    }
+    catch (e) {
+        toast(errMsg(e));
+        if (openCommit === hash) {
+            openCommit = null;
+            closeCommitDetail(hash);
+        }
+        return;
+    }
+    if (openCommit === hash)
+        placeCommitDetail(hash);
 }
 $('#scm').addEventListener('click', e => {
     const t = e.target;
@@ -5036,10 +5303,8 @@ async function pickBranch() {
             $('[data-new]', m)?.addEventListener('click', () => switchTo(q, true));
         };
         input.oninput = render;
-        input.onkeydown = e => {
-            if (e.key === 'Enter')
-                $('[data-new], [data-br]', m)?.click();
-        };
+        input.onkeydown = e => { if (e.key === 'Enter')
+            $('[data-new], [data-br]', m)?.click(); };
         render();
     }, undefined, 'top');
 }
@@ -5105,9 +5370,7 @@ function enterMode(mode) {
         showIde();
         return;
     }
-    $('#onboard').classList.add('hidden');
-    $('#ide').classList.add('hidden');
-    $('#box').classList.remove('hidden');
+    swapScreen('#box');
     useSurface('box');
     renderUser();
     renderAgentPill();
@@ -5193,10 +5456,8 @@ $('#vibeArm').onclick = () => {
 };
 function openFeedPicker() {
     openModal(`<h3>Vibe Mode feeds</h3><p class="sub">Pick what plays while your agents work. Connecting opens the site so you can sign in.</p>
-    <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`, m => void renderFeedChoices($('#feedPick', m)), () => {
-        if (connectedSites().length && !appState.vibeArmed)
-            setVibeArmed(true);
-    });
+    <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`, m => void renderFeedChoices($('#feedPick', m)), () => { if (connectedSites().length && !appState.vibeArmed)
+        setVibeArmed(true); });
 }
 commands['vibe.feeds'] = openFeedPicker;
 function frameRect() {
@@ -5239,10 +5500,8 @@ function enterVibe() {
     tickVibeClock();
     vibeClock = setInterval(tickVibeClock, 1000);
     // Wait for the stage to settle before laying the live feed over it.
-    setTimeout(() => {
-        if (vibeOn)
-            showFeed();
-    }, 450);
+    setTimeout(() => { if (vibeOn)
+        showFeed(); }, 450);
 }
 function exitVibe() {
     if (!vibeOn)
@@ -5256,6 +5515,10 @@ function exitVibe() {
 }
 // Called whenever an agent's status changes.
 function vibeTick() {
+    if (vibeOn && agentWorking() && !$('#vibeReady').classList.contains('hidden')) {
+        resumeVibe();
+        return;
+    }
     if (!appState.vibeArmed || !connectedSites().length || vibeOn || vibeTimer != null || !agentWorking())
         return;
     vibeTimer = setTimeout(() => {
@@ -5264,7 +5527,16 @@ function vibeTick() {
             enterVibe();
     }, VIBE_DELAY);
 }
-function vibeDone(ok) {
+// The ready card was showing and the agents started again (e.g. the Builder after plan approval).
+function resumeVibe() {
+    $('#vibeReady').classList.add('hidden');
+    $('#vibeStatus').classList.remove('hidden');
+    clearInterval(vibeClock);
+    tickVibeClock();
+    vibeClock = setInterval(tickVibeClock, 1000);
+}
+// `plan`: the Planner finished and its plan waits for approval.
+function vibeDone(ok, plan = false) {
     clearTimeout(vibeTimer);
     vibeTimer = undefined;
     if (!vibeOn)
@@ -5273,8 +5545,11 @@ function vibeDone(ok) {
     $('#vibeStatus').classList.add('hidden');
     $('#vibeReady').classList.remove('hidden');
     $('#vibeReady').classList.toggle('failed', !ok);
-    $('#vibeReadyText').textContent = ok ? '✓ Your code is ready' : 'The agent stopped';
-    $('#vibeBack').textContent = ok ? 'Show me' : 'Back to code';
+    let text = ok ? '✓ Your code is ready' : 'The agent stopped';
+    if (ok && plan)
+        text = '📋 The plan is ready for you';
+    $('#vibeReadyText').textContent = text;
+    $('#vibeBack').textContent = ok ? (plan ? 'Review plan' : 'Show me') : 'Back to code';
 }
 $('#vibeClose').onclick = exitVibe;
 $('#vibeBack').onclick = () => {
@@ -5291,24 +5566,108 @@ $('#vibeMute').onclick = () => {
         background(api.vibe.mute(vibeMuted));
 };
 // Keep the live feed glued to the frame when the window changes size.
-new ResizeObserver(() => {
-    if (vibeOn && vibeSiteShown && isDesktop)
-        background(api.vibe.bounds(frameRect()));
-}).observe(vibeFrame);
+new ResizeObserver(() => { if (vibeOn && vibeSiteShown && isDesktop)
+    background(api.vibe.bounds(frameRect())); }).observe(vibeFrame);
 /* ================= Discord ================= */
-let discord = false;
+// Rich Presence through the Discord app on this computer (main.js talks to it); updates are coalesced.
+const discordSince = Date.now();
+let discordTimer;
+let discordLive = false; // connected and showing
+function discordActivity() {
+    const working = Object.values(agentsDef).find(a => a.status === 'working');
+    const inBox = appState.mode === 'box';
+    const file = active ? baseName(active) : null;
+    if (!appState.discordDetails) {
+        return { details: working ? 'Vibe coding with agents' : inBox ? 'Chatting with an agent' : 'Writing code', state: 'Breeze IDE', start: discordSince };
+    }
+    let details = inBox ? 'Chatting in Breeze Box' : 'Idle';
+    if (working)
+        details = `${working.name}: ${working.task}`;
+    else if (!inBox && file)
+        details = `Editing ${file}`;
+    const lang = !inBox && active ? langOf(active)[1] : '';
+    const where = rootInfo ? `in ${rootInfo.name}` : 'Breeze IDE';
+    return { details, state: lang && !working ? `${lang} · ${where}` : where, start: discordSince };
+}
+function renderDiscord(state, why = '') {
+    const b = $('#discord');
+    b.textContent = state === 'on' ? 'Discord: on' : state === 'error' ? 'Discord: not connected' : 'Discord: off';
+    b.title = why || 'Discord presence';
+    b.classList.toggle('armed', state === 'on');
+}
+async function pushDiscord() {
+    if (!appState.discord)
+        return;
+    try {
+        await api.discord.set(discordActivity());
+        if (!discordLive)
+            renderDiscord('on');
+        discordLive = true;
+    }
+    catch (e) {
+        discordLive = false;
+        renderDiscord('error', errMsg(e));
+    }
+}
+function queueDiscord() {
+    if (!appState.discord)
+        return;
+    clearTimeout(discordTimer);
+    discordTimer = setTimeout(() => void pushDiscord(), 1200);
+}
+async function discordOn(details) {
+    appState.discordDetails = details;
+    try {
+        const r = await api.discord.set(discordActivity());
+        appState.discord = true;
+        discordLive = true;
+        saveApp();
+        renderDiscord('on');
+        toast(r.user ? `Showing on Discord as ${r.user}` : 'Discord presence on');
+        return true;
+    }
+    catch (e) {
+        openModal(`<h3>Couldn't reach Discord</h3><pre class="git-err">${esc(errMsg(e))}</pre><div class="row end"><button class="btn btn-primary" data-close>OK</button></div>`);
+        return false;
+    }
+}
+function discordOff() {
+    appState.discord = false;
+    discordLive = false;
+    saveApp();
+    clearTimeout(discordTimer);
+    renderDiscord('off');
+    background(api.discord.clear());
+}
 $('#discord').onclick = () => {
-    if (discord) {
-        discord = false;
-        $('#discord').textContent = 'Discord: off';
+    if (appState.discord) {
+        discordOff();
+        toast('Discord presence off');
         return;
     }
-    const detail = [rootInfo?.name ?? 'No project', active ? baseName(active) : null, active ? langOf(active)[1] : null]
-        .filter((s) => !!s).map(esc).join(' · ');
+    const preview = () => {
+        const a = discordActivity();
+        return `<b>Breeze IDE</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div>`;
+    };
     openModal(`<h3>Show what you're doing on Discord?</h3><p class="sub">Your friends will see:</p>
-    <div class="setup-card mb-12"><b>Breeze IDE</b><div class="text-2">Vibe coding with agents</div><div class="text-2">${detail}</div><div class="text-3 fs-12">00:14 elapsed</div></div>
-    <p class="sub fs-12">Project and file names can include client or employer names. You can hide details anytime from the status bar.</p>
-    <div class="row end"><button class="btn" data-close>Not now</button><button class="btn btn-primary" id="dOn">Turn on</button></div>`, m => { $('#dOn', m).onclick = () => { discord = true; $('#discord').textContent = 'Discord: on'; closeModal(); }; });
+    <div class="setup-card mb-12" id="dPreview">${preview()}</div>
+    <label class="check-row mb-12"><input type="checkbox" id="dDetails" ${appState.discordDetails ? 'checked' : ''}> Show project and file names</label>
+    <p class="sub fs-12">Project and file names can include client or employer names. The Discord app must be running on this computer.</p>
+    <div class="row end"><button class="btn" data-close>Not now</button><button class="btn btn-primary" id="dOn">Turn on</button></div>`, m => {
+        const box = $('#dDetails', m);
+        box.onchange = () => { appState.discordDetails = box.checked; $('#dPreview', m).innerHTML = preview(); };
+        const on = $('#dOn', m);
+        on.onclick = async () => {
+            on.disabled = true;
+            on.textContent = 'Connecting…';
+            if (await discordOn(box.checked))
+                closeModal();
+            else {
+                on.disabled = false;
+                on.textContent = 'Turn on';
+            }
+        };
+    });
 };
 /* ================= Modal & misc ================= */
 let modalOnClose = null;
@@ -5320,10 +5679,8 @@ function openModal(html, bind, onClose, place = 'center') {
     $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`);
     const m = $('#modalRoot .scrim:not(.closing) .modal');
     modalOnClose = onClose ?? null;
-    $('#modalRoot .scrim:not(.closing)').onmousedown = e => {
-        if (e.target.classList.contains('scrim'))
-            closeModal();
-    };
+    $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if (e.target.classList.contains('scrim'))
+        closeModal(); };
     $$('[data-close]', m).forEach(b => b.onclick = closeModal);
     bind?.(m);
 }
@@ -5357,6 +5714,10 @@ async function boot() {
     bindToasts();
     renderDetection();
     setVibeArmed(appState.vibeArmed);
+    if (appState.discord) {
+        renderDiscord('off', 'Connecting to Discord…');
+        queueDiscord();
+    }
     // The main process remembers who signed in; it wins over the renderer's copy.
     const signed = await api.auth.user().catch(() => null);
     if (signed || isDesktop) {
@@ -5369,6 +5730,7 @@ async function boot() {
         enterMode(appState.mode);
     else
         goStep(step);
+    booted = true;
     const info = await api.fs.restore().catch(() => null);
     if (info)
         await loadWorkspace(info);

@@ -90,6 +90,10 @@ contextBridge.exposeInMainWorld('breeze', {
     mute: muted => invoke('vibe:mute', muted),
     hide: () => invoke('vibe:hide'),
   },
+  discord: {
+    set: activity => invoke('discord:set', activity),
+    clear: () => invoke('discord:clear'),
+  },
   win: {
     reload: () => invoke('win:reload'),
     toggleDevTools: () => invoke('win:devtools'),

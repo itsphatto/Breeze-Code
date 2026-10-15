@@ -680,14 +680,24 @@ async function llmConfig(probe) {
   return { url: hit.url, model: hit.models[0], models: hit.models, key: null };
 }
 
+// With no address, the usual local addresses are tried with the key.
+async function llmFind(key) {
+  const errors = [];
+  for (const u of LLM_DEFAULTS) {
+    try { return { url: u, models: await llmModels(u, key, 1500) }; } catch (err) { errors.push(err); }
+  }
+  const answered = errors.find(e => !/fetch failed|timeout|aborted|ECONNREFUSED/i.test(e.message));
+  throw answered || new Error('No local LLM server is running. Start Ollama or LM Studio, then connect again.');
+}
 ipcMain.handle('llm:connect', async (_e, url, key) => {
   url = llmBase(url);
-  if (!/^https?:\/\/[^\s/]+/i.test(url)) throw new Error('Enter the server address, for example http://localhost:11434/v1');
   key = String(key || '').trim();
+  if (!url) ({ url } = await llmFind(key));
+  if (!/^https?:\/\/[^\s/]+/i.test(url)) throw new Error('Enter the server address, for example http://localhost:11434/v1');
   const models = await llmModels(url, key);
   setSecret('llmKey', key || null);
   saveState({ llmUrl: url, llmModel: models[0], llmModels: models, llmOff: false });
-  return { model: models[0], models };
+  return { url, model: models[0], models };
 });
 ipcMain.handle('llm:setModel', (_e, model) => {
   if (!(loadState().llmModels || []).includes(model)) throw new Error('That model is not on the server');
@@ -745,12 +755,31 @@ function cliArgs(agent, mode, prompt, session) {
     return { args, prompt };
   }
   const args = ['exec', '--json', '-s', build ? 'workspace-write' : 'read-only', '--skip-git-repo-check'];
+  const model = loadState().codexModel;
+  if (model && SAFE_MODEL.test(model)) args.push('-m', model);
   if (session) args.push('resume', session);
   args.push('-');
   if (build) return { args, prompt };
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
+// Codex's config may name a model the signed-in account can't use (e.g. a ChatGPT plan without API models).
+// Breeze then retries once with the best model from Codex's own model list and keeps using it.
+const SAFE_MODEL = /^[\w.:-]{1,64}$/;
+const MODEL_REFUSED = /model[^\n]{0,80}(?:is not supported|does not exist|not found|unsupported|not available)/i;
+function codexModels() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(HOME, '.codex', 'models_cache.json'), 'utf8'));
+    return (j.models || []).filter(m => m.visibility !== 'hide' && SAFE_MODEL.test(m.slug || ''))
+      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99)).map(m => m.slug);
+  } catch { return []; }
+}
+function codexFallback(errText) {
+  const refused = /'([\w.:-]+)' model|model '([\w.:-]+)'|model `([\w.:-]+)`/i.exec(errText);
+  const bad = refused?.slice(1).find(Boolean);
+  return codexModels().find(m => m !== bad && m !== loadState().codexModel) || null;
+}
+
 // Agents work in the open project; Breeze Box chats may also run without one, in the Breeze Box folder.
 async function startRun(runId, { agent, mode, prompt, session, box }) {
   const base = root || (box ? boxDir() : null);
@@ -767,18 +796,33 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
     runs.delete(runId);
     return;
   }
-  const cli = cliArgs(agent, mode, prompt, session);
-  // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags and
-  // a validated session id do (npm .cmd shims need a shell on Windows).
-  const child = spawn(bin, cli.args, { cwd: base, shell: /\.(?:cmd|bat)$/i.test(bin), windowsHide: true, env: process.env });
-  run.child = child;
-  child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
-  child.stdin.end(cli.prompt);
-  streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode);
+  const launch = () => {
+    const cli = cliArgs(agent, mode, prompt, session);
+    // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags,
+    // a validated model name and a validated session id do (npm .cmd shims need a shell on Windows).
+    const child = spawn(bin, cli.args, { cwd: base, shell: /\.(?:cmd|bat)$/i.test(bin), windowsHide: true, env: process.env });
+    run.child = child;
+    child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
+    child.stdin.end(cli.prompt);
+    streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode, retryModel);
+  };
+  // Called once when Codex refuses its configured model.
+  let retried = false;
+  const retryModel = errText => {
+    const model = !retried && agent === 'codex' ? codexFallback(errText) : null;
+    if (!model) return false;
+    retried = true;
+    saveState({ codexModel: model });
+    emit(runId, { t: 'note', text: `Codex can't use the model in its settings with your account, so Breeze switched it to ${model}.` });
+    runs.set(runId, run);
+    launch();
+    return true;
+  };
+  launch();
 }
 // Parses one JSON event per line from the agent's stdout.
-function streamCli(runId, run, child, parse, mode) {
-  const ctx = { done: false, lastError: '', stderr: '', lastText: '' };
+function streamCli(runId, run, child, parse, mode, retryModel) {
+  const ctx = { done: false, lastError: '', stderr: '', lastText: '', retryModel };
   let buf = '';
   const line = text => {
     if (!text) return;
@@ -794,6 +838,7 @@ function streamCli(runId, run, child, parse, mode) {
   child.on('error', err => { ctx.lastError = err.message; });
   child.on('close', code => {
     runs.delete(runId);
+    if (ctx.retry && !run.stopped && ctx.retryModel?.(ctx.retry)) return;
     if (ctx.done) return;
     if (run.stopped) { emit(runId, { t: 'done', ok: false, stopped: true }); return; }
     emit(runId, { t: 'error', text: ctx.lastError || ctx.stderr.trim().split('\n').slice(-6).join('\n') || `The agent exited with code ${code}` });
@@ -861,15 +906,19 @@ const CODEX_ITEMS = {
   mcp_tool_call: (runId, it) => emit(runId, { t: 'tool', kind: 'tool', label: `${it.server}: ${it.tool}` }),
   web_search: (runId, it) => emit(runId, { t: 'tool', kind: 'web', label: `Searched the web for ${it.query}` }),
   todo_list: runId => emit(runId, { t: 'tool', kind: 'todo', label: 'Updated its to-do list' }),
-  error: (runId, it) => { if (it.message) emit(runId, { t: 'note', text: it.message }); },
+  // Codex's warning about a model it has no metadata for is noise to the user.
+  error: (runId, it) => { if (it.message && !/^Model metadata for/i.test(it.message)) emit(runId, { t: 'note', text: it.message }); },
 };
 function codexEvent(runId, d, ctx, mode) {
   if (d.type === 'thread.started') emit(runId, { t: 'session', id: d.thread_id });
   else if (d.type === 'item.completed' && d.item) CODEX_ITEMS[d.item.type]?.(runId, d.item, ctx);
   else if (d.type === 'error') ctx.lastError = codexError(d.message || '');
   else if (d.type === 'turn.failed') {
+    const text = codexError(d.error?.message || ctx.lastError || 'The turn failed');
+    // A refused model gets one retry with another model once the process exits (see streamCli).
+    if (MODEL_REFUSED.test(text) && ctx.retryModel && !ctx.retry) { ctx.retry = text; return; }
     ctx.done = true;
-    emit(runId, { t: 'error', text: codexError(d.error?.message || ctx.lastError || 'The turn failed') });
+    emit(runId, { t: 'error', text });
     emit(runId, { t: 'done', ok: false });
   } else if (d.type === 'turn.completed') {
     ctx.done = true;
@@ -1396,3 +1445,52 @@ ipcMain.handle('vibe:hide', () => {
   vibeView.webContents.close();
   vibeView = null;
 });
+
+/* ================= Discord Rich Presence ================= */
+// Talks to the Discord app on this computer. It needs the id of a Discord application (made once at
+// https://discord.com/developers/applications); the id is public, not a secret.
+const { DiscordRpc } = require('./discord');
+const DEFAULT_DISCORD_CLIENT_ID = '';
+function discordClientId() {
+  let file = {};
+  try { file = JSON.parse(fs.readFileSync(path.join(__dirname, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
+  return String(process.env.BREEZE_DISCORD_CLIENT_ID || file.discord?.clientId || DEFAULT_DISCORD_CLIENT_ID).trim();
+}
+let discordRpc = null;
+let discordWanted = null;   // the activity the renderer asked for last
+let discordSentAt = 0;
+let discordTimer = null;
+const DISCORD_GAP = 4000;   // Discord allows about 5 updates per 20 seconds
+
+async function discordConnect() {
+  const id = discordClientId();
+  if (!/^\d{15,22}$/.test(id)) throw new Error('Discord presence needs a Discord application id. Add "discord": { "clientId": "…" } to breeze.config.json or set BREEZE_DISCORD_CLIENT_ID.');
+  if (discordRpc?.connected) return discordRpc.user;
+  discordRpc = new DiscordRpc(id);
+  discordRpc.onClose = () => { discordRpc = null; };
+  return discordRpc.connect();
+}
+function discordFlush() {
+  clearTimeout(discordTimer);
+  const wait = discordSentAt + DISCORD_GAP - Date.now();
+  if (wait > 0) { discordTimer = setTimeout(discordFlush, wait); return; }
+  if (!discordRpc?.connected || !discordWanted) return;
+  discordSentAt = Date.now();
+  discordRpc.setActivity({ ...discordWanted, largeImageKey: 'breeze', largeImageText: 'Breeze IDE' }).catch(logError('discord'));
+}
+const discordText = (s, max = 120) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, max) : undefined);
+ipcMain.handle('discord:set', async (_e, a) => {
+  const user = await discordConnect();
+  discordWanted = { details: discordText(a?.details), state: discordText(a?.state), startTimestamp: Number(a?.start) || undefined };
+  discordFlush();
+  return { user: user?.global_name || user?.username || null };
+});
+ipcMain.handle('discord:clear', async () => {
+  discordWanted = null;
+  clearTimeout(discordTimer);
+  if (!discordRpc) return;
+  await discordRpc.setActivity(null).catch(logError('discord'));
+  discordRpc.close();
+  discordRpc = null;
+});
+app.on('before-quit', () => discordRpc?.close());

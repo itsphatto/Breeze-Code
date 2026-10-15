@@ -4,7 +4,7 @@
    Agent conversations, checkpoints and collaboration are still simulated. */
 
 /* ================= Types ================= */
-type AgentKey = 'planner' | 'builder';
+type AgentKey = 'assistant' | 'planner' | 'builder';
 type AgentStatus = 'idle' | 'working' | 'waiting' | 'done';
 
 interface Agent {
@@ -37,6 +37,7 @@ interface Completion { text: string; dir: boolean; }
 interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 interface Rect { x: number; y: number; width: number; height: number; }
+interface DiscordActivity { details?: string; state?: string; start?: number; }
 
 interface BreezeApi {
   fs: {
@@ -71,7 +72,10 @@ interface BreezeApi {
   run: { file(rel: string): Promise<{ id?: number; error?: string }>; };
   sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; };
   // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
-  llm: { connect(url: string, key: string): Promise<{ model: string; models: string[] }>; setModel(model: string): Promise<void>; disconnect(): Promise<void>; };
+  // An empty url makes the desktop app look for Ollama or LM Studio at their usual addresses.
+  llm: { connect(url: string, key: string): Promise<{ url?: string; model: string; models: string[] }>; setModel(model: string): Promise<void>; disconnect(): Promise<void>; };
+  // Discord Rich Presence through the Discord app on this computer.
+  discord: { set(activity: DiscordActivity): Promise<{ user: string | null }>; clear(): Promise<void>; };
   agent: {
     run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null; box?: boolean }): Promise<number>;
     stop(runId: number): Promise<void>;
@@ -378,9 +382,8 @@ function demoApi(): BreezeApi {
     llm: {
       async connect(url) {
         await wait(500);
-        if (!/^https?:\/\/\S+/i.test(url.trim())) throw new Error('Enter the server address, for example http://localhost:11434/v1');
         store.set('breeze.demoLlm', 'llama3.1');
-        return { model: 'llama3.1', models: ['llama3.1', 'qwen2.5-coder'] };
+        return { url: url.trim() || 'http://127.0.0.1:11434/v1', model: 'llama3.1', models: ['llama3.1', 'qwen2.5-coder'] };
       },
       async setModel(model) { store.set('breeze.demoLlm', model); },
       async disconnect() { store.del('breeze.demoLlm'); },
@@ -461,6 +464,10 @@ function demoApi(): BreezeApi {
       async mute() { /* placeholder only */ },
       async hide() { /* placeholder only */ },
     },
+    discord: {
+      async set() { return { user: null }; },
+      async clear() { /* nothing to clear in the browser */ },
+    },
     win: {
       async reload() { location.reload(); },
       async toggleDevTools() { toast('Developer tools are available in the desktop app'); },
@@ -488,9 +495,11 @@ type WorkMode = 'ide' | 'box';
 interface AppState {
   onboarded: boolean; step: number; user: User | null; agent: string | null; detect: Detection | null;
   vibeArmed: boolean; vibeSites: string[]; vibeSite: string | null; mode: WorkMode;
+  discord: boolean; discordDetails: boolean;
 }
 const appState: AppState = {
   onboarded: false, step: 0, user: null, agent: null, detect: null, vibeArmed: false, vibeSites: [], vibeSite: null, mode: 'ide',
+  discord: false, discordDetails: true,
   ...store.get<Partial<AppState>>('breeze.app', {}),
 };
 const saveApp = () => store.set('breeze.app', appState);
@@ -717,20 +726,15 @@ function fixSelectedAgent(): void {
 }
 
 const pillClass = (on: boolean) => (on ? 'blue' : 'ok');
-const LLM_DEFAULT_URL = 'http://localhost:11434/v1';
-function trimSlashes(s: string): string {
-  let end = s.length;
-  while (end > 0 && s[end - 1] === '/') end--;
-  return s.slice(0, end);
-}
-// The local LLM card: server address to connect, or (once connected) its address and a model picker.
+// The local LLM card: an API key to connect with (the server is found on this computer),
+// or (once connected) its address and a model picker.
 function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
   const name = `<span class="nm">${esc(a.name)} <small>API</small></span>`;
   if (!a.found) {
     return `<div class="agent-opt api missing">${mark}${name}
       <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ↗</button>
-      <span class="sub">Ollama, LM Studio or any OpenAI-compatible server</span>
-      <div class="key-row"><input class="input url" data-llm-url aria-label="Server address" placeholder="${LLM_DEFAULT_URL}" value="${LLM_DEFAULT_URL}" spellcheck="false"><input class="input" type="password" data-llm-key aria-label="API key (optional)" placeholder="API key (optional)" autocomplete="off"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
+      <span class="sub">Finds Ollama or LM Studio running on this computer</span>
+      <div class="key-row"><input class="input" type="password" data-llm-key aria-label="API key" placeholder="API key" autocomplete="off" spellcheck="false"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
       <div class="key-err hidden"></div></div>`;
   }
   const label = on ? 'Selected' : 'Ready';
@@ -765,13 +769,13 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
   const local = () => appState.detect?.agents.find(a => a.id === 'local');
   const connect = root.querySelector<HTMLButtonElement>('[data-llm-connect]');
   if (connect) {
-    const url = $<HTMLInputElement>('[data-llm-url]', root), key = $<HTMLInputElement>('[data-llm-key]', root);
+    const key = $<HTMLInputElement>('[data-llm-key]', root);
     const save = async () => {
       const err = root.querySelector<HTMLElement>('.key-err');
       connect.disabled = true; connect.textContent = 'Connecting…';
       try {
-        const r = await api.llm.connect(url.value, key.value);
-        Object.assign(local() ?? {}, { found: true, path: trimSlashes(url.value.trim()), version: r.model, models: r.models });
+        const r = await api.llm.connect('', key.value);
+        Object.assign(local() ?? {}, { found: true, path: r.url ?? null, version: r.model, models: r.models });
         if (!selectedAgent()) appState.agent = 'local';
         saveApp();
         toast(`Connected · ${r.model}`);
@@ -782,7 +786,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
       }
     };
     connect.onclick = () => void save();
-    for (const input of [url, key]) input.onkeydown = e => { if (e.key === 'Enter') void save(); };
+    key.onkeydown = e => { if (e.key === 'Enter') void save(); };
   }
   const model = root.querySelector<HTMLSelectElement>('[data-llm-model]');
   if (model) model.onchange = () => background(api.llm.setModel(model.value).then(() => {
@@ -854,7 +858,7 @@ function renderAgentPill(): void {
   $('#agentPill').textContent = a ? a.name : 'Choose an agent';
   const model = a?.api && a.version ? ' · ' + a.version : '';
   $('#boxModel').textContent = a ? `${a.name}${model} ▾` : 'Choose an agent ▾';
-  agentsDef.planner.model = agentsDef.builder.model = modelLabel(a);
+  for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
 }
 $('#agentPill').onclick = openAgentPicker;
@@ -900,8 +904,29 @@ $('#startBuilding').onclick = () => {
   appState.onboarded = true; saveApp();
   enterMode(appState.mode);
 };
+// Switching between the onboarding, the IDE and Breeze Box: the old screen fades back, the new one rises in.
+let swapTimer: number | undefined;
+let booted = false;
+function swapScreen(to: string): void {
+  const next = $(to);
+  const screens = ['#onboard', '#ide', '#box'].map(id => $(id));
+  // At launch the remembered screen just appears; the animation is for switching.
+  if (!booted) { for (const el of screens) el.classList.toggle('hidden', el !== next); return; }
+  const prev = screens.find(el => el !== next && !el.classList.contains('hidden') && !el.classList.contains('screen-out'));
+  clearTimeout(swapTimer);
+  for (const el of screens) if (el !== next && el !== prev) { el.classList.remove('screen-out'); el.classList.add('hidden'); }
+  if (!next.classList.contains('hidden') && !next.classList.contains('screen-out')) return; // already showing
+  next.classList.remove('hidden', 'screen-out', 'screen-in');
+  void next.offsetWidth; // restart the entrance animation
+  next.classList.add('screen-in');
+  next.addEventListener('animationend', () => next.classList.remove('screen-in'), { once: true });
+  queueDiscord();
+  if (!prev) return;
+  prev.classList.add('screen-out');
+  swapTimer = setTimeout(() => { prev.classList.remove('screen-out'); prev.classList.add('hidden'); }, 260);
+}
 function showIde(): void {
-  $('#onboard').classList.add('hidden'); $('#box').classList.add('hidden'); $('#ide').classList.remove('hidden');
+  swapScreen('#ide');
   useSurface('ide');
   renderUser();
   applyLayout();
@@ -910,6 +935,7 @@ function showIde(): void {
 
 /* ================= Agents (data) ================= */
 const agentsDef: Record<AgentKey, Agent> = {
+  assistant: { name: 'Assistant', letter: 'A', tint: 'assistant', model: 'no agent', status: 'idle', task: 'Waiting for a question', used: 0 },
   planner: { name: 'Planner', letter: 'P', tint: 'planner', model: 'no agent', status: 'idle', task: 'Waiting for a prompt', used: 0 },
   builder: { name: 'Builder', letter: 'B', tint: 'builder', model: 'no agent', status: 'idle', task: 'Waiting for a plan', used: 0 },
 };
@@ -1953,6 +1979,7 @@ function setActive(path: string | null): void {
   const changed = active !== path;
   active = path;
   renderTabs(); renderEditor(); renderTree(); saveSession();
+  if (changed) queueDiscord();
   if (changed) for (const el of [$('#hl'), $('#gutter')]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
   if (running && path && /\.(html?|css|js)$/i.test(path)) $('#urlText').title = path;
 }
@@ -2415,11 +2442,36 @@ function enterKey(ta: HTMLTextAreaElement): void {
   else replaceRange(ta, s, en, `\n${indent}${extra}`);
 }
 const plainKey = (e: KeyboardEvent) => !e.ctrlKey && !e.altKey && !e.metaKey;
+// Auto-closing pairs: typing an opener adds its closer, typing the closer steps over it,
+// Backspace inside an empty pair removes both, and a selection gets wrapped.
+const AUTO_PAIRS: Record<string, string> = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '`': '`' };
+const AUTO_CLOSERS = new Set(Object.values(AUTO_PAIRS));
+function pairKey(e: KeyboardEvent, ta: HTMLTextAreaElement): boolean {
+  if (!plainKey(e) || e.isComposing) return false;
+  const v = ta.value, s = ta.selectionStart, en = ta.selectionEnd, ch = e.key;
+  if (ch === 'Backspace') {
+    if (s !== en || s === 0 || AUTO_PAIRS[v[s - 1]] !== v[s]) return false;
+    replaceRange(ta, s - 1, s + 1, '', s - 1);
+    return true;
+  }
+  if (ch.length !== 1) return false;
+  if (s === en && AUTO_CLOSERS.has(ch) && v[s] === ch) { ta.setSelectionRange(s + 1, s + 1); updateCaret(); return true; }
+  const close = AUTO_PAIRS[ch];
+  if (!close) return false;
+  if (s !== en) { replaceRange(ta, s, en, ch + v.slice(s, en) + close, s + 1, en + 1); return true; }
+  const prev = v[s - 1] ?? '', next = v[s] ?? '';
+  // Quotes after a letter are apostrophes (don't), and a pair only opens before a space, a closer or punctuation.
+  if (ch === close && (/[\w\\]/.test(prev) || prev === ch)) return false;
+  if (next && !/[\s)\]};,:.>]/.test(next)) return false;
+  replaceRange(ta, s, en, ch + close, s + 1);
+  return true;
+}
 function editorKeys(e: KeyboardEvent): void {
   const ta = e.target as HTMLTextAreaElement;
   const b = textareaOwner.get(ta);
   const k = e.key.toLowerCase();
   if (suggestKeys(e, ta)) return;
+  if (b && pairKey(e, ta)) { e.preventDefault(); return; }
   if (b && e.ctrlKey && e.key === ' ') { e.preventDefault(); editorSuggest(b, true); return; }
   if (b && (e.ctrlKey || e.metaKey) && !e.altKey && (k === 'z' || k === 'y')) {
     e.preventDefault();
@@ -3514,7 +3566,7 @@ function closeMenu(): void {
   const cb = menuOnClose; menuOnClose = null; cb?.();
 }
 document.addEventListener('mousedown', e => {
-  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars')) closeMenu();
+  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory')) closeMenu();
 });
 window.addEventListener('blur', closeMenu);
 function moveKbSelection(down: boolean): void {
@@ -3591,23 +3643,56 @@ document.addEventListener('click', e => {
 });
 
 /* ================= Agents (UI) ================= */
+// No agent cards show until a task is under way. Once the agent answers, the panel says how many
+// agents the task needs, and each card appears when that agent starts working.
+let team: AgentKey[] = [];
+let teamNeed = 0;          // how many agents the current task needs
+const TEAM_SIZE: Record<string, number> = { ask: 1, build: 1, plan: 2 };
+const TEAM_LINE: Record<string, string> = {
+  ask: '1 agent on this: <b>Assistant</b> answers without changing files',
+  build: '1 agent on this: <b>Builder</b> makes the changes',
+  plan: '2 agents on this: <b>Planner</b> writes a plan, then <b>Builder</b> builds it once you approve',
+};
 function renderAgents(): void {
-  $('#agentCards').innerHTML = Object.values(agentsDef).map(a => `
-    <div class="agent ${a.status}">
+  const cards = $('#agentCards');
+  const shown = new Set($$('[data-agent-card]', cards).map(el => el.dataset.agentCard));
+  cards.classList.toggle('hidden', !team.length);
+  cards.innerHTML = team.map(k => {
+    const a = agentsDef[k];
+    return `<div class="agent ${a.status}${shown.has(k) ? '' : ' enter'}" data-agent-card="${k}">
       <div class="ava tint-${a.tint}">${a.letter}</div>
       <div><span class="name">${a.name}</span> <span class="fs-11 text-3">${esc(a.model)}</span></div>
       <div class="row gap-4"><span class="status ${a.status}">${statusLabel[a.status]}</span>
         ${a.status === 'working' ? '<button class="icon-btn" title="Stop" data-act="agent.stop">■</button>' : ''}</div>
       <div class="task">${esc(a.task)}</div>
       <div class="meter" title="${a.used} tool calls"><i class="tint-${a.tint}" data-used="${a.used}"></i></div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   // The meter's fill is set through the DOM: the CSP allows no inline style attributes.
-  for (const i of $$('[data-used]', $('#agentCards'))) i.style.width = `${Math.min(100, Number(i.dataset.used) * 4)}%`;
+  for (const i of $$('[data-used]', cards)) i.style.width = `${Math.min(100, Number(i.dataset.used) * 4)}%`;
+  const count = $('#agentCount');
+  const n = Math.max(teamNeed, team.length);
+  count.textContent = String(n);
+  count.title = `${plural(n, 'agent')} on this task`;
+  count.classList.toggle('hidden', !n);
+}
+function joinTeam(k: AgentKey): void {
+  if (team.includes(k)) return;
+  team.push(k);
+  renderAgents();
+}
+function resetTeam(): void {
+  team = [];
+  teamNeed = 0;
+  setAgent('assistant', 'idle', 'Waiting for a question', 0);
+  setAgent('planner', 'idle', 'Waiting for a prompt', 0);
+  setAgent('builder', 'idle', 'Waiting for a plan', 0);
 }
 function setAgent(k: AgentKey, status: AgentStatus, task: string, used?: number): void {
   Object.assign(agentsDef[k], { status, task });
   if (used != null) agentsDef[k].used = used;
-  renderAgents(); vibeTick();
+  renderAgents(); vibeTick(); queueDiscord();
+  if (status === 'working' && agentRun?.phase === k) showThinking(thinkingLabel(k), k);
 }
 
 /* ----- Chat surfaces: the IDE's agent panel and Breeze Box share one conversation engine ----- */
@@ -3622,30 +3707,63 @@ function useSurface(name: WorkMode): void {
   surface = SURFACES[name];
   if (!agentRun) msgSurface = surface;
 }
+function scrollChat(s: Surface): void {
+  const scroller = s.name === 'box' ? $('.box-main') : s.chat;
+  scroller.scrollTop = scroller.scrollHeight;
+}
 function addMsg(html: string): HTMLElement {
   const chat = msgSurface.chat;
   const d = document.createElement('div'); d.innerHTML = html;
   const el = d.firstElementChild as HTMLElement;
-  chat.appendChild(el);
-  const scroller = msgSurface.name === 'box' ? $('.box-main') : chat;
-  scroller.scrollTop = scroller.scrollHeight;
+  // The "thinking" indicator always stays last, under the newest message.
+  chat.insertBefore(el, chat.querySelector('.thinking'));
+  scrollChat(msgSurface);
   saveChat();
   return el;
 }
 const clockTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 // In the IDE replies come from the Planner or Builder; in Breeze Box from the agent itself (Claude Code, Codex…).
-function agentMsg(k: AgentKey, html: string): HTMLElement {
-  let { name, letter, tint } = agentsDef[k];
+function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: string; tint: string } {
   const chosen = selectedAgent();
-  if (msgSurface.name === 'box' && chosen) {
+  if (s.name === 'box' && chosen) {
     const st = AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: 'default' };
-    ({ name } = chosen);
-    ({ letter, tint } = st);
+    return { name: chosen.name, ...st };
   }
+  const { name, letter, tint } = agentsDef[k];
+  return { name, letter, tint };
+}
+function agentMsg(k: AgentKey, html: string): HTMLElement {
+  const { name, letter, tint } = speaker(k);
   return addMsg(`<div class="msg"><div class="meta"><span class="avatar mini tint-${tint}">${letter}</span><b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
 }
 function userMsg(text: string): void {
   addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${esc(text)}</div></div>`);
+}
+// Shown under the conversation while the agent works; never saved with the chat.
+function thinkingLabel(k: AgentKey): string {
+  const who = speaker(k).name;
+  const task = agentsDef[k].task;
+  return msgSurface.name === 'box' || !task ? `${who} is thinking` : `${who} · ${task}`;
+}
+function showThinking(label: string, k: AgentKey = agentRun?.phase ?? 'assistant'): void {
+  const s = msgSurface;
+  let el = s.chat.querySelector<HTMLElement>('.thinking');
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'thinking';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<span class="avatar mini"></span><span class="lbl"></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+    s.chat.append(el);
+    scrollChat(s);
+  }
+  const { letter, tint } = speaker(k, s);
+  const ava = $('.avatar', el);
+  ava.className = `avatar mini tint-${tint}`;
+  ava.textContent = letter;
+  $('.lbl', el).textContent = label;
+}
+function hideThinking(): void {
+  for (const s of Object.values(SURFACES)) s.chat.querySelector('.thinking')?.remove();
 }
 function emptyChat(s: Surface = SURFACES.ide): void {
   if (s.name === 'box') {
@@ -3667,16 +3785,22 @@ function toolLine(kind: string, label: string): void {
   addMsg(`<div class="tool-line ${kind}"><span class="ti">${TOOL_ICON[kind] ?? '•'}</span><span class="tl">${esc(label)}</span></div>`);
 }
 
-// Chat history is kept per project folder (and once for Breeze Box) so a reload brings it back.
-const chatKey = (s: Surface = msgSurface) => (s.name === 'box' ? 'breeze.chat:box' : `breeze.chat:${rootInfo?.root ?? ''}`);
-const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${s.name === 'box' ? 'box' : rootInfo?.root ?? ''}:${appState.agent ?? ''}`;
+// The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
+const chatScope = (s: Surface) => (s.name === 'box' ? 'box' : rootInfo?.root ?? '');
+const chatKey = (s: Surface = msgSurface) => `breeze.chat:${chatScope(s)}`;
+const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${chatScope(s)}:${appState.agent ?? ''}`;
+// The chat's saveable HTML; empty when there is nothing to keep.
+function chatHtml(s: Surface): string {
+  if (s.chat.querySelector('.empty')) return '';
+  return [...s.chat.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+}
 let chatTimer: number | undefined;
 function saveChat(): void {
   clearTimeout(chatTimer);
   const s = msgSurface;
   chatTimer = setTimeout(() => {
     if (s.name === 'ide' && !rootInfo) return;
-    const html = s.chat.querySelector('.empty') ? '' : s.chat.innerHTML;
+    const html = chatHtml(s);
     if (html && html.length < 400000) store.set(chatKey(s), html); else store.del(chatKey(s));
   }, 400);
 }
@@ -3686,10 +3810,68 @@ function restoreChat(s: Surface = SURFACES.ide): void {
   s.chat.innerHTML = html;
   // Buttons from an earlier run have no handlers any more; show them as settled.
   $$('[data-live]', s.chat).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
-  s.chat.scrollTop = s.chat.scrollHeight;
+  scrollChat(s);
 }
 
-interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; }
+/* ----- Chat history: "New chat" files the current conversation away; the clock button brings one back ----- */
+interface ChatEntry { id: string; title: string; at: number; html: string; agent: string | null; session: string | null; }
+const historyKey = (s: Surface) => `breeze.history:${chatScope(s)}`;
+const chatIdKey = (s: Surface) => `breeze.chatId:${chatScope(s)}`;
+const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
+const newChatId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const chatHistory = (s: Surface) => store.get<ChatEntry[]>(historyKey(s), []);
+function archiveChat(s: Surface): void {
+  if (s.name === 'ide' && !rootInfo) return;
+  const html = chatHtml(s);
+  if (!html) return;
+  const id = store.get<string | null>(chatIdKey(s), null) ?? newChatId();
+  const first = s.chat.querySelector('.msg.user .body')?.textContent ?? 'Chat';
+  const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || 'Chat';
+  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: appState.agent, session: store.get<string | null>(agentSessionKey(s), null) };
+  let bytes = 0;
+  const list = [entry, ...chatHistory(s).filter(e => e.id !== id)].filter(e => (bytes += e.html.length) < HISTORY_BYTES).slice(0, HISTORY_MAX);
+  store.set(historyKey(s), list);
+  store.del(chatIdKey(s));
+}
+function openChat(s: Surface, e: ChatEntry): void {
+  if (agentRun) { toast('Stop the agent before switching chats'); return; }
+  archiveChat(s);
+  store.set(historyKey(s), chatHistory(s).filter(x => x.id !== e.id));
+  store.set(chatIdKey(s), e.id);
+  store.set(chatKey(s), e.html);
+  // The agent can carry on the conversation only if it is the one that had it.
+  if (e.session && e.agent === appState.agent) store.set(agentSessionKey(s), e.session); else store.del(agentSessionKey(s));
+  restoreChat(s);
+  resetTeam();
+  s.prompt.focus();
+}
+function timeAgo(at: number): string {
+  const m = Math.round((Date.now() - at) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return d < 30 ? `${d}d ago` : new Date(at).toLocaleDateString();
+}
+function showHistory(s: Surface, anchor: HTMLElement): void {
+  if (anchor.classList.contains('open')) { closeMenu(); return; }
+  closeMenu();
+  const list = chatHistory(s);
+  const items: MenuItem[] = list.length
+    ? list.map(e => ({ label: e.title, key: timeAgo(e.at), run: () => openChat(s, e) }))
+    : [{ label: 'No earlier chats yet', enabled: () => false }];
+  if (list.length) items.push({ sep: true }, { label: 'Clear chat history', run: () => { store.del(historyKey(s)); toast('Chat history cleared'); } });
+  const r = anchor.getBoundingClientRect();
+  anchor.classList.add('open');
+  popupMenu(r.right - 300, r.bottom + 4, items, () => anchor.classList.remove('open'));
+  $('#menuRoot .menu').classList.add('history-menu');
+}
+$('#chatHistory').onclick = e => showHistory(SURFACES.ide, e.currentTarget as HTMLElement);
+$('#boxHistory').onclick = e => showHistory(SURFACES.box, e.currentTarget as HTMLElement);
+commands['chat.history'] = () => showHistory(surface, surface.name === 'box' ? $('#boxHistory') : $('#chatHistory'));
+
+interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; replied: boolean; announce: boolean; }
 let agentRun: Run | null = null;
 let lastRunFiles: string[] = [];
 for (const s of Object.values(SURFACES)) {
@@ -3698,10 +3880,10 @@ for (const s of Object.values(SURFACES)) {
 }
 function newChat(): void {
   if (agentRun) stopAgent();
-  store.del(agentSessionKey(surface)); store.del(chatKey(surface));
+  archiveChat(surface);
+  store.del(agentSessionKey(surface)); store.del(chatKey(surface)); store.del(chatIdKey(surface));
   emptyChat(surface);
-  setAgent('planner', 'idle', 'Waiting for a prompt', 0);
-  setAgent('builder', 'idle', 'Waiting for a plan', 0);
+  resetTeam();
   surface.prompt.focus();
 }
 $('#newChat').onclick = newChat;
@@ -3709,16 +3891,18 @@ commands['chat.new'] = newChat;
 commands['agent.stop'] = () => stopAgent();
 
 function setBusy(on: boolean): void {
-  for (const { send } of Object.values(SURFACES)) {
+  for (const { send, prompt } of Object.values(SURFACES)) {
     send.classList.toggle('stop', on);
     send.textContent = on ? '■ Stop' : 'Send ↵';
     send.title = on ? 'Stop the agent' : 'Send (Enter)';
+    prompt.closest('.composer-box')?.classList.toggle('busy', on);
   }
 }
 function stopAgent(): void {
   if (agentRun) background(api.agent.stop(agentRun.id));
 }
 const MODES: Record<string, AgentMode> = { build: 'build', ask: 'ask', plan: 'plan' };
+const phaseFor = (mode: AgentMode): AgentKey => ({ build: 'builder', plan: 'planner', ask: 'assistant' } as const)[mode];
 async function sendPrompt(): Promise<void> {
   const text = surface.prompt.value.trim();
   if (!text || agentRun) return;
@@ -3729,21 +3913,30 @@ async function sendPrompt(): Promise<void> {
   const uiMode = surface.mode.value;
   surface.prompt.value = '';
   if (surface.chat.querySelector('.empty')) surface.chat.innerHTML = '';
+  // A new task: the cards from the last one go away until the agent has read this message.
+  team = [];
+  teamNeed = 0;
+  renderAgents();
   userMsg(text);
-  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', text, uiMode);
+  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', text, uiMode, true);
 }
 
-async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string): Promise<void> {
-  const phase: AgentKey = mode === 'build' ? 'builder' : 'planner';
-  setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
-  if (phase === 'planner') setAgent('builder', 'idle', 'Waiting for a plan', 0);
+async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string, announce = false): Promise<void> {
+  const phase = phaseFor(mode);
+  showThinking(`${speaker(phase).name} is reading your message`, phase);
   setBusy(true);
+  agentsDef[phase].used = 0;
   try {
     const box = msgSurface.name === 'box';
     const id = await api.agent.run({ agent: agentId, mode, prompt, session: store.get<string | null>(agentSessionKey(), null), box });
-    agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '' };
+    agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '', replied: false, announce };
+    // Events that arrived before the run id came back are replayed now.
+    for (const [runId, ev] of earlyEvents.splice(0)) if (runId === id) handleAgentEvent(agentRun, ev);
+    if (agentRun?.id === id) setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
   } catch (e) {
     setBusy(false);
+    hideThinking();
+    joinTeam(phase);
     setAgent(phase, 'idle', 'Could not start', 0);
     errorCard(errMsg(e));
   }
@@ -3767,6 +3960,13 @@ function onAgentError(r: Run, ev: AgentEvent): void {
   if (r.lastMsg && ev.text?.trim() === r.lastText.trim()) r.lastMsg.remove();
   errorCard(ev.text ?? 'Unknown error', ev.hint, ev.action);
 }
+// The first sign of life from the agent: its card appears, and a new task says how many agents it needs.
+function onFirstReply(r: Run): void {
+  r.replied = true;
+  if (r.announce) teamNeed = TEAM_SIZE[r.uiMode] ?? 1;
+  joinTeam(r.phase);
+  if (r.announce && msgSurface.name === 'ide') addMsg(`<div class="team-line">${TEAM_LINE[r.uiMode] ?? TEAM_LINE[r.mode]}</div>`);
+}
 const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent) => void>> = {
   session: (_r, ev) => { if (ev.id) store.set(agentSessionKey(), ev.id); },
   text: (r, ev) => { if (ev.text) { r.lastText = ev.text; r.lastMsg = agentMsg(r.phase, md(ev.text)); } },
@@ -3777,9 +3977,16 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent) => 
   error: onAgentError,
   done: finishRun,
 };
+function handleAgentEvent(r: Run, ev: AgentEvent): void {
+  if (!r.replied && ev.t !== 'session' && ev.t !== 'done') onFirstReply(r);
+  AGENT_EVENTS[ev.t]?.(r, ev);
+}
+// A run that fails at once can report before its id reaches the renderer; those events wait here.
+const earlyEvents: [number, AgentEvent][] = [];
 api.agent.onEvent((runId, ev) => {
   const r = agentRun;
-  if (r?.id === runId) AGENT_EVENTS[ev.t]?.(r, ev);
+  if (r?.id === runId) handleAgentEvent(r, ev);
+  else if (!r && earlyEvents.length < 200) earlyEvents.push([runId, ev]);
 });
 
 function runSummary(r: Run, ev: AgentEvent): string[] {
@@ -3812,17 +4019,19 @@ function showPlan(r: Run): void {
 }
 function finishRun(r: Run, ev: AgentEvent): void {
   agentRun = null;
+  earlyEvents.length = 0;
+  hideThinking();
   setBusy(false);
   for (const k of Object.keys(locks)) delete locks[k];
   renderTree(); renderTabs();
   lastRunFiles = [...r.files];
-  vibeDone(!!ev.ok);
   queueGitRefresh();
-  if (ev.stopped) { addMsg('<div class="handoff">Stopped by you</div>'); setAgent(r.phase, 'idle', 'Stopped', r.tools); return; }
-  if (!ev.ok) { setAgent(r.phase, 'idle', 'Stopped with an error', r.tools); return; }
-  if (r.uiMode === 'plan' && r.mode === 'plan') { showPlan(r); return; }
+  if (ev.stopped) { addMsg('<div class="handoff">Stopped by you</div>'); setAgent(r.phase, 'idle', 'Stopped', r.tools); vibeDone(false); return; }
+  if (!ev.ok) { setAgent(r.phase, 'idle', 'Stopped with an error', r.tools); vibeDone(false); return; }
+  if (r.uiMode === 'plan' && r.mode === 'plan') { showPlan(r); vibeDone(true, true); return; }
   const changed = r.files.size ? `Changed ${plural(r.files.size, 'file')}` : 'Answered';
   setAgent(r.phase, 'done', changed, r.tools);
+  vibeDone(true);
   const bits = runSummary(r, ev);
   const summary = bits.length ? ' · ' + bits.join(' · ') : '';
   const review = r.files.size ? '<button class="btn btn-sm" data-live data-review>Review changes</button>' : '';
@@ -3831,6 +4040,57 @@ function finishRun(r: Run, ev: AgentEvent): void {
   msgSurface.prompt.placeholder = msgSurface.name === 'box' ? 'Ask Breeze anything…' : 'Describe what you want to build…';
   if (r.files.size && running) void reloadPreview();
 }
+
+/* ----- Custom dropdowns: every select.select gets a button that opens Breeze's own menu ----- */
+// The native <select> stays in the page (hidden) so code and forms keep reading its value.
+function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
+  if (btn.classList.contains('open')) { closeMenu(); return; }
+  closeMenu();
+  const items: MenuItem[] = [...sel.options].map(o => ({
+    label: o.text,
+    checked: () => o.value === sel.value,
+    enabled: () => !o.disabled,
+    run: () => {
+      if (sel.value !== o.value) { sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      btn.focus();
+    },
+  }));
+  const r = btn.getBoundingClientRect();
+  btn.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  popupMenu(r.left, r.bottom + 4, items, () => { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); });
+  const m = $('#menuRoot .menu');
+  m.classList.add('dd-menu');
+  m.style.minWidth = `${Math.max(150, r.width)}px`;
+  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
+  // Near the bottom of the window (the chat composers) the menu opens upwards.
+  if (r.bottom + 4 + m.offsetHeight > innerHeight - 8) { m.style.top = `${Math.max(8, r.top - m.offsetHeight - 4)}px`; m.classList.add('up'); }
+}
+function enhanceSelect(sel: HTMLSelectElement): void {
+  if (sel.dataset.dd) return;
+  sel.dataset.dd = '1';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dd-btn';
+  btn.setAttribute('aria-haspopup', 'menu');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-label', sel.getAttribute('aria-label') ?? 'Choose');
+  sel.classList.add('dd-native');
+  sel.tabIndex = -1;
+  sel.setAttribute('aria-hidden', 'true');
+  sel.after(btn);
+  const label = () => { btn.innerHTML = `<span class="dd-val">${esc(sel.selectedOptions[0]?.text ?? '')}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`; };
+  label();
+  sel.addEventListener('change', label);
+  btn.onclick = () => openDropdown(sel, btn);
+  btn.onkeydown = e => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    if (!btn.classList.contains('open')) openDropdown(sel, btn);
+  };
+}
+$$<HTMLSelectElement>('select.select').forEach(enhanceSelect);
+new MutationObserver(() => $$<HTMLSelectElement>('select.select:not([data-dd])').forEach(enhanceSelect)).observe(document.body, { childList: true, subtree: true });
 
 /* ================= Source control (git) ================= */
 let gitState: GitStatus = { repo: false };
@@ -3953,6 +4213,11 @@ function toggleScmSection(head: HTMLElement): void {
   const key = sec.dataset.sec as string;
   if (scmCollapsed.has(key)) scmCollapsed.delete(key); else scmCollapsed.add(key);
   sec.classList.toggle('closed');
+  // Only a section opened by a click slides in; refreshes redraw without animating.
+  if (!sec.classList.contains('closed')) {
+    sec.classList.add('opening');
+    sec.addEventListener('animationend', () => sec.classList.remove('opening'), { once: true });
+  }
   store.set('breeze.scmCollapsed', [...scmCollapsed]);
 }
 function scmAll(kind: string | undefined): void {
@@ -4111,13 +4376,39 @@ function commitDetailHtml(d?: GitCommitDetail): string {
     <div class="row mt-8"><button class="btn btn-sm" data-branch-from="${d.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${d.hash}">Copy id</button></div>
   </div>`;
 }
+// Opens or closes one checkpoint's details in place; the rest of the panel is left alone.
+const commitRow = (hash: string) => $(`#scm .commit[data-commit="${hash}"]`);
+function closeCommitDetail(hash: string): void {
+  const row = commitRow(hash);
+  row?.classList.remove('on');
+  const d = row?.nextElementSibling;
+  if (d?.classList.contains('commit-detail')) d.remove();
+}
+function placeCommitDetail(hash: string): void {
+  const row = commitRow(hash);
+  if (!row) return;
+  const holder = document.createElement('div');
+  holder.innerHTML = commitDetailHtml(commitDetails.get(hash));
+  const fresh = holder.firstElementChild as HTMLElement;
+  const old = row.nextElementSibling;
+  // Loading → loaded swaps the contents only, so the box doesn't animate in twice.
+  if (old?.classList.contains('commit-detail')) old.innerHTML = fresh.innerHTML;
+  else { fresh.classList.add('enter'); row.after(fresh); }
+  row.classList.add('on');
+}
 async function toggleCommit(hash: string): Promise<void> {
+  const was = openCommit;
   openCommit = openCommit === hash ? null : hash;
-  renderScm();
-  if (openCommit && !commitDetails.has(hash)) {
-    try { commitDetails.set(hash, await api.git.show(hash)); } catch (e) { toast(errMsg(e)); openCommit = null; }
-    renderScm();
+  if (was) closeCommitDetail(was);
+  if (!openCommit) return;
+  placeCommitDetail(hash);
+  if (commitDetails.has(hash)) return;
+  try { commitDetails.set(hash, await api.git.show(hash)); } catch (e) {
+    toast(errMsg(e));
+    if (openCommit === hash) { openCommit = null; closeCommitDetail(hash); }
+    return;
   }
+  if (openCommit === hash) placeCommitDetail(hash);
 }
 $('#scm').addEventListener('click', e => {
   const t = e.target as HTMLElement;
@@ -4235,7 +4526,7 @@ function enterMode(mode: WorkMode): void {
   saveApp();
   closeMenu();
   if (mode === 'ide') { showIde(); return; }
-  $('#onboard').classList.add('hidden'); $('#ide').classList.add('hidden'); $('#box').classList.remove('hidden');
+  swapScreen('#box');
   useSurface('box');
   renderUser(); renderAgentPill(); renderBoxFolder();
   // Box lists every agent Breeze found, so look for them if that hasn't happened yet.
@@ -4365,13 +4656,23 @@ function exitVibe(): void {
 }
 // Called whenever an agent's status changes.
 function vibeTick(): void {
+  if (vibeOn && agentWorking() && !$('#vibeReady').classList.contains('hidden')) { resumeVibe(); return; }
   if (!appState.vibeArmed || !connectedSites().length || vibeOn || vibeTimer != null || !agentWorking()) return;
   vibeTimer = setTimeout(() => {
     vibeTimer = undefined;
     if (agentWorking()) enterVibe();
   }, VIBE_DELAY);
 }
-function vibeDone(ok: boolean): void {
+// The ready card was showing and the agents started again (e.g. the Builder after plan approval).
+function resumeVibe(): void {
+  $('#vibeReady').classList.add('hidden');
+  $('#vibeStatus').classList.remove('hidden');
+  clearInterval(vibeClock);
+  tickVibeClock();
+  vibeClock = setInterval(tickVibeClock, 1000);
+}
+// `plan`: the Planner finished and its plan waits for approval.
+function vibeDone(ok: boolean, plan = false): void {
   clearTimeout(vibeTimer);
   vibeTimer = undefined;
   if (!vibeOn) return;
@@ -4379,8 +4680,10 @@ function vibeDone(ok: boolean): void {
   $('#vibeStatus').classList.add('hidden');
   $('#vibeReady').classList.remove('hidden');
   $('#vibeReady').classList.toggle('failed', !ok);
-  $('#vibeReadyText').textContent = ok ? '✓ Your code is ready' : 'The agent stopped';
-  $('#vibeBack').textContent = ok ? 'Show me' : 'Back to code';
+  let text = ok ? '✓ Your code is ready' : 'The agent stopped';
+  if (ok && plan) text = '📋 The plan is ready for you';
+  $('#vibeReadyText').textContent = text;
+  $('#vibeBack').textContent = ok ? (plan ? 'Review plan' : 'Show me') : 'Back to code';
 }
 $('#vibeClose').onclick = exitVibe;
 $('#vibeBack').onclick = () => {
@@ -4398,16 +4701,86 @@ $('#vibeMute').onclick = () => {
 new ResizeObserver(() => { if (vibeOn && vibeSiteShown && isDesktop) background(api.vibe.bounds(frameRect())); }).observe(vibeFrame);
 
 /* ================= Discord ================= */
-let discord = false;
+// Rich Presence through the Discord app on this computer (main.js talks to it); updates are coalesced.
+const discordSince = Date.now();
+let discordTimer: number | undefined;
+let discordLive = false;   // connected and showing
+function discordActivity(): DiscordActivity {
+  const working = Object.values(agentsDef).find(a => a.status === 'working');
+  const inBox = appState.mode === 'box';
+  const file = active ? baseName(active) : null;
+  if (!appState.discordDetails) {
+    return { details: working ? 'Vibe coding with agents' : inBox ? 'Chatting with an agent' : 'Writing code', state: 'Breeze IDE', start: discordSince };
+  }
+  let details = inBox ? 'Chatting in Breeze Box' : 'Idle';
+  if (working) details = `${working.name}: ${working.task}`;
+  else if (!inBox && file) details = `Editing ${file}`;
+  const lang = !inBox && active ? langOf(active)[1] : '';
+  const where = rootInfo ? `in ${rootInfo.name}` : 'Breeze IDE';
+  return { details, state: lang && !working ? `${lang} · ${where}` : where, start: discordSince };
+}
+function renderDiscord(state: 'on' | 'off' | 'error', why = ''): void {
+  const b = $('#discord');
+  b.textContent = state === 'on' ? 'Discord: on' : state === 'error' ? 'Discord: not connected' : 'Discord: off';
+  b.title = why || 'Discord presence';
+  b.classList.toggle('armed', state === 'on');
+}
+async function pushDiscord(): Promise<void> {
+  if (!appState.discord) return;
+  try {
+    await api.discord.set(discordActivity());
+    if (!discordLive) renderDiscord('on');
+    discordLive = true;
+  } catch (e) {
+    discordLive = false;
+    renderDiscord('error', errMsg(e));
+  }
+}
+function queueDiscord(): void {
+  if (!appState.discord) return;
+  clearTimeout(discordTimer);
+  discordTimer = setTimeout(() => void pushDiscord(), 1200);
+}
+async function discordOn(details: boolean): Promise<boolean> {
+  appState.discordDetails = details;
+  try {
+    const r = await api.discord.set(discordActivity());
+    appState.discord = true; discordLive = true; saveApp();
+    renderDiscord('on');
+    toast(r.user ? `Showing on Discord as ${r.user}` : 'Discord presence on');
+    return true;
+  } catch (e) {
+    openModal(`<h3>Couldn't reach Discord</h3><pre class="git-err">${esc(errMsg(e))}</pre><div class="row end"><button class="btn btn-primary" data-close>OK</button></div>`);
+    return false;
+  }
+}
+function discordOff(): void {
+  appState.discord = false; discordLive = false; saveApp();
+  clearTimeout(discordTimer);
+  renderDiscord('off');
+  background(api.discord.clear());
+}
 $('#discord').onclick = () => {
-  if (discord) { discord = false; $('#discord').textContent = 'Discord: off'; return; }
-  const detail = [rootInfo?.name ?? 'No project', active ? baseName(active) : null, active ? langOf(active)[1] : null]
-    .filter((s): s is string => !!s).map(esc).join(' · ');
+  if (appState.discord) { discordOff(); toast('Discord presence off'); return; }
+  const preview = () => {
+    const a = discordActivity();
+    return `<b>Breeze IDE</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div>`;
+  };
   openModal(`<h3>Show what you're doing on Discord?</h3><p class="sub">Your friends will see:</p>
-    <div class="setup-card mb-12"><b>Breeze IDE</b><div class="text-2">Vibe coding with agents</div><div class="text-2">${detail}</div><div class="text-3 fs-12">00:14 elapsed</div></div>
-    <p class="sub fs-12">Project and file names can include client or employer names. You can hide details anytime from the status bar.</p>
+    <div class="setup-card mb-12" id="dPreview">${preview()}</div>
+    <label class="check-row mb-12"><input type="checkbox" id="dDetails" ${appState.discordDetails ? 'checked' : ''}> Show project and file names</label>
+    <p class="sub fs-12">Project and file names can include client or employer names. The Discord app must be running on this computer.</p>
     <div class="row end"><button class="btn" data-close>Not now</button><button class="btn btn-primary" id="dOn">Turn on</button></div>`,
-  m => { $('#dOn', m).onclick = () => { discord = true; $('#discord').textContent = 'Discord: on'; closeModal(); }; });
+  m => {
+    const box = $<HTMLInputElement>('#dDetails', m);
+    box.onchange = () => { appState.discordDetails = box.checked; $('#dPreview', m).innerHTML = preview(); };
+    const on = $<HTMLButtonElement>('#dOn', m);
+    on.onclick = async () => {
+      on.disabled = true; on.textContent = 'Connecting…';
+      if (await discordOn(box.checked)) closeModal();
+      else { on.disabled = false; on.textContent = 'Turn on'; }
+    };
+  });
 };
 
 /* ================= Modal & misc ================= */
@@ -4444,12 +4817,14 @@ async function boot(): Promise<void> {
   renderTree(); renderTabs(); renderEditor(); renderAgents(); renderPreview(); emptyChat(); renderScm(); renderBranch(); bindToasts();
   renderDetection();
   setVibeArmed(appState.vibeArmed);
+  if (appState.discord) { renderDiscord('off', 'Connecting to Discord…'); queueDiscord(); }
   // The main process remembers who signed in; it wins over the renderer's copy.
   const signed = await api.auth.user().catch(() => null);
   if (signed || isDesktop) { user = signed; appState.user = signed; saveApp(); }
   await refreshAccounts();
   if (appState.onboarded) enterMode(appState.mode);
   else goStep(step);
+  booted = true;
   const info = await api.fs.restore().catch(() => null);
   if (info) await loadWorkspace(info);
   else { term.cwd = await api.term.cwd(); renderPs(); }

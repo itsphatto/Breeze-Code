@@ -122,6 +122,13 @@
       </g>
       <rect x="15.8" y="4.8" width="4.4" height="14.4" fill="currentColor" />
     </symbol>
+    <symbol id="i-history" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" />
+        <path d="M3 4v4h4" />
+        <path d="M12 7.5V12l3 2" />
+      </g>
+    </symbol>
     <symbol id="i-chev" viewBox="0 0 24 24">
       <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
         stroke-linejoin="round" />
@@ -418,13 +425,16 @@
 
       <aside class="agents" id="agents" aria-label="Agents">
         <div class="sash sash-v sash-left" data-sash="agents"></div>
-        <div class="side-head"><span>Agents</span><span class="row gap-6"><button class="pill blue pill-btn"
-              id="agentPill" title="Choose which AI agent to use">No agent</button><button class="icon-btn" id="newChat"
-              title="New chat">＋</button><button class="icon-btn flip" data-act="view.toggleAgents"
+        <div class="side-head"><span class="row gap-6">Agents<span class="head-count hidden" id="agentCount"
+              title="Agents on this task"></span></span><span class="row gap-6"><button class="pill blue pill-btn"
+              id="agentPill" title="Choose which AI agent to use">No agent</button><button class="icon-btn"
+              id="chatHistory" title="Chat history" aria-haspopup="menu"><svg width="14" height="14">
+                <use href="#i-history" />
+              </svg></button><button class="icon-btn" id="newChat" title="New chat">＋</button><button class="icon-btn flip" data-act="view.toggleAgents"
               title="Hide Agents"><svg width="14" height="14">
                 <use href="#i-chev" />
               </svg></button></span></div>
-        <div class="agent-cards" id="agentCards"></div>
+        <div class="agent-cards hidden" id="agentCards"></div>
         <div class="chat" id="chat"></div>
         <div class="composer">
           <div class="composer-box">
@@ -462,6 +472,10 @@
     <header class="titlebar box-bar">
       <span class="logo"><img src="BreezeBox.png" alt="Breeze Box"></span>
       <span class="spacer"></span>
+      <button class="btn btn-sm btn-ghost box-history" id="boxHistory" title="Chat history" aria-haspopup="menu"><svg
+          class="btn-ico" width="14" height="14">
+          <use href="#i-history" />
+        </svg> History</button>
       <button class="btn btn-sm btn-ghost" data-act="chat.new" title="Start a new chat">＋ New chat</button>
       <button class="btn btn-sm" data-act="mode.ide" title="Switch to the full IDE">Open IDE</button>
       <button class="icon-btn box-gear" id="boxSettings" title="Settings" aria-haspopup="menu"><svg width="18"
