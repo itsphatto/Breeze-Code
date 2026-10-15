@@ -436,8 +436,7 @@ function avatarHtml(u, title) {
 }
 function renderUser() {
     const title = user ? `${user.name} · ${user.provider}` : 'Not signed in';
-    const others = guests.map(g => `<span class="avatar tint-${g.tint}" title="${g.name} (${g.role})">${g.name.slice(0, 2).toUpperCase()}</span>`);
-    $('#avatars').innerHTML = avatarHtml(user, title + ' (host)') + others.join('');
+    $('#avatars').innerHTML = avatarHtml(user, title);
     $('#boxAvatar').innerHTML = avatarHtml(user, title);
     $('#userChip').textContent = user ? `● ${user.name} · ${user.provider}` : 'Not signed in';
 }
@@ -1619,7 +1618,6 @@ let openTabs = [];
 let active = null;
 const locks = {};
 const added = {};
-let guestCursor = null;
 let ctxPath = null;
 const sessionKey = () => `breeze.session:${rootInfo?.root ?? ''}`;
 const hotExitKey = () => `breeze.dirty:${rootInfo?.root ?? ''}`;
@@ -2530,7 +2528,7 @@ function queueRender() {
     renderQueued = true;
     requestAnimationFrame(() => { renderQueued = false; renderCode(); });
 }
-// Overlay boxes (find hits, squiggles, a guest's caret) are placed through the DOM, not style attributes.
+// Overlay boxes (find hits, squiggles) are placed through the DOM, not style attributes.
 function box(cls, top, left, width) {
     const d = document.createElement('div');
     d.className = cls;
@@ -2550,16 +2548,6 @@ function findBoxes(b, cw) {
         const x = visualCol(lt, off - ls) * cw, w = (visualCol(lt, off - ls + findLen) * cw) - x;
         return box(off === findHits[findIdx] ? 'hit cur' : 'hit', ln * LINE_H, x, Math.max(w, 2));
     });
-}
-function guestCaret(b, cw) {
-    if (guestCursor?.file !== b.path)
-        return [];
-    const c = box(`cursor tint-${guestCursor.tint}`, guestCursor.line * LINE_H + 2, 4 * cw);
-    const who = document.createElement('span');
-    who.className = 'who';
-    who.textContent = guestCursor.name;
-    c.append(who);
-    return [c];
 }
 // Syntax errors: a red line, a squiggle under the mistake and the message after the code.
 // While an edit has added or removed lines they wait for the next check instead of drifting.
@@ -2605,7 +2593,7 @@ function renderCode() {
     const errAt = visibleDiags(b, lines.length);
     const add = added[b.path];
     hlInner.innerHTML = lines.map((h, i) => lineHtml(h, i, add, errAt.get(i))).join('');
-    hlInner.append(...findBoxes(b, cw), ...squiggles(b, lines.length, cw), ...guestCaret(b, cw));
+    hlInner.append(...findBoxes(b, cw), ...squiggles(b, lines.length, cw));
     $('#gutter').style.width = `${Math.max(3, String(lines.length).length) * 8 + 32}px`;
     gutInner.innerHTML = lines.map((_, i) => gutterHtml(i, errAt.get(i))).join('');
     syncScroll();
@@ -4755,85 +4743,6 @@ $$('.act-btn[data-view]').forEach(b => b.onclick = () => {
     else
         showView(v, true);
 });
-/* ================= Collaboration ================= */
-let sharing = false;
-let shareKey = '';
-let guests = [];
-const share = { files: true, preview: true, terminal: false };
-function newKey() {
-    const bytes = crypto.getRandomValues(new Uint8Array(16));
-    const raw = [...bytes].map(b => b.toString(36).padStart(2, '0')).join('').slice(0, 26);
-    const groups = raw.match(/.{1,6}/g) ?? [];
-    return 'brz-' + groups.join('-');
-}
-const switchHtml = (key, label, note = '') => `<div class="toggle-row"><span>${label}${note}</span><button class="switch ${share[key] ? 'on' : ''}" data-sw="${key}" aria-label="${label}"></button></div>`;
-function endSharing() {
-    sharing = false;
-    guests = [];
-    guestCursor = null;
-    shareKey = '';
-    closeModal();
-    updateShare();
-    renderCode();
-    toast('Session ended');
-}
-function openShare() {
-    if (!shareKey)
-        shareKey = newKey();
-    const end = sharing ? '<button class="btn btn-sm btn-ghost text-err" id="endShare">End session</button>' : '';
-    openModal(`
-    <h3>Share this project</h3>
-    <p class="sub">Send this key to a friend. They'll wait until you let them in.</p>
-    <div class="keybox"><span class="flex-1" id="keyText">${shareKey}</span><button class="btn btn-sm" id="copyKey">Copy</button></div>
-    ${switchHtml('files', 'Share files')}${switchHtml('preview', 'Share preview')}${switchHtml('terminal', 'Share terminal', ' <small class="text-3">(they could see command output)</small>')}
-    <p class="share-note">Relay runs on <b>ALEX-LAPTOP</b> (LAN, tunnel backup). It can see shared code. Key expires in 4 hours.</p>
-    <div id="joinSlot"></div>
-    <div class="row between spaced">
-      <div class="row"><button class="btn btn-sm btn-ghost" id="regen">New key</button>${end}</div>
-      <button class="btn btn-primary" data-close>${sharing ? 'Done' : 'Start sharing'}</button>
-    </div>`, m => {
-        $('#copyKey', m).onclick = () => background(navigator.clipboard.writeText(shareKey).then(() => toast('Key copied')));
-        $('#regen', m).onclick = () => { shareKey = newKey(); $('#keyText', m).textContent = shareKey; toast('Old key revoked'); };
-        $$('[data-sw]', m).forEach(s => s.onclick = () => {
-            const k = s.dataset.sw;
-            share[k] = !share[k];
-            s.classList.toggle('on');
-        });
-        const endBtn = m.querySelector('#endShare');
-        if (endBtn)
-            endBtn.onclick = endSharing;
-        if (!sharing) {
-            sharing = true;
-            updateShare();
-            setTimeout(() => joinRequest(m), 2200);
-        }
-    });
-}
-function joinRequest(m) {
-    const slot = m.querySelector('#joinSlot');
-    if (!slot?.isConnected || guests.length)
-        return;
-    let role = 'Viewer';
-    slot.innerHTML = `<div class="join-req"><div class="fw-600 mb-6">Sam wants to join</div>
-    <div class="row mb-10"><span class="text-2">Role:</span><div class="seg flex-1"><button class="on" data-role>Viewer</button><button data-role>Editor</button></div></div>
-    <div class="row end"><button class="btn btn-sm" id="denyJoin">Deny</button><button class="btn btn-sm btn-primary" id="allowJoin">Allow</button></div></div>`;
-    $$('[data-role]', slot).forEach(b => b.onclick = () => { role = b.textContent; $$('[data-role]', slot).forEach(x => x.classList.toggle('on', x === b)); });
-    $('#denyJoin', slot).onclick = () => { slot.innerHTML = '<p class="resolved mt-10">Request denied.</p>'; };
-    $('#allowJoin', slot).onclick = () => {
-        guests.push({ name: 'Sam', role, tint: 'guest' });
-        slot.innerHTML = `<p class="resolved mt-10">✓ Sam joined as ${role}.</p>`;
-        updateShare();
-        if (role === 'Editor' && active) {
-            guestCursor = { file: active, line: Math.min(10, (activeBuf()?.text.split('\n').length ?? 1) - 1), name: 'Sam', tint: 'guest' };
-            renderCode();
-        }
-    };
-}
-function updateShare() {
-    $('#sbShare').textContent = sharing ? `● Sharing · ${guests.length + 1} people` : 'Not sharing';
-    renderUser();
-    $('#termShare').textContent = share.terminal && sharing ? 'Shared' : 'Not shared';
-}
 /* ================= Breeze Box (chat only) ================= */
 // The same agents and conversation as the IDE's agent panel, with nothing else on screen.
 function enterMode(mode) {

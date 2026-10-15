@@ -66,7 +66,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tint-codex { --tint: #e4e4e7; }
 .tint-antigravity, .tint-host { --tint: #7aa9ff; }
 .tint-gemini { --tint: #a78bfa; }
-.tint-guest { --tint: #fb923c; }
 .tint-youtube { --tint: #ff3b30; }
 .tint-tiktok { --tint: #25f4ee; }
 .tint-instagram { --tint: #e1306c; }
@@ -283,9 +282,6 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .hit.cur { background: rgba(245,158,11,.5); box-shadow: 0 0 0 1px #f59e0b; }
 .ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; border: 0; outline: 0; background: transparent; color: transparent; caret-color: var(--text); overflow: auto; }
 .ta::selection { background: rgba(0,94,255,.4); color: transparent; }
-.cursor { display: inline-block; width: 2px; height: 17px; vertical-align: -3px; position: absolute; animation: blink 1s steps(1) infinite; }
-.cursor, .cursor .who { background: var(--tint); }
-.cursor .who { position: absolute; bottom: 100%; left: 0; font: 600 10px/1 var(--font-ui); padding: 2px 5px; border-radius: 3px 3px 3px 0; color: #000; white-space: nowrap; }
 .editor-empty { position: absolute; inset: 0; z-index: 2; background: var(--bg); font: 13px/1.5 var(--font-ui); }
 .editor-empty img { width: 64px; height: 64px; opacity: .14; }
 .editor-empty .keys { display: grid; grid-template-columns: auto auto; gap: 8px 18px; margin-top: 18px; text-align: left; font-size: 12px; }
@@ -318,7 +314,6 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .terminal:not(.open) .term-body { height: 0; padding-block: 0; border-top-color: transparent; overflow: hidden; }
 .term-head { display: flex; align-items: center; gap: 12px; height: 30px; padding: 0 10px; color: var(--text-3); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; cursor: pointer; user-select: none; }
 .term-head .spacer { flex: 1; }
-.term-head .term-share { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .term-head .icon-btn { height: 22px; text-transform: none; }
 .term-body { height: var(--term-h); overflow: auto; padding: 6px 14px; font: 12px/1.6 var(--font-code); color: var(--text-2); border-top: 1px solid var(--line); cursor: text; transition: height .22s cubic-bezier(.2,.8,.2,1), padding .22s; }
 body.resizing-h .term-body { transition: none; }
@@ -418,17 +413,7 @@ body.resizing-h .term-body { transition: none; }
 .modal.wide { width: min(560px, calc(100vw - 32px)); padding: 12px; }
 .modal h3 { margin: 0 0 4px; font-family: var(--font-display); font-size: 17px; }
 .modal .sub { color: var(--text-2); margin: 0 0 16px; }
-.keybox { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px dashed #3a3a42; border-radius: 8px; padding: 10px 12px; font: 13px var(--font-code); margin-bottom: 14px; word-break: break-all; }
-.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); }
-.switch { width: 34px; height: 20px; border-radius: 10px; background: var(--bg-3); border: 1px solid var(--line); position: relative; padding: 0; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-3); transition: left .15s, background .15s; }
-.switch.on { background: var(--blue); border-color: var(--blue); }
-.switch.on::after { left: 16px; background: #fff; }
 .name-input { width: 100%; margin: 12px 0 14px; }
-.share-note { color: var(--text-3); font-size: 12px; margin: 10px 0 0; }
-.share-note b { color: var(--text-2); }
-.people-note { color: var(--text-3); padding: 8px; }
-.join-req { margin-top: 12px; border: 1px solid rgba(0,94,255,.5); background: var(--blue-soft); border-radius: 10px; padding: 12px; }
 
 /* ---------- vibe mode ---------- */
 /* The whole IDE fades and blurs away while the feed plays. */
@@ -480,7 +465,7 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 
 
 /* ================= Interaction feedback (applies everywhere) ================= */
-.btn, .icon-btn, .act-btn, .menu-top, .menu-item, .tab, .chip, .sb, .seg button, .agent-opt, .tree-item, .scm-row, .commit, .qo-item, .result-line, .switch, .pill-btn, .get {
+.btn, .icon-btn, .act-btn, .menu-top, .menu-item, .tab, .chip, .sb, .seg button, .agent-opt, .tree-item, .scm-row, .commit, .qo-item, .result-line, .pill-btn, .get {
   transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .2s ease, transform .12s ease, opacity .15s ease;
 }
 .btn:active:not(:disabled), .icon-btn:active, .act-btn:active, .chip:active, .seg button:active, .pill-btn:active, .menu-top:active { transform: scale(.95); }
@@ -503,7 +488,6 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .agent.done { border-color: rgba(34,197,94,.35); }
 .agent .meter i { transition: width .4s cubic-bezier(.2,.8,.2,1); }
 .msg, .card, .handoff, .tool-line, .run-done, .resolved { animation: rise .22s cubic-bezier(.2,.8,.2,1); }
-.switch::after { transition: left .2s cubic-bezier(.3,1.4,.5,1), background .15s; }
 
 /* ================= Onboarding: setup fits one screen ================= */
 .ob-step.setup { width: min(940px, calc(100vw - 48px)); padding: 12px 0 36px; }
