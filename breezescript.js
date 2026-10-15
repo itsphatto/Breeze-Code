@@ -168,8 +168,10 @@ function demoApi() {
     const under = (p, rel) => (rel ? p.startsWith(rel + '/') : true);
     const exists = (p) => files.has(p) || dirs.has(p);
     const inside = (k, rel) => k === rel || k.startsWith(rel + '/');
-    const needOpen = () => { if (!store.get('breeze.demoOpen', false))
-        throw new Error('No folder is open'); };
+    const needOpen = () => {
+        if (!store.get('breeze.demoOpen', false))
+            throw new Error('No folder is open');
+    };
     const feeds = () => store.get('breeze.demoVibe', {});
     return {
         fs: {
@@ -318,16 +320,20 @@ function demoApi() {
         },
         git: {
             async status() {
-                return { repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
-                    files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }] };
+                return {
+                    repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
+                    files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }]
+                };
             },
             async log() {
-                return { head: 'd4f0b19aa', commits: [
+                return {
+                    head: 'd4f0b19aa', commits: [
                         { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
                         { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
                         { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
                         { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
-                    ] };
+                    ]
+                };
             },
             async show(hash) { return { hash, author: 'You', email: 'you@example.com', when: 'a few minutes ago', message: 'Demo checkpoint', files: [{ path: 'styles.css', added: 11, removed: 2 }] }; },
             async diff() { return '@@ -1,3 +1,3 @@\n /* Cozy, warm palette */\n-:root {\n+:root { /* demo change */\n   --bean: #2b1d12;'; },
@@ -596,10 +602,12 @@ async function renderFeedChoices(root) {
                 background(toggleFeed(id).then(draw));
             };
             card.onclick = e => pick(!!e.target.closest('[data-connect]'));
-            card.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === card) {
-                e.preventDefault();
-                pick(false);
-            } };
+            card.onkeydown = e => {
+                if ((e.key === 'Enter' || e.key === ' ') && e.target === card) {
+                    e.preventDefault();
+                    pick(false);
+                }
+            };
         });
     };
     draw();
@@ -738,8 +746,10 @@ function bindLocalLlm(root, onChange) {
         };
         connect.onclick = () => void save();
         for (const input of [url, key])
-            input.onkeydown = e => { if (e.key === 'Enter')
-                void save(); };
+            input.onkeydown = e => {
+                if (e.key === 'Enter')
+                    void save();
+            };
     }
     const model = root.querySelector('[data-llm-model]');
     if (model)
@@ -761,12 +771,16 @@ function bindLocalLlm(root, onChange) {
 function bindAgentOptions(root, onChange) {
     $$('[data-agent]', root).forEach(el => {
         const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onChange(); };
-        el.onclick = e => { if (!e.target.closest('button, input, select'))
-            pick(); };
-        el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
-            e.preventDefault();
-            pick();
-        } };
+        el.onclick = e => {
+            if (!e.target.closest('button, input, select'))
+                pick();
+        };
+        el.onkeydown = e => {
+            if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
+                e.preventDefault();
+                pick();
+            }
+        };
     });
     $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
     bindLocalLlm(root, onChange);
@@ -901,7 +915,7 @@ function langOf(path) {
 }
 const either = (...patterns) => new RegExp(patterns.map(p => p.source).join('|'));
 const lexer = (rules, flags = 'g') => new RegExp(rules.map(([kind, p]) => `(?<${kind}>${p.source})`).join('|'), flags);
-const keywords = (list) => new RegExp(String.raw `\b(?:${list.replaceAll(' ', '|')})\b`);
+const keywords = (list) => new RegExp(String.raw`\b(?:${list.replaceAll(' ', '|')})\b`);
 const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return super switch this throw try typeof var void while with yield async await static get set type interface enum implements private public protected readonly declare as true false null undefined';
 const PY_KW = 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self';
 const LINE_COMMENT = /\/\/[^\n]*/;
@@ -1213,7 +1227,7 @@ class JsonChecker {
             this.i++;
             return;
         }
-        for (;;) {
+        for (; ;) {
             item();
             this.ws();
             if (this.t[this.i] === close) {
@@ -1834,8 +1848,10 @@ function createTextarea(b) {
     });
     ta.addEventListener('blur', hideSuggest);
     ta.addEventListener('mousedown', hideSuggest);
-    ta.addEventListener('scroll', () => { if (suggest?.owner === ta)
-        editorSuggest(b); }); // follow the caret
+    ta.addEventListener('scroll', () => {
+        if (suggest?.owner === ta)
+            editorSuggest(b);
+    }); // follow the caret
     ta.addEventListener('scroll', syncScroll);
     ta.addEventListener('keydown', editorKeys);
     for (const ev of ['keyup', 'mouseup', 'select', 'selectionchange', 'focus'])
@@ -2011,13 +2027,17 @@ function askName(title, initial, okLabel) {
             input.focus();
             const dot = initial.lastIndexOf('.');
             input.setSelectionRange(0, dot > 0 ? dot : initial.length);
-            const ok = () => { const v = input.value.trim(); if (v) {
-                finish(v);
-                closeModal();
-            } };
+            const ok = () => {
+                const v = input.value.trim(); if (v) {
+                    finish(v);
+                    closeModal();
+                }
+            };
             $('#nameOk', m).onclick = ok;
-            input.onkeydown = e => { if (e.key === 'Enter')
-                ok(); };
+            input.onkeydown = e => {
+                if (e.key === 'Enter')
+                    ok();
+            };
         }, () => finish(null));
     });
 }
@@ -2248,8 +2268,10 @@ function closeTabs(paths) {
         $('#tabsDontSave', m).onclick = () => { closeModal(); finish(); };
         $('#tabsSave', m).onclick = () => {
             closeModal();
-            background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => { if (saved.every(Boolean))
-                finish(); }));
+            background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => {
+                if (saved.every(Boolean))
+                    finish();
+            }));
         };
     });
 }
@@ -2367,8 +2389,12 @@ function closeTab(path) {
     openModal(`<h3>Save changes to ${esc(baseName(path))}?</h3><p class="sub">Your changes will be lost if you don't save them.</p>
     <div class="row end"><button class="btn" data-close>Cancel</button><button class="btn" id="dontSave">Don't Save</button><button class="btn btn-primary" id="doSave">Save</button></div>`, m => {
         $('#dontSave', m).onclick = () => { closeModal(); finish(); };
-        $('#doSave', m).onclick = () => { closeModal(); background(saveFile(path).then(ok => { if (ok)
-            finish(); })); };
+        $('#doSave', m).onclick = () => {
+            closeModal(); background(saveFile(path).then(ok => {
+                if (ok)
+                    finish();
+            }));
+        };
     });
 }
 async function saveFile(path = active) {
@@ -2989,8 +3015,10 @@ async function quickOpen() {
 /* ================= Search across files ================= */
 let searchCase = false;
 $('#searchCase').onclick = () => { searchCase = !searchCase; $('#searchCase').classList.toggle('on', searchCase); void runSearch(); };
-$('#searchInput').addEventListener('keydown', e => { if (e.key === 'Enter')
-    void runSearch(); });
+$('#searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter')
+        void runSearch();
+});
 function hitLineHtml(h, i, qLen) {
     const start = Math.max(0, h.col - 30);
     const pre = h.text.slice(start, h.col).trimStart(), hit = h.text.slice(h.col, h.col + qLen), post = h.text.slice(h.col + qLen, h.col + qLen + 80);
@@ -3100,12 +3128,14 @@ const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
 // Windows paths (drive letter) compare without regard to case or slash direction.
 function projectPath(p, cwd, root) {
     const slash = (x) => x.replaceAll('\\', '/');
-    const parts = (x) => { const out = []; for (const seg of slash(x).split('/')) {
-        if (seg === '..')
-            out.pop();
-        else if (seg && seg !== '.')
-            out.push(seg);
-    } return out; };
+    const parts = (x) => {
+        const out = []; for (const seg of slash(x).split('/')) {
+            if (seg === '..')
+                out.pop();
+            else if (seg && seg !== '.')
+                out.push(seg);
+        } return out;
+    };
     const given = slash(p);
     const full = parts(/^(?:[A-Za-z]:)?\//.test(given) ? given : `${slash(cwd)}/${given}`);
     const base = parts(root);
@@ -3325,11 +3355,13 @@ termInput.addEventListener('keydown', e => {
     termGhost.innerHTML = '';
     void runCommand(cmd);
 });
-api.term.onData((id, chunk) => { if (id !== term.proc)
-    return; if (id === term.runId)
-    runOutput(chunk);
-else
-    termWrite(chunk); });
+api.term.onData((id, chunk) => {
+    if (id !== term.proc)
+        return; if (id === term.runId)
+        runOutput(chunk);
+    else
+        termWrite(chunk);
+});
 api.term.onExit((id, code) => {
     if (id !== term.proc)
         return;
@@ -3351,10 +3383,14 @@ api.term.onExit((id, code) => {
     if (code)
         showRunErrors(term.refs);
 });
-$('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString())
-    termInput.focus(); });
-$('#termToggle').addEventListener('click', e => { if (!e.target.closest('button'))
-    run('term.toggle'); });
+$('#termBody').addEventListener('mouseup', () => {
+    if (!getSelection()?.toString())
+        termInput.focus();
+});
+$('#termToggle').addEventListener('click', e => {
+    if (!e.target.closest('button'))
+        run('term.toggle');
+});
 let suggest = null;
 const suggestEl = document.createElement('div');
 suggestEl.className = 'suggest hidden';
@@ -3517,8 +3553,10 @@ async function loadNpmScripts() {
     }
 }
 background(loadNpmScripts());
-api.fs.onChange(paths => { if (paths.includes('package.json'))
-    background(loadNpmScripts()); });
+api.fs.onChange(paths => {
+    if (paths.includes('package.json'))
+        background(loadNpmScripts());
+});
 function subcommandsOf(cmd) {
     return cmd === 'npm' ? [...new Set([...SUBCOMMANDS.npm, ...npmScripts.filter(s => ['start', 'test'].includes(s))])] : SUBCOMMANDS[cmd] ?? [];
 }
@@ -3626,8 +3664,10 @@ function terminalAutofillKeys(e) {
     }
     return false;
 }
-termInput.addEventListener('input', () => { updateGhost(); if (suggest?.owner === termInput)
-    hideSuggest(); });
+termInput.addEventListener('input', () => {
+    updateGhost(); if (suggest?.owner === termInput)
+        hideSuggest();
+});
 termInput.addEventListener('blur', () => { termGhost.innerHTML = ''; hideSuggest(); });
 termInput.addEventListener('focus', updateGhost);
 const DEFAULT_LAYOUT = { side: 240, agents: 340, term: 200, preview: 460, sideOpen: true, agentsOpen: true, termOpen: false, previewOpen: true, view: 'files' };
@@ -3654,14 +3694,22 @@ function applyLayout() {
 window.addEventListener('resize', applyLayout);
 // Dragging below a threshold collapses the panel; dragging back out reopens it.
 const SASH_DRAG = {
-    side: (start, dx) => { const w = start.side + dx; layout.sideOpen = w >= 120; if (layout.sideOpen)
-        layout.side = clamp(w, 170, 640); },
-    agents: (start, dx) => { const w = start.agents - dx; layout.agentsOpen = w >= 180; if (layout.agentsOpen)
-        layout.agents = clamp(w, 260, 720); },
-    preview: (start, dx) => { const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen)
-        layout.preview = clamp(w, 220, $('#work').clientWidth - 220); },
-    term: (start, _dx, dy) => { const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen)
-        layout.term = clamp(h, 80, innerHeight - 220); },
+    side: (start, dx) => {
+        const w = start.side + dx; layout.sideOpen = w >= 120; if (layout.sideOpen)
+            layout.side = clamp(w, 170, 640);
+    },
+    agents: (start, dx) => {
+        const w = start.agents - dx; layout.agentsOpen = w >= 180; if (layout.agentsOpen)
+            layout.agents = clamp(w, 260, 720);
+    },
+    preview: (start, dx) => {
+        const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen)
+            layout.preview = clamp(w, 220, $('#work').clientWidth - 220);
+    },
+    term: (start, _dx, dy) => {
+        const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen)
+            layout.term = clamp(h, 80, innerHeight - 220);
+    },
 };
 function startSashDrag(sash, kind, e) {
     const sx = e.clientX, sy = e.clientY, start = { ...layout };
@@ -3718,8 +3766,10 @@ const commands = {
     'file.openRecent': openRecentPicker,
     'file.save': () => saveFile(),
     'file.saveAll': saveAll,
-    'file.closeEditor': () => { if (active)
-        closeTab(active); },
+    'file.closeEditor': () => {
+        if (active)
+            closeTab(active);
+    },
     'file.closeFolder': closeFolderCmd,
     'file.exit': () => api.win.quit(),
     'edit.undo': () => editRole('undo'),
@@ -3751,20 +3801,26 @@ const commands = {
     'run.file': runFile,
     'run.start': () => (runnable(active) ? run('run.file') : running ? reloadPreview() : startPreview()),
     'run.reload': reloadPreview,
-    'run.stop': () => { if (term.runId != null)
-        killCommand();
-    else {
-        stopPreview();
-        toast('Preview stopped');
-    } },
-    'term.toggle': () => { layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
-        termInput.focus(); },
+    'run.stop': () => {
+        if (term.runId != null)
+            killCommand();
+        else {
+            stopPreview();
+            toast('Preview stopped');
+        }
+    },
+    'term.toggle': () => {
+        layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
+            termInput.focus();
+    },
     'term.focus': () => { layout.termOpen = true; applyLayout(); termInput.focus(); },
     'term.clear': () => { termOut.innerHTML = ''; },
-    'term.kill': () => { if (term.proc == null)
-        toast('Nothing is running');
-    else
-        killCommand(); },
+    'term.kill': () => {
+        if (term.proc == null)
+            toast('Nothing is running');
+        else
+            killCommand();
+    },
     'explorer.refresh': refreshTree,
     'explorer.collapse': () => { expanded.clear(); renderTree(); saveSession(); },
     'help.welcome': () => setActive(null),
@@ -3862,7 +3918,8 @@ function confirmDiscard() {
     });
 }
 const MENUS = [
-    { name: 'File', items: [
+    {
+        name: 'File', items: [
             { label: 'New File…', act: 'file.newFile', key: 'Ctrl+N' },
             { label: 'New Folder…', act: 'file.newFolder' },
             { sep: true },
@@ -3876,8 +3933,10 @@ const MENUS = [
             { label: 'Close Folder', act: 'file.closeFolder', enabled: () => !!rootInfo },
             { sep: true },
             { label: 'Exit', act: 'file.exit' },
-        ] },
-    { name: 'Edit', items: [
+        ]
+    },
+    {
+        name: 'Edit', items: [
             { label: 'Undo', act: 'edit.undo', key: 'Ctrl+Z', native: true },
             { label: 'Redo', act: 'edit.redo', key: 'Ctrl+Y', native: true },
             { sep: true },
@@ -3889,16 +3948,20 @@ const MENUS = [
             { label: 'Find in Files', act: 'view.search', key: 'Ctrl+Shift+F' },
             { sep: true },
             { label: 'Toggle Line Comment', act: 'edit.comment', key: 'Ctrl+/', enabled: hasFile },
-        ] },
-    { name: 'Selection', items: [
+        ]
+    },
+    {
+        name: 'Selection', items: [
             { label: 'Select All', act: 'edit.selectAll', key: 'Ctrl+A', native: true },
             { label: 'Select Line', act: 'sel.line', key: 'Ctrl+L', enabled: hasFile },
             { sep: true },
             { label: 'Copy Line Down', act: 'sel.dup', key: 'Shift+Alt+Down', enabled: hasFile },
             { label: 'Move Line Up', act: 'sel.up', key: 'Alt+Up', enabled: hasFile },
             { label: 'Move Line Down', act: 'sel.down', key: 'Alt+Down', enabled: hasFile },
-        ] },
-    { name: 'View', items: [
+        ]
+    },
+    {
+        name: 'View', items: [
             { label: 'Explorer', act: 'view.files', key: 'Ctrl+Shift+E' },
             { label: 'Search', act: 'view.search', key: 'Ctrl+Shift+F' },
             { label: 'Checkpoints', act: 'view.git', key: 'Ctrl+Shift+G' },
@@ -3911,49 +3974,60 @@ const MENUS = [
             { sep: true },
             { label: 'Reload Window', act: 'win.reload', key: 'Ctrl+R' },
             { label: 'Toggle Developer Tools', act: 'win.devtools', key: 'Ctrl+Shift+I' },
-        ] },
-    { name: 'Go', items: [
+        ]
+    },
+    {
+        name: 'Go', items: [
             { label: 'Go to File…', act: 'go.file', key: 'Ctrl+P' },
             { label: 'Go to Line…', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
             { label: 'Next Problem', act: 'go.nextProblem', key: 'F8', enabled: hasFile },
             { sep: true },
             { label: 'Next Editor', act: 'go.nextEditor', key: 'Ctrl+Tab' },
             { label: 'Previous Editor', act: 'go.prevEditor', key: 'Ctrl+Shift+Tab' },
-        ] },
-    { name: 'Run', items: [
+        ]
+    },
+    {
+        name: 'Run', items: [
             { label: 'Run File', act: 'run.file', enabled: () => runnable(active) },
             { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
             { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
             { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
-        ] },
-    { name: 'Terminal', items: [
+        ]
+    },
+    {
+        name: 'Terminal', items: [
             { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
             { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
             { sep: true },
             { label: 'Clear Terminal', act: 'term.clear' },
             { label: 'Stop Running Command', act: 'term.kill', enabled: () => term.proc != null },
-        ] },
-    { name: 'Help', items: [
+        ]
+    },
+    {
+        name: 'Help', items: [
             { label: 'Welcome', act: 'help.welcome' },
             { label: 'Keyboard Shortcuts', act: 'help.keys' },
             { label: 'Run Setup Again', act: 'help.setup' },
             { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
             { sep: true },
             { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
-            { label: 'Breeze Box (chat only)', act: 'mode.box', checked: () => appState.mode === 'box' },
+            { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
             { sep: true },
             { label: 'Add Account…', act: 'account.signIn' },
             { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
             { sep: true },
             { label: 'About Breeze IDE', act: 'help.about' },
-        ] },
+        ]
+    },
 ];
 // Go, Run and Help stay out of the menu bar; their shortcuts still work and Help lives under the gear button.
 const BAR_MENUS = MENUS.filter(m => !['Go', 'Run', 'Help'].includes(m.name));
 // Shortcuts handled by the editor itself or by keydown elsewhere, but listed for discoverability.
 const EXTRA_KEYS = [['F2', 'explorer.rename']];
-commands['explorer.rename'] = () => { if (active)
-    return renameEntry(active); };
+commands['explorer.rename'] = () => {
+    if (active)
+        return renameEntry(active);
+};
 const canonKey = (combo) => {
     const parts = combo.split('+');
     const key = parts.pop();
@@ -3991,8 +4065,10 @@ function cancelMenuClose() { clearTimeout(menuCloseTimer); }
 // A menu opened by hovering closes shortly after the pointer leaves both the bar and the menu.
 function scheduleMenuClose() {
     cancelMenuClose();
-    menuCloseTimer = setTimeout(() => { if (openMenuIdx >= 0 && !menuPinned)
-        closeMenu(); }, 350);
+    menuCloseTimer = setTimeout(() => {
+        if (openMenuIdx >= 0 && !menuPinned)
+            closeMenu();
+    }, 350);
 }
 function buildMenubar() {
     $('#menubar').innerHTML = BAR_MENUS.map((m, i) => `<button class="menu-top" data-menu="${i}" aria-haspopup="menu">${esc(m.name)}</button>`).join('');
@@ -4325,10 +4401,12 @@ let agentRun = null;
 let lastRunFiles = [];
 for (const s of Object.values(SURFACES)) {
     s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
-    s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        void sendPrompt();
-    } });
+    s.prompt.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void sendPrompt();
+        }
+    });
 }
 function newChat() {
     if (agentRun)
@@ -4413,18 +4491,26 @@ function onAgentError(r, ev) {
     errorCard(ev.text ?? 'Unknown error', ev.hint, ev.action);
 }
 const AGENT_EVENTS = {
-    session: (_r, ev) => { if (ev.id)
-        store.set(agentSessionKey(), ev.id); },
-    text: (r, ev) => { if (ev.text) {
-        r.lastText = ev.text;
-        r.lastMsg = agentMsg(r.phase, md(ev.text));
-    } },
+    session: (_r, ev) => {
+        if (ev.id)
+            store.set(agentSessionKey(), ev.id);
+    },
+    text: (r, ev) => {
+        if (ev.text) {
+            r.lastText = ev.text;
+            r.lastMsg = agentMsg(r.phase, md(ev.text));
+        }
+    },
     tool: (r, ev) => { r.tools++; toolLine(ev.kind ?? 'tool', ev.label ?? ''); setAgent(r.phase, 'working', ev.label ?? 'Working', r.tools); },
-    file: (r, ev) => { if (ev.path)
-        onAgentFile(r, ev.path); },
+    file: (r, ev) => {
+        if (ev.path)
+            onAgentFile(r, ev.path);
+    },
     plan: (r, ev) => { r.plan = ev.text ?? ''; },
-    note: (_r, ev) => { if (ev.text)
-        toolLine('note', ev.text); },
+    note: (_r, ev) => {
+        if (ev.text)
+            toolLine('note', ev.text);
+    },
     error: onAgentError,
     done: finishRun,
 };
@@ -4510,8 +4596,10 @@ const commitDetails = new Map();
 const scmCollapsed = new Set(store.get('breeze.scmCollapsed', []));
 let gitTimer;
 function queueGitRefresh() { clearTimeout(gitTimer); gitTimer = setTimeout(() => void refreshGit(), 400); }
-window.addEventListener('focus', () => { if (rootInfo)
-    queueGitRefresh(); });
+window.addEventListener('focus', () => {
+    if (rootInfo)
+        queueGitRefresh();
+});
 async function refreshGit() {
     if (!rootInfo) {
         gitState = { repo: false };
@@ -4631,10 +4719,12 @@ function renderScm() {
     const msg = $('#scmMsg', el);
     msg.value = scmDraft;
     msg.oninput = () => { scmDraft = msg.value; };
-    msg.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        run('git.commit');
-    } };
+    msg.onkeydown = e => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            run('git.commit');
+        }
+    };
 }
 let scmDraft = '';
 const seenScm = new Set();
@@ -4946,8 +5036,10 @@ async function pickBranch() {
             $('[data-new]', m)?.addEventListener('click', () => switchTo(q, true));
         };
         input.oninput = render;
-        input.onkeydown = e => { if (e.key === 'Enter')
-            $('[data-new], [data-br]', m)?.click(); };
+        input.onkeydown = e => {
+            if (e.key === 'Enter')
+                $('[data-new], [data-br]', m)?.click();
+        };
         render();
     }, undefined, 'top');
 }
@@ -5101,8 +5193,10 @@ $('#vibeArm').onclick = () => {
 };
 function openFeedPicker() {
     openModal(`<h3>Vibe Mode feeds</h3><p class="sub">Pick what plays while your agents work. Connecting opens the site so you can sign in.</p>
-    <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`, m => void renderFeedChoices($('#feedPick', m)), () => { if (connectedSites().length && !appState.vibeArmed)
-        setVibeArmed(true); });
+    <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`, m => void renderFeedChoices($('#feedPick', m)), () => {
+        if (connectedSites().length && !appState.vibeArmed)
+            setVibeArmed(true);
+    });
 }
 commands['vibe.feeds'] = openFeedPicker;
 function frameRect() {
@@ -5145,8 +5239,10 @@ function enterVibe() {
     tickVibeClock();
     vibeClock = setInterval(tickVibeClock, 1000);
     // Wait for the stage to settle before laying the live feed over it.
-    setTimeout(() => { if (vibeOn)
-        showFeed(); }, 450);
+    setTimeout(() => {
+        if (vibeOn)
+            showFeed();
+    }, 450);
 }
 function exitVibe() {
     if (!vibeOn)
@@ -5195,8 +5291,10 @@ $('#vibeMute').onclick = () => {
         background(api.vibe.mute(vibeMuted));
 };
 // Keep the live feed glued to the frame when the window changes size.
-new ResizeObserver(() => { if (vibeOn && vibeSiteShown && isDesktop)
-    background(api.vibe.bounds(frameRect())); }).observe(vibeFrame);
+new ResizeObserver(() => {
+    if (vibeOn && vibeSiteShown && isDesktop)
+        background(api.vibe.bounds(frameRect()));
+}).observe(vibeFrame);
 /* ================= Discord ================= */
 let discord = false;
 $('#discord').onclick = () => {
@@ -5222,8 +5320,10 @@ function openModal(html, bind, onClose, place = 'center') {
     $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`);
     const m = $('#modalRoot .scrim:not(.closing) .modal');
     modalOnClose = onClose ?? null;
-    $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if (e.target.classList.contains('scrim'))
-        closeModal(); };
+    $('#modalRoot .scrim:not(.closing)').onmousedown = e => {
+        if (e.target.classList.contains('scrim'))
+            closeModal();
+    };
     $$('[data-close]', m).forEach(b => b.onclick = closeModal);
     bind?.(m);
 }
