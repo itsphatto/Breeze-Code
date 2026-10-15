@@ -1,11 +1,14 @@
 {
   "name": "breeze-ide-frontend",
   "private": true,
+  "main": "main.js",
   "scripts": {
+    "start": "tsc && electron .",
     "build": "tsc",
     "watch": "tsc --watch"
   },
   "devDependencies": {
+    "electron": "^44.7.2",
     "typescript": "^7.0.2"
   }
 }
