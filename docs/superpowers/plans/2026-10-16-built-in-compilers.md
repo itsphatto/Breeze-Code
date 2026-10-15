@@ -1,183 +1,129 @@
-# Built-in C/C++ Compiler and Python Implementation Plan
+# Run C, C++ and Python Files Implementation Plan (revision 2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** F5 on a `.c`, `.cpp` or `.py` file compiles (if needed) and runs it in Breeze's terminal using bundled GCC and Python on Windows, with keyboard input and clickable errors.
+**Goal:** F5 on a `.c`, `.cpp` or `.py` file compiles (if needed) and runs it in Breeze's terminal with the compiler and Python already installed on the PC, with keyboard input, clickable errors, and install commands when a tool is missing.
 
-**Architecture:** A new pure-Node module `toolchains.js` finds tools, builds the env and the run steps, and runs steps through an injected `spawn` (unit-tested with `node --test`). `main.js` wires it to IPC (`run:file`, `term:write`) and reuses the terminal's `terms` map and `term:data`/`term:exit` events. The renderer adds the Run command, F5 dispatch, Run button, stdin while running, and error links/underlines. Toolchains are downloaded by a checksummed fetch script into `vendor/` and packaged with electron-builder as `toolchains/`.
+**Architecture:** `toolchains.js` (pure Node, unit-tested with `node --test`) finds installed tools, builds the env and the run steps, and runs steps through an injected `spawn`. `main.js` wires it to IPC (`run:file`, `term:write`, `sys:detect`) and reuses the terminal's `terms` map and `term:data`/`term:exit` events. The renderer adds the Run command, F5 dispatch, Run button, stdin while running, and error links/underlines.
 
-**Tech Stack:** Electron 44 (Node 24), CommonJS main process, TypeScript renderer compiled by `tsc` to `breezescript.js`, `node:test`, electron-builder (NSIS), w64devkit, python-build-standalone.
+**Tech Stack:** Electron 44 (Node 24), CommonJS main process, TypeScript renderer compiled by `tsc` to `breezescript.js`, `node:test`.
 
-**Spec:** `docs/superpowers/specs/2026-10-16-built-in-compilers-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-16-built-in-compilers-design.md` (revision 2)
+
+**History:** Revision 1 bundled w64devkit + Python. Tasks 1–2 were built under it (commits 1d4321b..dfd3d52); the user then chose installed tools only. Task 3 removes the bundling and reworks tool lookup; Tasks 4–6 are revision 1's Tasks 3–5 adjusted. Revision 1's packaging task is dropped.
 
 ## Global Constraints
 
-- Bundled tools on Windows x64 only; macOS/Linux use system `cc`, `c++`, `python3`.
-- C: `gcc "<file>" -o "build/<name>.exe" -std=c17 -Wall -g`; C++ (`.cpp` `.cc` `.cxx`): `g++ … -std=c++20 -Wall -g`; Python: `python -u "<file>"`. No `.exe` suffix on non-Windows.
+- Nothing is bundled or downloaded; tools come from the PC. MSVC is not supported.
+- C/C++ lookup order: `gcc`/`g++`, then `clang`/`clang++` (non-Windows also `cc`/`c++`); C++ from the same folder as the C compiler. Python: Windows `py -3`, then `python`; elsewhere `python3`.
+- Windows extra folders: `C:\msys64\ucrt64\bin`, `C:\msys64\mingw64\bin`, `C:\msys64\clang64\bin`, `C:\MinGW\bin`, `C:\mingw64\bin`, `C:\ProgramData\mingw64\mingw64\bin`, `%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*\mingw64\bin`.
+- A candidate counts only if `--version` exits 0 within 4 s.
+- C: `<cc> "<file>" -o "build/<name>.exe" -std=c17 -Wall -g`; C++ (`.cpp` `.cc` `.cxx`): `<cxx> … -std=c++20 -Wall -g`; Python: `<python> -u "<file>"`. Shown command uses the tool name (`gcc`, `g++`, `clang`, `clang++`, `python`, `py`). No `.exe` suffix on non-Windows. C/C++ add a hidden `-include <app>/runtime/breeze_stdio.h`.
 - Each step runs with `cwd` = the source file's folder; spawned without a shell.
 - Output goes to `build/` next to the source file. Append `build/` to an existing project-root `.gitignore` only; never create one.
-- Bundled `bin` folders are prepended to `PATH` for every terminal command and run.
+- Missing-tool copy (verbatim): Windows C `No C/C++ compiler found. Install one with: winget install BrechtSanders.WinLibs.POSIX.UCRT`; macOS C `No C/C++ compiler found. Install one with: xcode-select --install`; Linux C `No C/C++ compiler found. Install gcc with your package manager (e.g. sudo apt install build-essential)`; Windows Python `Python wasn't found. Install it with: winget install Python.Python.3.13`; macOS Python `Python wasn't found. Install it with: xcode-select --install`; Linux Python `Python wasn't found. Install python3 with your package manager`.
 - Exit line copy: `exited with code N · 0.4s` (seconds, one decimal).
-- Missing-tool copy — Windows dev: `Compilers aren't downloaded yet — run npm run fetch-toolchains`; macOS: `Install a C compiler (xcode-select --install)`; Linux: `Install a C compiler with your package manager`; Python equivalents say `Install Python 3 …`.
-- Renderer edits go in `breezescript.ts` only; `breezescript.js` is regenerated by `npx tsc` and committed with it (the repo tracks both).
+- Renderer edits go in `breezescript.ts`; `breezescript.js` is regenerated by `npx tsc` and committed with it.
 - The user pushes commits themselves; tasks commit, never push.
 
 ## Review Focus
 
-1. **Paths with spaces** (the developer's own home is `C:\Users\Dell NB\…`): compile and run must work; covered in Task 2 (`runPlan`/`runSteps` tests) by never using a shell.
-2. **Prompt before input** (`printf("Name: "); scanf(...)`): C stdio is fully buffered on a pipe, so the prompt would appear only after input. Task 2 adds a force-included header that turns off stdout buffering; Task 3's manual check confirms the prompt shows first.
-3. **Unsaved new file / file outside the project**: F5 must say `Save the file first` instead of failing obscurely; covered in Task 4.
-4. **F5 while a program is still running**: refused with `A program is still running — press Ctrl+C to stop it` (also avoids "Permission denied" relinking a running `.exe`); enforced in `run:file` (Task 3) and checked by hand in Task 4.
-5. **Ctrl+C during the compile step**: kills the compiler and does not start the program; covered in Task 2 (`runSteps` cancel test).
+1. **Microsoft Store Python shortcut** (`WindowsApps\python.exe`) with no Python behind it opens the Store instead of running: must not count as found. Covered in Task 3 (`findTools` test with a failing `--version`).
+2. **Tool installed while Breeze is open** (e.g. the winget command run in Breeze's terminal): the next F5 must find it without a restart. Covered in Task 3 (`freshPath`) and Task 4 (re-detect while missing), checked by hand in Task 4.
+3. **Paths with spaces** (the developer's home is `C:\Users\Dell NB\…`): compile and run work; covered by Task 2's tests (no shell).
+4. **Prompt before input** (`printf("Name: "); scanf(...)`): prompt shows first; Task 2's header, checked by hand in Task 4.
+5. **F5 while a program is still running**: refused with `A program is still running — press Ctrl+C to stop it`; enforced in Task 4, checked in Task 5.
 
 ---
 
-### Task 1: Toolchain manifest and fetch script
+### Task 1: Toolchain manifest and fetch script — DONE (revision 1), removed by Task 3
+
+### Task 2: `toolchains.js` — DONE (revision 1); `runPlan`, `runSteps`, `toolEnv`, `ensureBuildIgnored`, `runtime/breeze_stdio.h` carry over, reworked by Task 3
+
+### Task 3: Switch to installed tools
 
 **Files:**
-- Create: `toolchains.json`, `scripts/fetch-toolchains.js`, `test/fetch-toolchains.test.js`
-- Modify: `package.json` (scripts), `.gitignore` (add `vendor/`)
+- Delete: `scripts/fetch-toolchains.js`, `toolchains.json`, `test/fetch-toolchains.test.js`
+- Modify: `toolchains.js`, `test/toolchains.test.js`, `package.json` (drop `fetch-toolchains` script), `.gitignore` (drop `vendor/`)
 
 **Interfaces:**
-- Produces: `vendor/w64devkit/bin/gcc.exe`, `vendor/w64devkit/bin/g++.exe`, `vendor/python/python.exe`, `vendor/python/Scripts/`, `vendor/.versions.json` (`{ "<tool>": "<version>" }`).
-- `toolchains.json` shape: `{ "<tool>": { "version", "url", "sha256", "archive": "7z-sfx" | "tar.gz" | "zip", "inner": "<folder in archive holding bin/ or python.exe>", "dest": "w64devkit" | "python" } }` with tools `w64devkit` and `python`.
-- Exports from `scripts/fetch-toolchains.js` (and runs `main()` when invoked directly):
-  - `sha256File(file: string): Promise<string>` (lowercase hex)
-  - `needsFetch(installed: Record<string,string>, name: string, version: string): boolean`
-  - `fetchTool(name: string, entry: ManifestEntry, vendorDir: string, deps?: { download(url, to): Promise<void> }): Promise<void>` — throws `Error('Checksum mismatch for <name>')` before unpacking.
-
-- [ ] **Step 1: Pin versions.** Pick the latest w64devkit x64 release and the latest python-build-standalone `cpython-3.13.*-x86_64-pc-windows-msvc-install_only.tar.gz`; record URL and SHA-256 (from the release's checksum file, or compute it after download) in `toolchains.json`. w64devkit 2.x ships as a 7-Zip self-extractor: unpack with `<file> -y -o<dest>`. `.tar.gz` and `.zip` unpack with Windows' built-in `tar -xf <file> -C <dest>`.
-
-- [ ] **Step 2: Write failing tests** in `test/fetch-toolchains.test.js`:
-
-```js
-test('sha256File hashes a file', async () => { /* write "abc" to a temp file */
-  assert.equal(await sha256File(f), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'); });
-test('needsFetch is false only for the same version', () => {
-  assert.equal(needsFetch({ python: '3.13.1' }, 'python', '3.13.1'), false);
-  assert.equal(needsFetch({ python: '3.12.0' }, 'python', '3.13.1'), true);
-  assert.equal(needsFetch({}, 'python', '3.13.1'), true); });
-test('fetchTool refuses to unpack on checksum mismatch', async () => {
-  const download = async (_u, to) => fs.writeFileSync(to, 'not the archive');
-  await assert.rejects(fetchTool('python', { ...entry, sha256: '00'.repeat(32) }, vendor, { download }), /Checksum mismatch for python/);
-  assert.equal(fs.existsSync(path.join(vendor, 'python')), false); });
-```
-
-- [ ] **Step 3: Run** `node --test test/` — expected FAIL (module not found).
-- [ ] **Step 4: Implement** `scripts/fetch-toolchains.js`. Download with global `fetch` streamed to a temp file under `os.tmpdir()`; unpack into a temp folder, then move `inner` to `vendor/<dest>` (replace any old copy), then update `.versions.json`. `main()` exits 0 with `Nothing to fetch on <platform> — Breeze uses the system compilers.` off Windows, and exits 1 naming the failed tool.
-- [ ] **Step 5: Add scripts** `"test": "node --test test/"`, `"fetch-toolchains": "node scripts/fetch-toolchains.js"`; add `vendor/` to `.gitignore`.
-- [ ] **Step 6: Run** `npm test` — PASS. Then `npm run fetch-toolchains` and check `vendor\w64devkit\bin\gcc.exe --version` and `vendor\python\python.exe --version` print versions; a second run prints that both are up to date.
-- [ ] **Step 7: Commit** `toolchains.json scripts/ test/ package.json .gitignore` — "Add toolchain manifest and checksummed fetch script".
-
-### Task 2: `toolchains.js` — paths, env, run plan, step runner
-
-**Files:**
-- Create: `toolchains.js`, `runtime/breeze_stdio.h`, `test/toolchains.test.js`
-
-**Interfaces:**
-- Consumes: the `vendor/` layout from Task 1.
+- Removes: `toolchainRoot`, `toolPaths`.
 - Produces (CommonJS exports):
-  - `toolchainRoot(o: { isPackaged: boolean, resourcesPath: string, appDir: string }): string` → `resourcesPath/toolchains` or `appDir/vendor`.
-  - `toolPaths(o: { platform: string, root: string, exists(p): boolean, which(cmd): Promise<string|null> }): Promise<{ gcc: string|null, gxx: string|null, python: string|null, binDirs: string[] }>` — Windows: bundled files (`binDirs` = `[w64devkit/bin, python, python/Scripts]`, only those that exist); else `which('cc')`, `which('c++')`, `which('python3')`, `binDirs: []`.
-  - `toolEnv(baseEnv: object, binDirs: string[], platform: string): object` — copy with `binDirs` prepended to the existing PATH key (on Windows the key may be `Path`; keep that key, don't add a second one), joined by `path.delimiter`.
-  - `runPlan(absFile: string, tools, platform: string, stdioHeader: string): { steps: Step[] } | { error: string }` where `Step = { display: string, file: string, args: string[], cwd: string }`. C/C++ args add `-include <stdioHeader>` (not shown in `display`). Unknown extension → `{ error: 'Breeze can run .c, .cpp and .py files' }`. Missing tool → the Global Constraints copy.
-  - `runSteps(steps: Step[], o: { spawn, env, onStart(step), onData(chunk: string), onChild(child), onDone(code: number|null, ms: number) }): { cancel(): void }` — runs steps in order; a non-zero exit (or `cancel()`) ends the run without starting later steps; `onDone` gets the last exit code.
-  - `ensureBuildIgnored(rootDir: string): void` — appends `build/` (on its own line) to `<root>/.gitignore` if that file exists and has no line matching `build`, `build/` or `/build/`.
-- `runtime/breeze_stdio.h`: a `static void __attribute__((constructor))` that calls `setvbuf(stdout, NULL, _IONBF, 0)` (include `<stdio.h>`; works for C and C++).
+  - `type Tool = { path: string, name: string, version: string }` (`name` is the shown command: `gcc`, `g++`, `clang`, `clang++`, `cc`, `c++`, `python`, `py`, `python3`).
+  - `findTools(o: { platform: string, pathValue: string, env: object, exists(p): boolean, glob(pattern): string[], run(file, args): Promise<{ code: number|null, stdout: string }> }): Promise<{ cc: Tool|null, cxx: Tool|null, python: Tool|null, binDirs: string[] }>` — searches the PATH dirs from `pathValue`, then (Windows) the Global Constraints folders, for the lookup order; `run` is called with `['--version']` (4 s timeout is the caller's `run`); for `py` the args are `['-3', '--version']`. Python's `path` is the interpreter from `run(found, [...pyArgs, '-c', 'import sys; print(sys.executable)'])`; for `py`, `path` stays the launcher and `name` is `py` with a hidden `-3`, i.e. runPlan must pass `-3` first. `binDirs` = folders of found tools not already in `pathValue`.
+  - `freshPath(platform: string, run): Promise<string>` — Windows: machine `Path` + `;` + user `Path`, from `run('powershell.exe', ['-NoProfile', '-Command', "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"])`, falling back to `process.env.PATH` (or `Path`) on failure; elsewhere `process.env.PATH`.
+  - `toolEnv(baseEnv, binDirs, platform, pathValue?)` — as before, but uses `pathValue` (when given) instead of the env's own PATH value; keeps the existing key (`Path` on Windows).
+  - `runPlan(absFile, tools, platform, stdioHeader)` — `tools` is now `findTools`' result; `file` = `tool.path`, display uses `tool.name`; Python via `py` gets args `['-3', '-u', file]` and display `py -3 -u "app.py"`. Missing tool → `{ error: <Global Constraints copy> }`.
 
-- [ ] **Step 1: Write failing tests** in `test/toolchains.test.js`:
+- [ ] **Step 1: Write failing tests** in `test/toolchains.test.js` (replace the `toolPaths`/`toolchainRoot` tests; keep the rest, updating `tools` fixtures to `Tool` objects):
 
 ```js
-test('runPlan for C', () => {
-  const r = runPlan('C:\\Users\\Dell NB\\proj\\hello.c', tools, 'win32', H);
-  assert.deepEqual(r.steps[0].args, ['C:\\Users\\Dell NB\\proj\\hello.c', '-o', 'build\\hello.exe', '-std=c17', '-Wall', '-g', '-include', H]);
-  assert.equal(r.steps[0].display, 'gcc "hello.c" -o "build\\hello.exe" -std=c17 -Wall -g');
-  assert.equal(r.steps[0].cwd, 'C:\\Users\\Dell NB\\proj');
-  assert.equal(r.steps[1].file, 'C:\\Users\\Dell NB\\proj\\build\\hello.exe'); });
-test('runPlan for .cc uses g++ and c++20', ...);           // steps[0].file === tools.gxx, args include '-std=c++20'
-test('runPlan for Python is one unbuffered step', ...);    // steps.length 1, args ['-u', file]
-test('runPlan on linux has no .exe', ...);                 // output 'build/hello'
-test('runPlan rejects other files', ...);                  // .js → { error: 'Breeze can run .c, .cpp and .py files' }
-test('runPlan with no gcc says how to get it', ...);       // win32 → /npm run fetch-toolchains/
-test('toolEnv prepends bins and keeps the Path key', () => {
-  const env = toolEnv({ Path: 'C:\\Windows' }, ['A', 'B'], 'win32');
-  assert.equal(env.Path, 'A;B;C:\\Windows'); assert.equal('PATH' in env, false); });
-test('toolchainRoot dev vs packaged', ...);
-test('runSteps skips the program when compile fails', ...); // fake spawn: step 1 exits 1 → spawn called once, onDone(1)
-test('runSteps cancel during compile', ...);                // cancel() kills child, step 2 never spawned, onDone(null)
-test('ensureBuildIgnored appends once and never creates', ...);
+test('findTools finds gcc on PATH and g++ beside it', ...);           // cc.name 'gcc', cxx.path in same dir, binDirs []
+test('findTools finds MSYS2 gcc off PATH and adds its bin', ...);     // binDirs ['C:\\msys64\\ucrt64\\bin']
+test('findTools falls back to clang', ...);                           // cc.name 'clang', cxx.name 'clang++'
+test('findTools rejects the Store python shortcut', ...);             // run(WindowsApps\\python.exe, ['--version']) → code 9009 → python null
+test('findTools prefers the py launcher', ...);                       // python.name 'py'
+test('findTools on linux uses cc and python3', ...);
+test('runPlan shows clang when clang was found', ...);                // display starts 'clang "hello.c"'
+test('runPlan via py passes -3', ...);                                 // args ['-3', '-u', file]
+test('runPlan missing C on Windows gives the winget command', () =>
+  assert.equal(runPlan(f, { cc: null, cxx: null, python: null, binDirs: [] }, 'win32', H).error,
+    'No C/C++ compiler found. Install one with: winget install BrechtSanders.WinLibs.POSIX.UCRT'));
+test('freshPath joins machine and user Path on Windows', ...);         // fake run → 'A;B' ; failure → env PATH
 ```
 
-Fake spawn: returns an `EventEmitter` with `stdout`/`stderr` emitters, `kill()`, and emits `close` with a code the test chooses.
+- [ ] **Step 2: Run** `npm test` — FAIL (`findTools is not a function`).
+- [ ] **Step 3: Implement** the interfaces above; delete the fetch files and script; drop `vendor/` from `.gitignore`.
+- [ ] **Step 4: Run** `npm test` — PASS, no fetch tests left.
+- [ ] **Step 5: Smoke test** on this PC: a scratch `node -e` calling `findTools` with real `fs.existsSync`, a `glob` over `fs.readdirSync`, and an `execFile`-based `run` (4 s timeout) prints `cc: null`, `python: { name: 'py' or 'python', version: '3.11.9' … }` (this PC has Store Python 3.11.9 and no C compiler).
+- [ ] **Step 6: Commit** — "Use the PC's installed compilers and Python instead of bundling".
 
-- [ ] **Step 2: Run** `npm test` — FAIL (module not found).
-- [ ] **Step 3: Implement** `toolchains.js` and `runtime/breeze_stdio.h` to the interfaces above. `runSteps` measures `ms` from the first spawn to the last `close`.
-- [ ] **Step 4: Run** `npm test` — PASS.
-- [ ] **Step 5: Smoke test** with the real tools: a scratch `node -e` that calls `runPlan` + `runSteps` with `child_process.spawn` on a `hello.c` in a folder whose name has a space; it prints `Hello` and `onDone(0, …)`.
-- [ ] **Step 6: Commit** `toolchains.js runtime/ test/toolchains.test.js` — "Add toolchains module".
-
-### Task 3: Main process — env, stdin, `run:file`
+### Task 4: Main process — tools, env, stdin, `run:file`, detection
 
 **Files:**
-- Modify: `main.js` (`term:run` at ~381, `terms`/`nextTermId` at 24/367, `which` at 469), `preload.js` (`term` block, new `run` block)
+- Modify: `main.js` (`term:run` ~381, `terms`/`nextTermId` 24/367, `sys:detect` ~498), `preload.js` (`term` block, new `run` block)
 
 **Interfaces:**
-- Consumes: everything Task 2 exports.
-- Produces (renderer API): `term.write(id: number, text: string): Promise<void>`; `run.file(rel: string): Promise<{ id?: number; error?: string }>`. Data and exit arrive on the existing `term:data` / `term:exit` with that `id`.
+- Consumes: Task 3's exports; Task 2's `runSteps`, `ensureBuildIgnored`.
+- Produces (renderer API): `term.write(id: number, text: string): Promise<void>`; `run.file(rel: string): Promise<{ id?: number; error?: string }>`; `sys.detect()` tools gain `{ id: 'cc', name: 'C/C++', optional: true, … }` and `{ id: 'python', name: 'Python', optional: true, … }`.
 
-- [ ] **Step 1:** At startup, compute `TOOLS = await toolPaths({ platform: process.platform, root: toolchainRoot({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appDir: __dirname }), exists: fs.existsSync, which })` once (lazily, memoised in a promise).
-- [ ] **Step 2:** `term:run` spawns with `env: toolEnv(process.env, tools.binDirs, process.platform)`; stdin stays a pipe (default) and gets an `error` listener that ignores EPIPE.
-- [ ] **Step 3:** Add `ipcMain.handle('term:write', (_e, id, text) => …)` — writes `String(text)` to `terms.get(id)?.stdin` if it's writable; otherwise does nothing.
-- [ ] **Step 4:** Add `ipcMain.handle('run:file', async (_e, rel) => …)`: refuse with `A program is still running — press Ctrl+C to stop it` if any entry in `terms` came from `run:file`; `resolveIn(rel)`; `runPlan(abs, tools, process.platform, path.join(__dirname, 'runtime', 'breeze_stdio.h'))` (packaged: the same file via `extraResources`, see Task 6 — resolve it next to `toolchainRoot()`'s parent when `app.isPackaged`); `fs.mkdirSync(path.join(cwd, 'build'), { recursive: true })` for C/C++; `ensureBuildIgnored(root)`; then `runSteps` with `onStart` sending `<cwd>> <display>\n` as `term:data`, `onChild` setting `terms.set(id, child)` so `term:kill` and `term:write` reach the current step, and `onDone` sending `exited with code N · X.Xs\n` then `term:exit(id, code)` and deleting the entry. `term:kill` on a run id must also call the run's `cancel()`.
-- [ ] **Step 5:** `preload.js`: `term.write: (id, text) => invoke('term:write', id, text)`; `run: { file: rel => invoke('run:file', rel) }`.
-- [ ] **Step 6: Verify** `npm test` still passes and `npm start` launches. Then in DevTools console: `await breeze.run.file('hello.c')` on a project with `hello.c` returns `{ id }` and `breeze.term.onData` logs the compile line and `Hello`. In the terminal panel, `gcc --version` and `pip --version` show the bundled paths. Review Focus #2: a `printf("Name: "); scanf("%s", n); printf("Hi %s\n", n);` program shows `Name: ` before any input when `breeze.term.write(id, 'Ann\n')` is called afterwards.
-- [ ] **Step 7: Commit** `main.js preload.js` — "Run C, C++ and Python files from the main process".
+- [ ] **Step 1:** `getTools(force = false)` in `main.js`: memoised promise of `{ tools: await findTools({...}), pathValue: await freshPath(...) }` with an `execFile`-based `run` (4 s timeout, `windowsHide`); started at app ready; `force` re-runs it. `run:file` calls `getTools(true)` when the needed tool is `null`.
+- [ ] **Step 2:** `term:run` spawns with `env: toolEnv(process.env, tools.binDirs, process.platform, pathValue)`; stdin stays a pipe with an `error` listener ignoring EPIPE.
+- [ ] **Step 3:** `ipcMain.handle('term:write', (_e, id, text) => …)` writes `String(text)` to `terms.get(id)?.stdin` when writable.
+- [ ] **Step 4:** `ipcMain.handle('run:file', async (_e, rel) => …)`: refuse with `A program is still running — press Ctrl+C to stop it` if a run is active; `resolveIn(rel)`; `runPlan(abs, tools, process.platform, path.join(__dirname, 'runtime', 'breeze_stdio.h'))`; on `error` return it; `mkdirSync(<cwd>/build, { recursive: true })` for C/C++ (gcc won't create it); `ensureBuildIgnored(root)`; `runSteps` with `onStart` sending `<cwd>> <display>\n` as `term:data`, `onChild` storing the child in `terms` under the run's id, `onDone` sending `exited with code N · X.Xs\n` then `term:exit(id, code)`. `term:kill` on a run id calls `cancel()` and tree-kills the current child (existing `killTree`).
+- [ ] **Step 5:** `sys:detect` appends C/C++ and Python from `getTools(true)` as `{ id, name, found, version, optional: true }`.
+- [ ] **Step 6:** `preload.js`: `term.write`, `run: { file }`.
+- [ ] **Step 7: Verify** `npm test` passes, `npm start` launches; in DevTools: `await breeze.run.file('app.py')` runs Python 3.11 output; `await breeze.run.file('hello.c')` returns the Windows winget error. Then run `winget install BrechtSanders.WinLibs.POSIX.UCRT` (ask the user first — it installs software), and without restarting, `breeze.run.file('hello.c')` compiles and prints `Hello`; a `printf("Name: "); scanf(...)` program shows `Name: ` before `breeze.term.write(id, 'Ann\n')`.
+- [ ] **Step 8: Commit** `main.js preload.js` — "Run C, C++ and Python files from the main process".
 
-### Task 4: Renderer — Run command, F5, Run button, input while running
+### Task 5: Renderer — Run command, F5, Run button, input, status bar
 
 **Files:**
-- Modify: `breezescript.ts` — `Api` interface (`term` block ~line 61, add `run`), browser fallback (~line 345), `runCommand` and `termInput` keydown (~2697–2725), commands table (`'run.start'`/`'run.stop'` ~3066), Run menu (~3205), `renderTabs` (~1962); `breeze.css` (Run button); `breeze.html` only if the tab bar needs a slot for the button.
+- Modify: `breezescript.ts` — `BreezeApi` (`term` ~61, add `run`), `DetectedTool` (add `optional?: boolean`), browser fallback (~345, ~368), `renderDetection` (~815), `runCommand`/`termInput` keydown (~2697–2725), commands (`'run.start'`/`'run.stop'` ~3066), Run menu (~3205), `renderTabs` (~1962); `breeze.css`
 
 **Interfaces:**
-- Consumes: `api.term.write`, `api.run.file` from Task 3.
-- Produces: command `'run.file'`; helper `runnable(path: string | null): boolean` (true for `c cpp cc cxx py`); `term.runId: number | null` (set while a `run.file` program runs, alongside `term.proc`).
+- Consumes: `api.term.write`, `api.run.file`, optional detected tools from Task 4.
+- Produces: command `'run.file'`; `runnable(path: string | null): boolean` (true for `c cpp cc cxx py`); `term.runId: number | null`.
 
-- [ ] **Step 1:** Add `write` to `Api.term`, `run: { file(rel: string): Promise<{ id?: number; error?: string }> }` to `Api`; browser fallback `run.file` returns `{ error: 'Programs run only in the Breeze desktop app (npm start).' }` and `term.write` is a no-op.
-- [ ] **Step 2:** `'run.file'`: if no active text buffer or it was never saved to a path → toast `Save the file first`; else `await saveFile()` when dirty, open the terminal (`layout.termOpen = true; applyLayout()`), call `api.run.file(active)`, write `error` with class `err` or set `term.proc = term.runId = id` and add `busy` to `#termPs` like `runCommand`.
-- [ ] **Step 3:** `'run.start'` → `runnable(active) ? run('run.file') : (existing preview logic)`. `'run.stop'` → if `term.runId != null` kill it, else the existing preview stop. Add a Run menu item `{ label: 'Run File', act: 'run.file', enabled: () => runnable(active) }` above Start Preview, with no `key` (F5 stays bound to `run.start`, which dispatches), and relabel the F5 item `Start Preview / Run File`. The `term:exit` handler clears `term.runId` too.
-- [ ] **Step 4:** In `termInput`'s Enter handler: when `term.proc != null`, `api.term.write(term.proc, value + '\n')`, `termWrite(value + '\n', 'cmd')`, clear the input, and return — replacing the "A command is still running" toast. `terminalAutofillKeys` and `updateGhost` do nothing while `term.proc != null`.
-- [ ] **Step 5:** In `renderTabs`, append a `▶ Run` button (class `tab-run`, `title="Run File (F5)"`, `onclick = () => run('run.file')`) at the right end when `runnable(active)`. Style it in `breeze.css` next to the existing tab rules with the existing tokens (`--blue`, `--text-2`).
-- [ ] **Step 6: Verify** `npx tsc` has no errors. Browser preview (`breeze-static`): opening `script.js` shows no Run button; creating `a.py` in the demo shows it, and F5 writes the desktop-only message in red. Electron (`npm start`): F5 on `hello.c`, `main.cpp`, `app.py` prints the command, the output and `exited with code 0 · …s`; an `input()` program accepts typed text; F5 again while it waits says `A program is still running — press Ctrl+C to stop it`; F5 on an unsaved new tab says `Save the file first`; F5 on `index.html` still starts the preview.
-- [ ] **Step 7: Commit** `breezescript.ts breezescript.js breeze.css` (and `breeze.html` if changed) — "Add Run File: F5, Run button and program input".
+- [ ] **Step 1:** API types + browser fallback: `run.file` → `{ error: 'Programs run only in the Breeze desktop app (npm start).' }`; `term.write` no-op.
+- [ ] **Step 2:** `'run.file'`: no saved path → toast `Save the file first`; save if dirty; open the terminal; `api.run.file(active)`; `error` → `termWrite(error + '\n', 'err')`; else `term.proc = term.runId = id`, `#termPs` gets `busy`.
+- [ ] **Step 3:** `'run.start'` → `runnable(active) ? run('run.file') : <existing preview>`; `'run.stop'` → kill `term.runId` if set, else existing. Run menu: `{ label: 'Run File', act: 'run.file', enabled: () => runnable(active) }` above Start Preview with no `key`; relabel F5 item `Start Preview / Run File`. `term:exit` clears `term.runId`.
+- [ ] **Step 4:** Enter while `term.proc != null` → `api.term.write(term.proc, value + '\n')`, echo with class `cmd`, clear; replaces the "still running" toast. Autofill keys and ghost are off while `term.proc != null`.
+- [ ] **Step 5:** `renderTabs` appends `▶ Run` (class `tab-run`, `title="Run File (F5)"`) when `runnable(active)`; styled in `breeze.css` with existing tokens.
+- [ ] **Step 6:** `renderDetection`: optional tools that are missing don't count toward `missing` (pill and dot stay green) and are left out of the status bar summary; found ones show as `C ready` / `Python ready` (summary name `C` for `C/C++`).
+- [ ] **Step 7: Verify** `npx tsc` clean. Browser preview: `script.js` shows no Run button, a `.py` file does, F5 shows the desktop-only message. Electron: F5 on `app.py` runs and accepts `input()`; F5 again while waiting is refused; unsaved new tab → `Save the file first`; `index.html` F5 still previews; status bar reads `… · Python ready` and, before a compiler is installed, no `C missing`.
+- [ ] **Step 8: Commit** `breezescript.ts breezescript.js breeze.css` — "Add Run File: F5, Run button and program input".
 
-### Task 5: Renderer — clickable errors and underlines
+### Task 6: Renderer — clickable errors and underlines
 
 **Files:**
-- Modify: `breezescript.ts` — `termWrite` (~2685), `Buffer` diag handling (`lintBuffer` ~1636), `breeze.css` (link style)
+- Modify: `breezescript.ts` — `termWrite` (~2685), diag handling (`lintBuffer` ~1636), `breeze.css`
 
 **Interfaces:**
-- Consumes: `openFile(path: string, at?: Spot)`; `Buffer.diags` / `diagLines` (0-based `line`/`col`); `term:exit` handler.
-- Produces: `parseErrorRefs(text: string, cwd: string, root: string): { path: string; line: number; col: number; msg: string; error: boolean; start: number; end: number }[]` — `path` project-relative with `/`, `line`/`col` 0-based, `start`/`end` the span in `text` to turn into a link; refs outside the project are dropped. Formats: GCC `file:line:col: (error|warning|note): msg` (Windows drive letters included), Python `File "file", line N`.
+- Consumes: `openFile(path, at?: Spot)`; `Buffer.diags`/`diagLines` (0-based); `term:exit` handler.
+- Produces: `parseErrorRefs(text: string, cwd: string, root: string): { path: string; line: number; col: number; msg: string; error: boolean; start: number; end: number }[]` — project-relative `/` paths, 0-based line/col, link span; refs outside the project dropped. Formats: GCC/clang `file:line:col: (error|warning|note): msg` (drive letters included), Python `File "file", line N`.
 
-- [ ] **Step 1:** Implement `parseErrorRefs`. `termWrite` buffers the current run's output by line (a run's chunks may split a line) and, for complete lines, renders matches as `<a class="term-ref">` that call `openFile(path, { line, col })`.
-- [ ] **Step 2:** Collect GCC `error` refs during a run; on `term:exit` with a non-zero code, set them as `diags` on the matching open buffers (`diagLines` = current line count, so the existing rule hides them after an edit) and re-render. A run that exits 0, or the next `lintBuffer` on that buffer, replaces them. Keep lint's own diags: merge by line like `mergeSyntax` does.
-- [ ] **Step 3: Verify** `npx tsc` clean. In the browser preview, call `parseErrorRefs` from the JS console with these and check the results:
-  - `'main.c:12:5: error: expected \';\''` with `cwd = root` → one ref `{ path: 'main.c', line: 11, col: 4, error: true }`
-  - `'C:\\elsewhere\\x.c:1:1: error: y'` → `[]`
-  - `'  File "app.py", line 3, in <module>'` → `{ path: 'app.py', line: 2 }`
-
-  In Electron, a missing semicolon in `hello.c` gives a link that jumps to the line and a red underline that disappears when you type on that line; a Python `NameError` traceback links to its line.
-- [ ] **Step 4: Commit** `breezescript.ts breezescript.js breeze.css` — "Link compiler and Python errors to their lines".
-
-### Task 6: Packaging
-
-**Files:**
-- Modify: `package.json` (devDependency, `build` config, `dist` script)
-
-**Interfaces:**
-- Consumes: `vendor/` (Task 1), `runtime/breeze_stdio.h` and `toolchainRoot()` (Task 2).
-
-- [ ] **Step 1:** `npm i -D electron-builder`. Add `"build": { "appId": "dev.breeze.ide", "productName": "Breeze IDE", "files": ["main.js", "preload.js", "toolchains.js", "breeze.html", "breeze.css", "breezescript.js", "*.png", "!vendor/**"], "extraResources": [{ "from": "vendor", "to": "toolchains" }, { "from": "runtime", "to": "runtime" }], "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "Icon.png" } }` and `"dist": "npm run fetch-toolchains && tsc && electron-builder --win"`. Make Task 3's header path use `path.join(process.resourcesPath, 'runtime', 'breeze_stdio.h')` when `app.isPackaged`.
-- [ ] **Step 2: Run** `npm run dist` — produces `dist/Breeze IDE Setup <version>.exe`; `dist/win-unpacked/resources/toolchains/w64devkit/bin/gcc.exe` and `resources/runtime/breeze_stdio.h` exist.
-- [ ] **Step 3: Verify** `dist/win-unpacked/Breeze IDE.exe`: with `vendor/` renamed away (so dev paths can't be used), F5 on `hello.c` and `app.py` runs them, and `gcc --version` in its terminal shows the path under `resources\toolchains`. Add `dist/` to `.gitignore`.
-- [ ] **Step 4: Commit** `package.json package-lock.json .gitignore main.js` — "Package Breeze with bundled compilers".
+- [ ] **Step 1:** Implement `parseErrorRefs`; `termWrite` buffers a run's output by line and renders complete lines' matches as `<a class="term-ref">` calling `openFile`.
+- [ ] **Step 2:** On `term:exit` with non-zero code, set collected `error` refs as `diags` on matching open buffers (`diagLines` = current line count) merged by line with lint diags; replaced by the next exit-0 run or the next `lintBuffer`.
+- [ ] **Step 3: Verify** `npx tsc` clean; in the browser preview console: `parseErrorRefs('main.c:12:5: error: expected \';\'', root, root)` → `[{ path: 'main.c', line: 11, col: 4, error: true, … }]`; `'C:\\elsewhere\\x.c:1:1: error: y'` → `[]`; `'  File "app.py", line 3, in <module>'` → `{ path: 'app.py', line: 2 }`. Electron: a C syntax error links and underlines; a Python `NameError` links.
+- [ ] **Step 4: Commit** — "Link compiler and Python errors to their lines".
