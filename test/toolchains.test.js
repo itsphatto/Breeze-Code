@@ -238,6 +238,21 @@ test('runSteps runs steps in order and reports the last code', async () => {
   assert.deepEqual(calls[0].opts, { cwd: 'D', env: { E: 1 }, windowsHide: true });
 });
 
+test('runSteps keeps a multi-byte character split across chunks whole', async () => {
+  const bytes = Buffer.from('é');
+  const spawn = () => {
+    const c = new EventEmitter();
+    c.stdout = new EventEmitter();
+    c.stderr = new EventEmitter();
+    c.kill = () => {};
+    setImmediate(() => { c.stdout.emit('data', bytes.subarray(0, 1)); c.stdout.emit('data', bytes.subarray(1)); c.emit('close', 0); });
+    return c;
+  };
+  const data = [];
+  await done((res) => runSteps([steps[0]], { spawn, env: {}, onStart() {}, onData: (d) => data.push(d), onChild() {}, onDone: res }));
+  assert.equal(data.join(''), 'é');
+});
+
 test('runSteps skips the program when compile fails', async () => {
   const { spawn, calls } = fakeSpawn([1]);
   const code = await done((res) => runSteps(steps, { spawn, env: {}, onStart() {}, onData() {}, onChild() {}, onDone: (c) => res(c) }));

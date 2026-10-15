@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { StringDecoder } = require('node:string_decoder');
 
 const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
 
@@ -177,15 +178,17 @@ function runSteps(steps, { spawn, env, onStart, onData, onChild, onDone }) {
     const end = (code) => {
       if (settled) return;
       settled = true;
+      for (const d of decoders) { const rest = d.end(); if (rest) onData(rest); }
       if (cancelled) finish(null);
       else if (code !== 0 || i === steps.length - 1) finish(code);
       else next(i + 1);
     };
     child = spawn(step.file, step.args, { cwd: step.cwd, env, windowsHide: true });
     onChild(child);
-    const feed = (b) => onData(b.toString('utf8'));
-    child.stdout.on('data', feed);
-    child.stderr.on('data', feed);
+    // one decoder per stream so a multi-byte character split across chunks stays whole
+    const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8')];
+    child.stdout.on('data', (b) => onData(decoders[0].write(b)));
+    child.stderr.on('data', (b) => onData(decoders[1].write(b)));
     child.on('error', (err) => {
       if (settled) return;
       onData(err.message + '\n');
