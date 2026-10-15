@@ -1,3 +1,4 @@
 node_modules/
 .env
 breeze.config.json
+vendor/
