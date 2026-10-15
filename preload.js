@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('breeze', {
     fileUrl: rel => invoke('fs:fileUrl', rel),
     onChange: cb => listen('fs:changed', cb),
   },
+  lint: {
+    check: (code, ext) => invoke('lint:check', code, ext),
+  },
   term: {
     cwd: () => invoke('term:cwd'),
     run: command => invoke('term:run', command),
@@ -69,6 +72,15 @@ contextBridge.exposeInMainWorld('breeze', {
     cancel: () => invoke('auth:cancel'),
     signOut: () => invoke('auth:signOut'),
     onEvent: cb => listen('auth:event', cb),
+  },
+  vibe: {
+    status: () => invoke('vibe:status'),
+    connect: id => invoke('vibe:connect', id),
+    disconnect: id => invoke('vibe:disconnect', id),
+    show: (id, bounds) => invoke('vibe:show', id, bounds),
+    bounds: bounds => invoke('vibe:bounds', bounds),
+    mute: muted => invoke('vibe:mute', muted),
+    hide: () => invoke('vibe:hide'),
   },
   win: {
     reload: () => invoke('win:reload'),

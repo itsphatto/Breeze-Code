@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file: https://avatars.githubusercontent.com https://*.googleusercontent.com; frame-src 'self' file:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file: https://avatars.githubusercontent.com https://lh3.googleusercontent.com; frame-src 'self' file:">
 <title>Breeze IDE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Inter:wght@400;500;600&family=B612+Mono&display=swap" rel="stylesheet">
@@ -12,13 +12,15 @@
 <body>
 
 <!-- Shared SVG symbols -->
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<svg class="sprite" width="0" height="0" aria-hidden="true">
   <symbol id="i-swirl" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7a2.5 2.5 0 1 1-2.5 2.5"/></symbol>
   <symbol id="i-files" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m20 20-4.5-4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
   <symbol id="i-git" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 7v10M18 11c0 4-6 3-12 6"/></g></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/></g></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></g></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10.46 4.76L10.83 2.47A9.6 9.6 0 0 1 13.17 2.47L13.54 4.76A7.4 7.4 0 0 1 16.03 5.79L17.91 4.44A9.6 9.6 0 0 1 19.56 6.09L18.21 7.97A7.4 7.4 0 0 1 19.24 10.46L21.53 10.83A9.6 9.6 0 0 1 21.53 13.17L19.24 13.54A7.4 7.4 0 0 1 18.21 16.03L19.56 17.91A9.6 9.6 0 0 1 17.91 19.56L16.03 18.21A7.4 7.4 0 0 1 13.54 19.24L13.17 21.53A9.6 9.6 0 0 1 10.83 21.53L10.46 19.24A7.4 7.4 0 0 1 7.97 18.21L6.09 19.56A9.6 9.6 0 0 1 4.44 17.91L5.79 16.03A7.4 7.4 0 0 1 4.76 13.54L2.47 13.17A9.6 9.6 0 0 1 2.47 10.83L4.76 10.46A7.4 7.4 0 0 1 5.79 7.97L4.44 6.09A9.6 9.6 0 0 1 6.09 4.44L7.97 5.79A7.4 7.4 0 0 1 10.46 4.76Z"/><circle cx="12" cy="12" r="3.2"/></g></symbol>
+  <symbol id="i-sound" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></g></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5v5h3.5L12 19V5L7.5 9.5z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/></g></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></g></symbol>
   <symbol id="i-gh" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.4 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.6 9.6 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9V21c0 .3.2.6.7.5A10 10 0 0 0 12 2z"/></symbol>
@@ -41,7 +43,7 @@
   <div class="drag-strip"></div>
   <!-- Step 1: Welcome -->
   <section class="ob-step" data-step="0">
-    <svg width="72" height="72" style="color:var(--blue)"><use href="#i-swirl"/></svg>
+    <svg class="ob-logo" width="72" height="72"><use href="#i-swirl"/></svg>
     <h1>Breeze</h1>
     <p class="lead">Smooth as a breeze.</p>
     <button class="btn btn-primary btn-lg" data-next>Start breezing</button>
@@ -67,16 +69,27 @@
       </div>
       <button class="btn btn-sm" id="signinCancel">Cancel</button>
     </div>
-    <p class="fineprint">Breeze receives your name, email and picture. It never gets access to your repositories or files.</p>
   </section>
 
-  <!-- Step 3: Setup -->
-  <section class="ob-step setup hidden" data-step="2">
+  <!-- Step 3: Vibe Mode feeds -->
+  <section class="ob-step social hidden" data-step="2">
+    <h2>Vibe while your agents work</h2>
+    <p class="lead">Connect a feed. While an agent writes your code, Breeze fades the editor away and plays your Shorts or Reels, then brings you back when the code is ready.</p>
+    <div class="social-grid" id="socialList"></div>
+    <p class="social-note">Connecting opens the site in a Breeze browser window. You sign in on the site itself, and Breeze only checks whether you're signed in.</p>
+    <div class="row center">
+      <button class="btn btn-ghost" data-next>Skip for now</button>
+      <button class="btn btn-primary btn-lg" data-next>Continue</button>
+    </div>
+  </section>
+
+  <!-- Step 4: Setup -->
+  <section class="ob-step setup hidden" data-step="3">
     <h2>Let's get you set up</h2>
     <p class="lead">Every card is optional — come back any time from Settings (the gear icon) → Run Setup Again.</p>
     <div class="setup-grid">
       <div class="setup-card">
-        <header><h3>1 · Your AI agent</h3><span class="row" style="gap:6px"><span class="pill" id="aiPill">Scanning…</span><button class="icon-btn" id="rescan" title="Scan again"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></span></header>
+        <header><h3>1 · Your AI agent</h3><span class="row gap-6"><span class="pill" id="aiPill">Scanning…</span><button class="icon-btn" id="rescan" title="Scan again"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></span></header>
         <p class="muted" id="aiHint">Looking for coding agents installed on this computer…</p>
         <div class="agent-list" id="agentList"></div>
       </div>
@@ -87,10 +100,10 @@
         </div>
         <div class="setup-card">
           <header><h3>3 · Start a project</h3></header>
-          <div class="seg" style="margin-bottom:10px">
+          <div class="seg mb-10">
             <button class="on" data-seg="describe">Describe it</button><button data-seg="folder">Open a folder</button><button data-seg="blank">Blank</button>
           </div>
-          <input class="input" style="width:100%" id="projPrompt" placeholder="e.g. A landing page for my coffee shop" value="">
+          <input class="input w-full" id="projPrompt" aria-label="Describe your project" placeholder="e.g. A landing page for my coffee shop" value="">
           <div class="row hidden" id="projFolderRow">
             <span class="folder-path" id="projFolder">No folder chosen</span>
             <button class="btn btn-sm" id="pickFolder">Choose folder…</button>
@@ -101,8 +114,9 @@
     </div>
   </section>
 
-  <div class="ob-dots"><span class="on"></span><span></span><span></span></div>
+  <div class="ob-dots"><span class="on"></span><span></span><span></span><span></span></div>
 </div>
+
 
 <!-- ================= IDE ================= -->
 <div class="ide hidden" id="ide">
@@ -117,9 +131,8 @@
       <button class="icon-btn" id="tglTerm" title="Toggle Panel (Ctrl+`)"><svg width="16" height="16"><use href="#i-bottom"/></svg></button>
       <button class="icon-btn" id="tglAgents" title="Toggle Agents (Ctrl+Alt+B)"><svg width="16" height="16"><use href="#i-right-on"/></svg></button>
     </div>
-    <div class="avatars" id="avatars"><span class="avatar" style="background:#7aa9ff" title="You (host)">YO</span></div>
-    <button class="btn btn-sm" id="runBtn"><svg width="11" height="11" style="vertical-align:-1px;color:var(--ok)"><use href="#i-play"/></svg>&nbsp; Run</button>
-    <button class="btn btn-sm btn-primary" id="shareBtn"><svg width="12" height="12" style="vertical-align:-1px"><use href="#i-share"/></svg>&nbsp; Share</button>
+    <div class="avatars" id="avatars"><span class="avatar tint-host" title="You (host)">YO</span></div>
+    <button class="btn btn-sm btn-primary" id="shareBtn"><svg class="btn-ico" width="12" height="12"><use href="#i-share"/></svg>&nbsp; Share</button>
   </header>
 
   <div class="main" id="main">
@@ -128,13 +141,13 @@
       <button class="act-btn" data-view="search" title="Search (Ctrl+Shift+F)"><svg width="20" height="20"><use href="#i-search"/></svg></button>
       <button class="act-btn" data-view="git" title="Checkpoints (Ctrl+Shift+G)"><svg width="20" height="20"><use href="#i-git"/></svg><span class="badge"></span></button>
       <button class="act-btn" data-view="people" title="People"><svg width="20" height="20"><use href="#i-users"/></svg></button>
-      <span style="flex:1"></span>
-      <button class="act-btn" title="Settings" id="settingsBtn"><svg width="20" height="20"><use href="#i-gear"/></svg></button>
+      <span class="flex-1"></span>
+      <button class="act-btn" title="Settings" id="settingsBtn" aria-haspopup="menu" aria-expanded="false"><svg width="20" height="20"><use href="#i-gear"/></svg></button>
     </nav>
 
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Side bar">
       <!-- Files -->
-      <div data-panel="files" style="display:contents">
+      <div data-panel="files" class="contents">
         <div class="side-head"><span>Explorer</span>
           <span class="head-actions">
             <button class="icon-btn" data-act="file.newFile" title="New File"><svg width="14" height="14"><use href="#i-newfile"/></svg></button>
@@ -147,16 +160,16 @@
         <div class="side-body" id="tree" tabindex="-1"></div>
       </div>
       <!-- Search -->
-      <div data-panel="search" class="hidden" style="display:contents">
+      <div data-panel="search" class="contents hidden">
         <div class="side-head"><span>Search</span><span class="head-actions"><button class="icon-btn" data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
         <div class="search-box">
-          <input class="input" id="searchInput" placeholder="Find in project" spellcheck="false">
+          <input class="input" id="searchInput" aria-label="Find in project" placeholder="Find in project" spellcheck="false">
           <button class="icon-btn toggle" id="searchCase" title="Match Case">Aa</button>
         </div>
         <div class="side-body" id="searchResults"><p class="side-note">Type and press Enter to search across files.</p></div>
       </div>
       <!-- Git -->
-      <div data-panel="git" class="hidden" style="display:contents">
+      <div data-panel="git" class="contents hidden">
         <div class="side-head"><span>Source Control</span><span class="head-actions">
           <button class="icon-btn" data-act="git.refresh" title="Refresh"><svg width="14" height="14"><use href="#i-refresh"/></svg></button>
           <button class="icon-btn" data-act="git.more" title="More actions">⋯</button>
@@ -165,7 +178,7 @@
         <div class="side-body scm" id="scm"></div>
       </div>
       <!-- People -->
-      <div data-panel="people" class="hidden" style="display:contents">
+      <div data-panel="people" class="contents hidden">
         <div class="side-head"><span>People in session</span><span class="head-actions"><button class="icon-btn" data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
         <div class="side-body" id="people"></div>
       </div>
@@ -182,7 +195,7 @@
               <pre class="hl" id="hl" aria-hidden="true"></pre>
             </div>
             <div class="findbar hidden" id="findbar">
-              <input class="input" id="findInput" placeholder="Find" spellcheck="false">
+              <input class="input" id="findInput" aria-label="Find in file" placeholder="Find" spellcheck="false">
               <span class="find-count" id="findCount"></span>
               <button class="icon-btn" id="findPrev" title="Previous (Shift+Enter)">↑</button>
               <button class="icon-btn" id="findNext" title="Next (Enter)">↓</button>
@@ -194,7 +207,7 @@
         <div class="pane preview" id="previewPane">
           <div class="sash sash-v sash-left" data-sash="preview"></div>
           <div class="preview-bar">
-            <span style="color:var(--text-3);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600">Preview</span>
+            <span class="preview-label">Preview</span>
             <span class="url" id="previewUrl"><span class="live hidden" id="liveDot"></span><span id="urlText">Not running</span></span>
             <button class="icon-btn" title="Reload Preview" data-act="run.reload"><svg width="13" height="13"><use href="#i-refresh"/></svg></button>
             <button class="icon-btn" title="Close Preview" data-act="view.togglePreview">✕</button>
@@ -203,7 +216,7 @@
             <div>
               <svg width="36" height="36"><use href="#i-play"/></svg>
               <h4>Nothing to preview yet</h4>
-              <div>Press <b>Run</b> to preview the project's index.html.</div>
+              <div>Press <b>F5</b> to preview the project's index.html.</div>
             </div>
           </div>
           <iframe class="preview-frame hidden" id="previewFrame" title="Preview"></iframe>
@@ -213,7 +226,7 @@
       <div class="terminal" id="terminal">
         <div class="sash sash-h" data-sash="term"></div>
         <div class="term-head" id="termToggle">
-          <span id="termTitle">▸ Terminal</span><span id="termShare" style="text-transform:none;letter-spacing:0;font-weight:400">Not shared</span><span class="spacer"></span>
+          <span id="termTitle">▸ Terminal</span><span class="term-share" id="termShare">Not shared</span><span class="spacer"></span>
           <button class="icon-btn" data-act="term.clear" title="Clear">⌫</button>
           <button class="icon-btn" data-act="term.kill" title="Stop running command (Ctrl+C)">■</button>
           <span>Ctrl+`</span>
@@ -225,14 +238,14 @@
       </div>
     </section>
 
-    <aside class="agents" id="agents">
+    <aside class="agents" id="agents" aria-label="Agents">
       <div class="sash sash-v sash-left" data-sash="agents"></div>
-      <div class="side-head"><span>Agents</span><span class="row" style="gap:6px"><button class="pill blue pill-btn" id="agentPill" title="Choose which AI agent to use">No agent</button><button class="icon-btn" id="newChat" title="New chat">＋</button><button class="icon-btn flip" data-act="view.toggleAgents" title="Hide Agents"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
+      <div class="side-head"><span>Agents</span><span class="row gap-6"><button class="pill blue pill-btn" id="agentPill" title="Choose which AI agent to use">No agent</button><button class="icon-btn" id="newChat" title="New chat">＋</button><button class="icon-btn flip" data-act="view.toggleAgents" title="Hide Agents"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
       <div class="agent-cards" id="agentCards"></div>
       <div class="chat" id="chat"></div>
       <div class="composer">
         <div class="composer-box">
-          <textarea id="prompt" rows="2" placeholder="Describe what you want to build…"></textarea>
+          <textarea id="prompt" rows="2" aria-label="Message to the agent" placeholder="Describe what you want to build…"></textarea>
           <div class="row">
             <select class="select" id="agentMode" aria-label="How the agent should work"><option value="plan">Plan, then build</option><option value="build">Build directly</option><option value="ask">Ask (read-only)</option></select>
             <button class="btn btn-primary btn-sm" id="send">Send ↵</button>
@@ -246,8 +259,9 @@
     <button class="sb" id="sbBranch" title="Switch branch">⎇ —</button>
     <span class="sb" id="sbTools"><span class="dot-ok"></span> Checking tools…</span>
     <span class="sb" id="sbShare">Not sharing</span>
+    <button class="sb hidden" id="sbProblems" data-act="go.nextProblem" title="Go to the next problem (F8)"></button>
     <span class="spacer"></span>
-    <button class="sb" id="vibeArm" title="Vibe Mode: shows a Short while agents work">◌ Vibe Mode off</button>
+    <button class="sb" id="vibeArm" title="Vibe Mode: plays your feed while agents work">◌ Vibe Mode off</button>
     <button class="sb" id="discord" title="Discord presence">Discord: off</button>
     <button class="sb" id="sbPos" data-act="go.line">Ln 1, Col 1</button>
     <span class="sb" id="sbLang">Plain Text</span>
@@ -256,11 +270,21 @@
   </footer>
 </div>
 
-<!-- Vibe floating card -->
-<div class="vibe hidden" id="vibe">
-  <div class="vibe-head"><span>Vibe Mode · YouTube Shorts</span><button class="btn-ghost btn btn-sm" id="vibeClose" style="padding:0 6px">✕</button></div>
-  <div class="vibe-video"><span class="muted-tag">🔇 Muted</span><div class="play"><svg width="18" height="18"><use href="#i-play"/></svg></div></div>
-  <div class="vibe-ready hidden" id="vibeReady"><span>Your code is ready</span><button class="btn btn-sm" style="background:#fff;color:#000;border:none" id="vibeBack">Show me</button></div>
+<!-- ================= VIBE MODE ================= -->
+<!-- While an agent works, the IDE fades and blurs and a 9:16 feed plays here. -->
+<div class="vibe-stage hidden" id="vibe">
+  <div class="vibe-panel" role="dialog" aria-modal="true" aria-label="Vibe Mode">
+    <div class="vibe-top">
+      <div class="vibe-sites" id="vibeSites"></div>
+      <button class="icon-btn" id="vibeMute" title="Mute"><svg width="16" height="16"><use href="#i-sound"/></svg></button>
+      <button class="btn btn-sm" id="vibeClose" title="Back to the editor (Esc)">Back to code</button>
+    </div>
+    <div class="vibe-frame" id="vibeFrame">
+      <div class="vibe-placeholder" id="vibePlaceholder"></div>
+    </div>
+    <div class="vibe-status" id="vibeStatus"><span class="status working" id="vibeTask">Agent is working</span><span class="vibe-clock" id="vibeClock">0:00</span></div>
+    <div class="vibe-ready hidden" id="vibeReady"><span id="vibeReadyText">✓ Your code is ready</span><button class="btn btn-primary btn-sm" id="vibeBack">Show me</button></div>
+  </div>
 </div>
 
 <div id="menuRoot"></div>
