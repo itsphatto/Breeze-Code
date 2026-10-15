@@ -1,0 +1,5 @@
+{
+  "_readme": "Copy this file to breeze.config.json and fill in your own OAuth client ids. GitHub: create an OAuth App at https://github.com/settings/developers and tick 'Enable Device Flow' (no secret needed). Google: create a 'Desktop app' OAuth client at https://console.cloud.google.com/apis/credentials (its secret is not confidential for desktop apps). Environment variables BREEZE_GITHUB_CLIENT_ID, BREEZE_GOOGLE_CLIENT_ID and BREEZE_GOOGLE_CLIENT_SECRET override this file.",
+  "github": { "clientId": "" },
+  "google": { "clientId": "", "clientSecret": "" }
+}

@@ -27,13 +27,20 @@ interface Commit {
 }
 interface Person { name: string; role: Role; color: string; }
 interface GuestCursor { file: string; line: number; name: string; color: string; }
-interface User { name: string; provider: string; }
+interface User { name: string; provider: string; login?: string; email?: string | null; avatar?: string | null; }
+type AgentMode = 'plan' | 'build' | 'ask';
+interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; action?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; }
+interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
+interface GitFile { path: string; x: string; y: string; }
+interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; }
+interface GitCommit { hash: string; parents: string[]; author: string; when: string; refs: string[]; subject: string; }
+interface GitCommitDetail { hash: string; author: string; email: string; when: string; message: string; files: { path: string; added: number; removed: number }[]; }
 
 interface DirEntry { name: string; dir: boolean; }
 interface FileRead { text?: string; binary?: boolean; tooLarge?: boolean; size: number; }
 interface RootInfo { root: string; name: string; }
 interface SearchHit { path: string; line: number; col: number; text: string; }
-interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; }
+interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; }
 interface DetectedTool { id: string; name: string; found: boolean; version: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 
@@ -64,6 +71,34 @@ interface BreezeApi {
     onExit(cb: (id: number, code: number | null) => void): () => void;
   };
   sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; };
+  gemini: { status(): Promise<{ hasKey: boolean; model: string | null }>; setKey(key: string): Promise<{ model: string }>; clearKey(): Promise<void>; };
+  agent: {
+    run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null }): Promise<number>;
+    stop(runId: number): Promise<void>;
+    openApp(id: string): Promise<void>;
+    onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
+  };
+  git: {
+    status(): Promise<GitStatus>;
+    log(): Promise<{ head: string | null; commits: GitCommit[] }>;
+    show(hash: string): Promise<GitCommitDetail>;
+    diff(rel: string, staged: boolean): Promise<string>;
+    init(): Promise<unknown>;
+    stage(paths: string[]): Promise<unknown>;
+    unstage(paths: string[], hasCommits: boolean): Promise<unknown>;
+    discard(files: { path: string; untracked: boolean }[]): Promise<void>;
+    commit(message: string, all: boolean): Promise<string>;
+    branches(): Promise<string[]>;
+    switchTo(name: string, create: boolean, from?: string): Promise<unknown>;
+    sync(op: 'fetch' | 'pull' | 'push'): Promise<unknown>;
+  };
+  auth: {
+    user(): Promise<User | null>;
+    start(provider: string): Promise<{ started?: boolean; error?: string }>;
+    cancel(): Promise<void>;
+    signOut(): Promise<void>;
+    onEvent(cb: (ev: AuthEvent) => void): () => void;
+  };
   win: { reload(): Promise<void>; toggleDevTools(): Promise<void>; quit(): Promise<void>; edit(role: string): Promise<void>; };
 }
 interface Window { breeze?: BreezeApi; }
@@ -89,7 +124,7 @@ function toast(text: string): void {
   const t = document.createElement('div');
   t.className = 'toast'; t.textContent = text;
   $('#toastRoot').replaceChildren(t);
-  setTimeout(() => t.remove(), 2600);
+  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 200); }, 2600);
 }
 
 const store = {
@@ -149,6 +184,9 @@ MAPS_KEY=demo-key-not-real
   'assets/beans.jpg': '',
 };
 
+let demoRun = 0;
+const agentListeners: ((runId: number, ev: AgentEvent) => void)[] = [];
+const authListeners: ((ev: AuthEvent) => void)[] = [];
 function demoApi(): BreezeApi {
   const files = new Map(Object.entries(DEMO_FILES));
   const binary = new Set(['assets/beans.jpg']);
@@ -226,12 +264,75 @@ function demoApi(): BreezeApi {
             { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', url: 'https://claude.com/product/claude-code', found: true, path: null, version: null },
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
             { id: 'antigravity', name: 'Antigravity', vendor: 'Google', url: 'https://antigravity.google', found: false, path: null, version: null },
-            { id: 'gemini', name: 'Gemini CLI', vendor: 'Google', url: 'https://github.com/google-gemini/gemini-cli', found: false, path: null, version: null },
+            { id: 'gemini', name: 'Gemini', vendor: 'Google', url: 'https://aistudio.google.com/apikey', api: true, found: store.get('breeze.demoKey', false), path: null, version: store.get('breeze.demoKey', false) ? 'gemini-flash-latest' : null },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null }],
         };
       },
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
+    },
+    // Browser preview only: canned answers so every panel can be tried without the desktop app.
+    gemini: {
+      async status() { return { hasKey: store.get('breeze.demoKey', false), model: 'gemini-flash-latest' }; },
+      async setKey(key) { await wait(600); if (key.trim().length < 10) throw new Error('API key not valid. Please pass a valid API key.'); store.set('breeze.demoKey', true); return { model: 'gemini-flash-latest' }; },
+      async clearKey() { store.del('breeze.demoKey'); },
+    },
+    agent: {
+      async run({ mode }) {
+        const id = ++demoRun;
+        (async () => {
+          const say = async (ev: AgentEvent, ms = 500) => { await wait(ms); agentListeners.forEach(cb => cb(id, ev)); };
+          await say({ t: 'session', id: 'demo-session', model: 'demo' }, 100);
+          await say({ t: 'tool', kind: 'read', label: 'Read index.html' });
+          await say({ t: 'tool', kind: 'read', label: 'Read styles.css' });
+          if (mode === 'build') {
+            await say({ t: 'tool', kind: 'edit', label: 'Edited styles.css' });
+            await say({ t: 'text', text: 'Done — I warmed up the hero colours in styles.css. (Browser preview: no files were really changed.)' });
+          } else if (mode === 'plan') {
+            await say({ t: 'text', text: 'I looked at the page and its styles.' });
+            await say({ t: 'plan', text: '1. Make the hero taller with a warm gradient\n2. Turn the menu into three cards\n3. Add a footer with opening hours' });
+          } else await say({ t: 'text', text: 'The page has a hero section, an empty menu section and a small greeting script. (Browser preview answer.)' });
+          await say({ t: 'done', ok: true, ms: 2400 }, 300);
+        })();
+        return id;
+      },
+      async stop() {},
+      async openApp() {},
+      onEvent(cb) { agentListeners.push(cb); return () => {}; },
+    },
+    git: {
+      async status() {
+        return { repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
+          files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }] };
+      },
+      async log() {
+        return { head: 'd4f0b19aa', commits: [
+          { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
+          { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
+          { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
+          { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
+        ] };
+      },
+      async show(hash) { return { hash, author: 'You', email: 'you@example.com', when: 'a few minutes ago', message: 'Demo checkpoint', files: [{ path: 'styles.css', added: 11, removed: 2 }] }; },
+      async diff() { return '@@ -1,3 +1,3 @@\n /* Cozy, warm palette */\n-:root {\n+:root { /* demo change */\n   --bean: #2b1d12;'; },
+      async init() { return ''; },
+      async stage() { return ''; },
+      async unstage() { return ''; },
+      async discard() {},
+      async commit() { throw new Error('Checkpoints are saved with git in the desktop app.'); },
+      async branches() { return ['main', 'try-dark-menu']; },
+      async switchTo() { throw new Error('Switching branches works in the desktop app.'); },
+      async sync() { throw new Error('Push and pull work in the desktop app.'); },
+    },
+    auth: {
+      async user() { return null; },
+      async start(provider) {
+        setTimeout(() => authListeners.forEach(cb => cb({ t: 'done', user: { provider, name: 'Demo user', login: 'demo' } })), 1400);
+        return { started: true };
+      },
+      async cancel() {},
+      async signOut() {},
+      onEvent(cb) { authListeners.push(cb); return () => {}; },
     },
     win: {
       async reload() { location.reload(); },
@@ -261,18 +362,56 @@ function goStep(n: number): void {
 }
 $$('[data-next]').forEach(b => b.onclick = () => goStep(step + 1));
 
-function signedIn(provider: string): void {
-  user = { name: 'You', provider }; appState.user = user; goStep(2);
+/* ----- Sign in (GitHub device flow / Google loopback, handled in main.js) ----- */
+function setUser(u: User | null): void {
+  user = u; appState.user = u; saveApp();
+  renderUser();
 }
-let signinTimer: number | undefined;
-$$('[data-signin]').forEach(b => b.onclick = () => {
-  $('#signinChoices').classList.add('hidden');
-  $('#signinWait').classList.remove('hidden');
-  const provider = b.dataset.signin ?? 'GitHub';
-  signinTimer = setTimeout(() => signedIn(provider), 1600);
+function renderUser(): void {
+  const initials = (user?.name ?? 'You').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const me = user?.avatar
+    ? `<img class="avatar" src="${escAttr(user.avatar)}" alt="" title="${escAttr(user.name)} (host)">`
+    : `<span class="avatar" style="background:#7aa9ff" title="${escAttr(user?.name ?? 'You')} (host)">${esc(initials)}</span>`;
+  $('#avatars').innerHTML = me + guests.map(g => `<span class="avatar" style="background:${g.color}" title="${g.name} (${g.role})">${g.name.slice(0, 2).toUpperCase()}</span>`).join('');
+  $('#userChip').textContent = user ? `● ${user.name} · ${user.provider}` : 'Not signed in';
+}
+function signinView(waiting: boolean): void {
+  $('#signinChoices').classList.toggle('hidden', waiting);
+  $('#signinWait').classList.toggle('hidden', !waiting);
+  if (waiting) { $('#signinError').classList.add('hidden'); $('#signinCode').classList.add('hidden'); }
+}
+function signinError(text: string): void {
+  signinView(false);
+  $('#signinError').textContent = text;
+  $('#signinError').classList.remove('hidden');
+}
+async function startSignIn(provider: string): Promise<void> {
+  signinView(true);
+  $('#signinMsg').textContent = `Opening ${provider} in your browser…`;
+  const r = await api.auth.start(provider).catch(e => ({ error: errMsg(e) }) as { error?: string });
+  if (r.error === 'not-configured') {
+    signinError(`${provider} sign-in isn't set up for this copy of Breeze yet. Add a ${provider} OAuth client ID to breeze.config.json (see breeze.config.example.json) and restart Breeze — or continue without signing in.`);
+  } else if (r.error) signinError(r.error);
+}
+$$('[data-signin]').forEach(b => b.onclick = () => startSignIn(b.dataset.signin ?? 'GitHub'));
+$('#signinCancel').onclick = () => { api.auth.cancel(); signinView(false); };
+$('#signinSkip').onclick = () => goStep(2);
+$('#copyCode').onclick = () => { navigator.clipboard?.writeText($('#codeText').textContent ?? '').catch(() => {}); toast('Code copied'); };
+api.auth.onEvent(ev => {
+  if (ev.t === 'code') {
+    $('#signinMsg').textContent = 'Enter this code on the GitHub page that just opened:';
+    $('#codeText').textContent = ev.code ?? '';
+    $('#signinCode').classList.remove('hidden');
+    $('#openCodePage').onclick = () => api.sys.openExternal(ev.uri ?? 'https://github.com/login/device');
+  } else if (ev.t === 'waiting') {
+    $('#signinMsg').textContent = `Finish signing in with ${ev.provider} in your browser…`;
+  } else if (ev.t === 'done' && ev.user) {
+    setUser(ev.user);
+    signinView(false);
+    toast(`Signed in as ${ev.user.name}`);
+    if (!appState.onboarded && step === 1) goStep(2);
+  } else if (ev.t === 'error') signinError(ev.text ?? 'Sign-in failed');
 });
-$('#signinCancel').onclick = () => { clearTimeout(signinTimer); $('#signinWait').classList.add('hidden'); $('#signinChoices').classList.remove('hidden'); };
-$('#signinRetry').onclick = () => { clearTimeout(signinTimer); signinTimer = setTimeout(() => signedIn('GitHub'), 1200); };
 
 /* ----- AI agent detection ----- */
 const AGENT_STYLE: Record<string, { letter: string; color: string }> = {
@@ -290,9 +429,7 @@ function detectTools(): Promise<Detection> {
   if (!appState.detect) $('#agentList').innerHTML = '<div class="row" style="color:var(--text-3)"><div class="spinner" style="width:16px;height:16px;border-width:2px"></div>Checking this computer…</div>';
   detecting = api.sys.detect().then(d => {
     appState.detect = d;
-    const found = d.agents.filter(a => a.found);
-    if (!appState.agent || !found.some(a => a.id === appState.agent)) appState.agent = found[0]?.id ?? null;
-    saveApp();
+    fixSelectedAgent();
     renderDetection();
     return d;
   }).catch(e => {
@@ -302,11 +439,28 @@ function detectTools(): Promise<Detection> {
   }).finally(() => { detecting = null; });
   return detecting;
 }
+// Keep the chosen agent if it is still usable, else fall back to the first one that is.
+function fixSelectedAgent(): void {
+  const found = appState.detect?.agents.filter(a => a.found) ?? [];
+  if (!appState.agent || !found.some(a => a.id === appState.agent)) appState.agent = found[0]?.id ?? null;
+  saveApp();
+}
 
 function agentOptionsHtml(d: Detection): string {
   return d.agents.map(a => {
     const st = AGENT_STYLE[a.id] ?? { letter: a.name[0], color: '#a1a1aa' };
-    const on = a.id === appState.agent;
+    const on = a.found && a.id === appState.agent;
+    const mark = `<span class="mark" style="background:${st.color}">${st.letter}</span>`;
+    if (a.api) {
+      const side = a.found
+        ? `<span class="side row" style="gap:6px"><span class="pill ${on ? 'blue' : 'ok'}">${on ? 'Selected' : 'Ready'}</span><button class="get" data-clearkey title="Remove the saved key">Remove</button></span>`
+        : `<button class="get side" data-get="${escAttr(a.url)}">Get a key ↗</button>`;
+      const sub = a.found ? `API key saved securely${a.version ? ` · ${a.version}` : ''}` : 'Uses your own Google AI Studio API key';
+      return `<div class="agent-opt api ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : ''}>
+        ${mark}<span class="nm">${esc(a.name)} <small>API</small></span>${side}
+        <span class="sub">${esc(sub)}</span>
+        ${a.found ? '' : `<div class="key-row"><input class="input" type="password" placeholder="Paste your Gemini API key" autocomplete="off" spellcheck="false" data-key><button class="btn btn-sm" data-savekey>Save key</button></div><div class="key-err hidden"></div>`}</div>`;
+    }
     const sub = a.found
       ? [a.version ? `v${a.version}` : 'Installed', a.path ?? (d.demo ? 'browser preview' : '')].filter(Boolean).join(' · ')
       : `${a.vendor} · not installed`;
@@ -314,17 +468,48 @@ function agentOptionsHtml(d: Detection): string {
       ? `<span class="pill ${on ? 'blue' : 'ok'} side">${on ? 'Selected' : 'Detected'}</span>`
       : `<button class="get side" data-get="${escAttr(a.url)}">Get it ↗</button>`;
     return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : ''}>
-      <span class="mark" style="background:${st.color}">${st.letter}</span><span class="nm">${esc(a.name)}</span>${side}
+      ${mark}<span class="nm">${esc(a.name)}</span>${side}
       <span class="sub" title="${escAttr(sub)}">${esc(sub)}</span></div>`;
   }).join('');
 }
-function bindAgentOptions(root: HTMLElement, onPick: () => void): void {
+function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
   $$('[data-agent]', root).forEach(el => {
-    const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onPick(); };
-    el.onclick = pick;
-    el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+    const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onChange(); };
+    el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input')) pick(); };
+    el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); pick(); } };
   });
   $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); api.sys.openExternal(b.dataset.get ?? ''); });
+  const gemini = () => appState.detect?.agents.find(a => a.id === 'gemini');
+  const input = root.querySelector<HTMLInputElement>('[data-key]');
+  const saveBtn = root.querySelector<HTMLButtonElement>('[data-savekey]');
+  if (input && saveBtn) {
+    const save = async () => {
+      const err = root.querySelector<HTMLElement>('.key-err');
+      saveBtn.disabled = true; saveBtn.textContent = 'Checking…';
+      try {
+        const { model } = await api.gemini.setKey(input.value);
+        const g = gemini();
+        if (g) { g.found = true; g.version = model; }
+        if (!selectedAgent()) appState.agent = 'gemini';
+        saveApp();
+        toast('Gemini key saved');
+        onChange();
+      } catch (e) {
+        saveBtn.disabled = false; saveBtn.textContent = 'Save key';
+        if (err) { err.textContent = errMsg(e); err.classList.remove('hidden'); }
+      }
+    };
+    saveBtn.onclick = save;
+    input.onkeydown = e => { if (e.key === 'Enter') save(); };
+  }
+  root.querySelector<HTMLElement>('[data-clearkey]')?.addEventListener('click', async e => {
+    e.stopPropagation();
+    await api.gemini.clearKey();
+    const g = gemini();
+    if (g) { g.found = false; g.version = null; }
+    fixSelectedAgent();
+    onChange();
+  });
 }
 
 function renderDetection(): void {
@@ -334,11 +519,11 @@ function renderDetection(): void {
   $('#agentList').innerHTML = agentOptionsHtml(d);
   bindAgentOptions($('#agentList'), renderDetection);
   $('#aiPill').className = found.length ? 'pill ok' : 'pill warn';
-  $('#aiPill').textContent = found.length ? `${found.length} detected` : 'None found';
+  $('#aiPill').textContent = found.length ? `${found.length} ready` : 'None ready';
   $('#aiHint').textContent = found.length
-    ? 'Pick the agent Breeze hands work to. It uses the agent\'s own sign-in, so there is no API key to paste.'
-    : 'No coding agent found on this computer. Install one, then press rescan.';
-  if (d.demo) $('#aiHint').textContent += ' (Browser preview: detection runs in the desktop app.)';
+    ? 'Pick the agent Breeze hands work to. Installed agents use their own sign-in; Gemini uses your API key.'
+    : 'No coding agent found. Install one and rescan, or paste a Gemini API key.';
+  if (d.demo) $('#aiHint').textContent += ' (Browser preview.)';
 
   $('#toolList').innerHTML = d.tools.map(t => t.found
     ? `<span class="pill ok">${t.name}${t.version ? ' ' + esc(t.version) : ''} ready</span>`
@@ -359,15 +544,13 @@ function selectedAgent(): DetectedAgent | null {
 }
 function renderAgentPill(): void {
   const a = selectedAgent();
-  $('#agentPill').textContent = a ? `${a.name} · approve plan` : 'No agent · choose';
-  agentsDef.planner.model = agentsDef.builder.model = a ? a.name : 'no agent';
+  $('#agentPill').textContent = a ? a.name : 'Choose an agent';
+  agentsDef.planner.model = agentsDef.builder.model = a ? (a.api && a.version ? a.version : a.name) : 'no agent';
   renderAgents();
 }
 $('#agentPill').onclick = openAgentPicker;
-$('#agentPill').style.cursor = 'pointer';
-$('#agentPill').title = 'Choose which AI agent to use';
 function openAgentPicker(): void {
-  openModal(`<h3>Choose your AI agent</h3><p class="sub">Breeze looks for coding agents installed on this computer.</p>
+  openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. Gemini works with an API key.</p>
     <div class="agent-list" id="pickList"></div>
     <div class="row" style="justify-content:space-between;margin-top:16px"><button class="btn btn-sm btn-ghost" id="pickRescan">Scan again</button><button class="btn btn-primary" data-close>Done</button></div>`, m => {
     const render = () => {
@@ -401,7 +584,7 @@ $('#startBuilding').onclick = () => {
 };
 function showIde(): void {
   $('#onboard').classList.add('hidden'); $('#ide').classList.remove('hidden');
-  $('#userChip').textContent = `● Signed in with ${user?.provider ?? 'GitHub'}`;
+  renderUser();
   applyLayout();
   renderEditor();
 }
@@ -476,13 +659,64 @@ function highlightLines(text: string, lexer: string): string[] {
 }
 const COMMENT: Record<string, [string, string]> = { js: ['// ', ''], py: ['# ', ''], css: ['/* ', ' */'], html: ['<!-- ', ' -->'], md: ['<!-- ', ' -->'] };
 
+/* ----- Colored file & folder icons (16×16 inline SVG) ----- */
+const svg16 = (body: string) => `<svg viewBox="0 0 16 16" aria-hidden="true">${body}</svg>`;
+const badge = (bg: string, fg: string, label: string, size = 6.4) =>
+  svg16(`<rect x="1.5" y="1.5" width="13" height="13" rx="3" fill="${bg}"/><text x="8" y="11.2" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-weight="800" font-size="${size}" fill="${fg}">${label}</text>`);
+const page = (color: string, inner = '') =>
+  svg16(`<path d="M3.5 1.5h6l3 3v10h-9z" fill="${color}" fill-opacity=".16" stroke="${color}" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.5 1.5v3h3" fill="none" stroke="${color}" stroke-width="1.1" stroke-linejoin="round"/>${inner}`);
+const ICONS: Record<string, string> = {
+  html: svg16('<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" fill="none" stroke="#f16529" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="m9 3.5-2 9" stroke="#f9a77d" stroke-width="1.4" stroke-linecap="round"/>'),
+  css: svg16('<path d="M6.3 2.5 5 13.5M11 2.5 9.7 13.5M2.8 6h11M2.2 10h11" fill="none" stroke="#42a5f5" stroke-width="1.6" stroke-linecap="round"/>'),
+  scss: svg16('<circle cx="8" cy="8" r="6.5" fill="#cd6799"/><path d="M10.5 5.5c-1-1-4-.6-4 .9 0 1.6 3.5 1.3 3.5 3 0 1.4-2.6 1.6-3.8.6" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/>'),
+  js: badge('#f1d33b', '#1e1e1e', 'JS'),
+  ts: badge('#3178c6', '#ffffff', 'TS'),
+  jsx: svg16('<g fill="none" stroke="#61dafb" stroke-width="1"><ellipse cx="8" cy="8" rx="6.6" ry="2.6"/><ellipse cx="8" cy="8" rx="6.6" ry="2.6" transform="rotate(60 8 8)"/><ellipse cx="8" cy="8" rx="6.6" ry="2.6" transform="rotate(120 8 8)"/></g><circle cx="8" cy="8" r="1.4" fill="#61dafb"/>'),
+  json: svg16('<path d="M6 2.5c-1.6 0-1.8.8-1.8 2v1.3c0 1-.5 1.7-1.7 1.9v.6c1.2.2 1.7.9 1.7 1.9v1.3c0 1.2.2 2 1.8 2M10 2.5c1.6 0 1.8.8 1.8 2v1.3c0 1 .5 1.7 1.7 1.9v.6c-1.2.2-1.7.9-1.7 1.9v1.3c0 1.2-.2 2-1.8 2" fill="none" stroke="#f5b942" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="1" fill="#f5b942"/>'),
+  md: svg16('<rect x="1" y="3.5" width="14" height="9" rx="2" fill="none" stroke="#6aa8d8" stroke-width="1.2"/><path d="M3.5 10.5v-4l1.8 2 1.8-2v4M11.2 6.3v4M9.6 8.9l1.6 1.6 1.6-1.6" fill="none" stroke="#6aa8d8" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>'),
+  image: svg16('<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#b388ff" fill-opacity=".18" stroke="#b388ff" stroke-width="1.2"/><circle cx="5.5" cy="6" r="1.3" fill="#ffd166"/><path d="m2.5 12.5 4-4 2.5 2.5 1.8-1.8 3 3.3z" fill="#b388ff"/>'),
+  svg: svg16('<path d="M8 1.8 14.2 8 8 14.2 1.8 8z" fill="#ffb13b" fill-opacity=".2" stroke="#ffb13b" stroke-width="1.2" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.6" fill="#ffb13b"/>'),
+  env: svg16('<circle cx="5.5" cy="8" r="3" fill="none" stroke="#e5c07b" stroke-width="1.5"/><path d="M8.5 8h6M12.5 8v2.4M14.5 8v1.6" fill="none" stroke="#e5c07b" stroke-width="1.5" stroke-linecap="round"/>'),
+  git: svg16('<path d="M8 1.6 14.4 8 8 14.4 1.6 8z" fill="#f05033"/><path d="M6.4 5.2v5.6M6.4 6.6 9.6 9.4" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/><circle cx="6.4" cy="10.6" r="1" fill="#fff"/><circle cx="9.6" cy="9.4" r="1" fill="#fff"/><circle cx="6.4" cy="5" r="1" fill="#fff"/>'),
+  node: svg16('<path d="M8 1.3 13.8 4.6v6.8L8 14.7 2.2 11.4V4.6z" fill="#8cc84b" fill-opacity=".2" stroke="#8cc84b" stroke-width="1.2" stroke-linejoin="round"/><path d="M6 6.2v3.6M10 6.2v3.6M6 6.2l4 3.6" stroke="#8cc84b" stroke-width="1.2" stroke-linecap="round"/>'),
+  py: svg16('<path d="M8 1.5c-3 0-3 1.3-3 2.3V6h3.2v.6H3.6C2.3 6.6 1.5 7.6 1.5 9.4s.8 2.9 2 2.9H5V10.5c0-1.2 1-2.2 2.2-2.2h3.3c1 0 1.8-.8 1.8-1.8V3.8c0-1.2-1.2-2.3-4.3-2.3z" fill="#3776ab"/><path d="M8 14.5c3 0 3-1.3 3-2.3V10H7.8v-.6h4.6c1.3 0 2.1-1 2.1-2.8s-.8-2.9-2-2.9H11v1.8c0 1.2-1 2.2-2.2 2.2H5.5c-1 0-1.8.8-1.8 1.8v2.7c0 1.2 1.2 2.3 4.3 2.3z" fill="#ffd43b"/>'),
+  shell: svg16('<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#4caf50" fill-opacity=".14" stroke="#4caf50" stroke-width="1.2"/><path d="m4.3 6 2.2 2-2.2 2M8 10.5h3.5" fill="none" stroke="#4caf50" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'),
+  config: page('#c792ea', '<path d="M5.5 8h5M5.5 10.5h3.5" stroke="#c792ea" stroke-width="1.1" stroke-linecap="round"/>'),
+  text: page('#a1a1aa', '<path d="M5.5 7.5h5M5.5 9.5h5M5.5 11.5h3" stroke="#a1a1aa" stroke-width="1" stroke-linecap="round"/>'),
+  lock: page('#8b8b95', '<rect x="5.6" y="8.6" width="4.8" height="3.6" rx=".8" fill="#8b8b95"/><path d="M6.6 8.6V7.6a1.4 1.4 0 0 1 2.8 0v1" fill="none" stroke="#8b8b95" stroke-width="1"/>'),
+  license: page('#e5c07b', '<circle cx="8" cy="9" r="1.8" fill="none" stroke="#e5c07b" stroke-width="1"/>'),
+  file: page('#8b8b95'),
+};
+const EXT_ICON: Record<string, string> = {
+  html: 'html', htm: 'html', xml: 'html', vue: 'html', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
+  js: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx', tsx: 'jsx', ts: 'ts', mts: 'ts', cts: 'ts', json: 'json', jsonc: 'json', md: 'md', markdown: 'md',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image', bmp: 'image', avif: 'image', svg: 'svg',
+  py: 'py', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
+  txt: 'text', log: 'text', csv: 'text', lock: 'lock',
+};
 function fileIcon(name: string): string {
   const n = name.toLowerCase();
-  if (n.startsWith('.env')) return '🔒';
+  if (n.startsWith('.env')) return ICONS.env;
+  if (n.startsWith('.git')) return ICONS.git;
+  if (n === 'package.json' || n === 'package-lock.json' || n === '.npmrc' || n === '.nvmrc') return ICONS.node;
+  if (n.startsWith('license')) return ICONS.license;
+  if (/^(tsconfig|jsconfig)[\w.-]*\.json$/.test(n)) return ICONS.ts;
   const ext = n.includes('.') ? n.slice(n.lastIndexOf('.') + 1) : '';
-  return ({ html: '◇', htm: '◇', css: '#', scss: '#', js: 'JS', mjs: 'JS', cjs: 'JS', jsx: 'JS', ts: 'TS', tsx: 'TS', json: '{}', md: 'M↓', py: 'Py',
-    png: '▣', jpg: '▣', jpeg: '▣', gif: '▣', svg: '▣', webp: '▣', ico: '▣' } as Record<string, string>)[ext] ?? '·';
+  return ICONS[EXT_ICON[ext] ?? 'file'];
 }
+// Folder colours follow what the folder usually holds.
+const FOLDER_COLORS: [RegExp, string][] = [
+  [/^(src|app|lib|source)$/, '#7aa9ff'], [/^(node_modules)$/, '#8cc84b'], [/^\.git$/, '#f05033'], [/^\.(claude|vscode|idea|github)$/, '#d97757'],
+  [/^(assets|images?|img|public|static|media|icons?)$/, '#ffb74d'], [/^(tests?|__tests__|spec)$/, '#4db6ac'], [/^(dist|build|out|\.next)$/, '#9e9e9e'],
+  [/^(components?|ui|views?|pages?)$/, '#c4b5fd'], [/^(styles?|css)$/, '#42a5f5'], [/^(docs?)$/, '#6aa8d8'],
+];
+function folderIcon(name: string, open: boolean): string {
+  const c = FOLDER_COLORS.find(([re]) => re.test(name.toLowerCase()))?.[1] ?? '#90a4c4';
+  return open
+    ? svg16(`<path d="M1.5 4a1 1 0 0 1 1-1h3.4l1.4 1.5h5.7a1 1 0 0 1 1 1V7H4.2a1 1 0 0 0-.95.68L1.5 12.5z" fill="${c}" fill-opacity=".55"/><path d="M3.3 7.7A1 1 0 0 1 4.25 7h10.3l-1.9 5.8a1 1 0 0 1-.95.7H1.5z" fill="${c}"/>`)
+    : svg16(`<path d="M1.5 4a1 1 0 0 1 1-1h3.4l1.4 1.5h6.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" fill="${c}"/><path d="M1.5 6h13" stroke="#000" stroke-opacity=".18"/>`);
+}
+const CHEV = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /* ================= Workspace ================= */
 interface Buffer {
@@ -550,6 +784,8 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   }
   active = s.active && openTabs.includes(s.active) ? s.active : openTabs[0] ?? null;
   renderTabs(); renderEditor(); renderTree();
+  restoreChat();
+  refreshGit();
   term.cwd = await api.term.cwd(); renderPs();
 }
 function resetWorkspace(): void {
@@ -559,6 +795,8 @@ function resetWorkspace(): void {
   stopPreview();
   $('#projectName').textContent = 'No folder';
   document.title = 'Breeze IDE';
+  gitState = { repo: false }; gitLog = { head: null, commits: [] };
+  renderScm(); renderBranch(); emptyChat();
 }
 
 async function loadDir(rel: string): Promise<void> {
@@ -617,21 +855,28 @@ function renderTree(): void {
     return;
   }
   const rows: string[] = [];
+  const decor = gitDecor();
+  const letters: Record<string, string> = { 'git-m': 'M', 'git-u': 'U', 'git-a': 'A', 'git-d': 'D' };
   const walk = (rel: string, depth: number) => {
     for (const e of dirCache.get(rel) ?? []) {
       const p = joinPath(rel, e.name);
       const open = e.dir && expanded.has(p);
       const lock = locks[p];
       const lockTag = lock ? `<span class="lock" style="background:${agentsDef[lock].color};color:#000">${agentsDef[lock].name}</span>` : '';
-      const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : ''].filter(Boolean).join(' ');
-      rows.push(`<div class="${cls}" style="padding-left:${8 + depth * 12}px" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : ''} title="${escAttr(p)}">
-        <span class="ico">${e.dir ? (open ? '▾' : '▸') : fileIcon(e.name)}</span><span class="nm">${esc(e.name)}</span>${lockTag}</div>`);
+      const g = e.dir ? (decor.dirs.has(p) ? 'has-changes' : '') : decor.files.get(p) ?? '';
+      const enter = rel && rel === justExpanded ? 'enter' : '';
+      const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, enter].filter(Boolean).join(' ');
+      rows.push(`<div class="${cls}" style="padding-left:${4 + depth * 12}px" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : ''} title="${escAttr(p)}">
+        <span class="chev ${e.dir ? (open ? 'open' : '') : 'none'}">${CHEV}</span><span class="ico">${e.dir ? folderIcon(e.name, open) : fileIcon(e.name)}</span><span class="nm">${esc(e.name)}</span>${lockTag}${!e.dir && g && !lock ? `<span class="gst">${letters[g] ?? ''}</span>` : ''}</div>`);
       if (open) walk(p, depth + 1);
     }
   };
   walk('', 0);
   el.innerHTML = rows.join('') || '<p class="side-note">This folder is empty.</p>';
+  justExpanded = null;
 }
+// The folder whose children should animate in on the next render.
+let justExpanded: string | null = null;
 async function renderRecent(): Promise<void> {
   const recent = await api.fs.recent().catch(() => []);
   const el = document.getElementById('recentList');
@@ -669,7 +914,7 @@ $('#tree').addEventListener('contextmenu', e => {
 });
 async function toggleDir(p: string): Promise<void> {
   if (expanded.has(p)) expanded.delete(p);
-  else { expanded.add(p); if (!dirCache.has(p)) await loadDir(p); }
+  else { expanded.add(p); if (!dirCache.has(p)) await loadDir(p); justExpanded = p; }
   renderTree(); saveSession();
 }
 async function refreshTree(): Promise<void> {
@@ -741,6 +986,7 @@ function deleteEntry(p: string, isDir: boolean): void {
 }
 
 api.fs.onChange(async paths => {
+  queueGitRefresh();
   const dirs = new Set(paths.map(dirName));
   for (const d of dirs) if (dirCache.has(d)) await loadDir(d);
   // The changed path may itself be a cached folder (e.g. created then filled).
@@ -782,14 +1028,19 @@ async function actuallyOpen(path: string, at?: { line: number; col: number; len?
   }
 }
 function setActive(path: string | null): void {
+  const changed = active !== path;
   active = path;
   renderTabs(); renderEditor(); renderTree(); saveSession();
+  if (changed) for (const el of [$('#hl'), $('#gutter')]) { el.classList.remove('switch'); void el.offsetWidth; el.classList.add('switch'); }
   if (running && path && /\.(html?|css|js)$/i.test(path)) $('#urlText').title = path;
 }
+const seenTabs = new Set<string>();
 function renderTabs(): void {
   $('#tabs').innerHTML = openTabs.map(n => {
     const lock = locks[n];
-    return `<div class="tab ${n === active ? 'on' : ''} ${isDirty(buffers.get(n)) ? 'dirty' : ''}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${lock ? `<span class="dot" style="background:${agentsDef[lock].color}"></span>` : ''}${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)"><span>✕</span></span></div>`;
+    const enter = seenTabs.has(n) ? '' : 'enter';
+    seenTabs.add(n);
+    return `<div class="tab ${n === active ? 'on' : ''} ${isDirty(buffers.get(n)) ? 'dirty' : ''} ${enter}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${lock ? `<span class="dot" style="background:${agentsDef[lock].color}"></span>` : ''}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)"><span>✕</span></span></div>`;
   }).join('');
 }
 $('#tabs').addEventListener('click', e => {
@@ -1414,6 +1665,8 @@ const commands: Record<string, () => unknown> = {
   'help.welcome': () => setActive(null),
   'help.keys': showShortcuts,
   'help.setup': () => { appState.onboarded = false; saveApp(); $('#ide').classList.add('hidden'); $('#onboard').classList.remove('hidden'); goStep(2); },
+  'account.signIn': () => { appState.onboarded = false; saveApp(); $('#ide').classList.add('hidden'); $('#onboard').classList.remove('hidden'); goStep(1); },
+  'account.signOut': async () => { await api.auth.signOut(); setUser(null); toast('Signed out'); },
   'help.about': () => openModal(`<h3>Breeze IDE</h3><p class="sub">Smooth as a breeze.</p><p class="sub" style="font-size:12px">${isDesktop ? 'Desktop app' : 'Browser preview'} · ${esc(navigator.userAgent.match(/Electron\/[\d.]+|Chrome\/[\d.]+/)?.[0] ?? '')}</p><div class="row" style="justify-content:flex-end"><button class="btn btn-primary" data-close>OK</button></div>`),
 };
 function run(act: string): void {
@@ -1545,6 +1798,9 @@ const MENUS: [string, MenuItem[]][] = [
     { label: 'Keyboard Shortcuts', act: 'help.keys' },
     { label: 'Run Setup Again', act: 'help.setup' },
     { sep: true },
+    { label: 'Sign In…', act: 'account.signIn', enabled: () => !user },
+    { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
+    { sep: true },
     { label: 'About Breeze IDE', act: 'help.about' },
   ]],
 ];
@@ -1643,10 +1899,10 @@ function menuKeys(e: KeyboardEvent): boolean {
 document.addEventListener('keydown', e => {
   if (menuKeys(e)) return;
   if (e.key === 'Escape') {
-    if ($('#modalRoot').childElementCount) { closeModal(); return; }
+    if (modalOpen()) { closeModal(); return; }
     if (findOpen) { closeFind(); activeText()?.ta.focus(); return; }
   }
-  if ($('#modalRoot').childElementCount || $('#ide').classList.contains('hidden')) return;
+  if (modalOpen() || $('#ide').classList.contains('hidden')) return;
   const act = keymap.get(comboOf(e));
   if (!act) return;
   const inEditor = (document.activeElement as HTMLElement | null)?.classList.contains('ta');
@@ -1659,7 +1915,7 @@ document.addEventListener('keydown', e => {
 let altAlone = false;
 document.addEventListener('keydown', e => { altAlone = e.key === 'Alt' && !e.ctrlKey && !e.shiftKey; }, true);
 document.addEventListener('keyup', e => {
-  if (e.key === 'Alt' && altAlone && !$('#ide').classList.contains('hidden') && !$('#modalRoot').childElementCount) {
+  if (e.key === 'Alt' && altAlone && !$('#ide').classList.contains('hidden') && !modalOpen()) {
     e.preventDefault();
     if (openMenuIdx === -1) openMenu(0, true); else closeMenu();
   }
@@ -1687,15 +1943,14 @@ document.addEventListener('click', e => {
 /* ================= Agents (UI) ================= */
 function renderAgents(): void {
   $('#agentCards').innerHTML = Object.values(agentsDef).map(a => `
-    <div class="agent">
+    <div class="agent ${a.status}">
       <div class="ava" style="background:${a.color}">${a.letter}</div>
       <div><span class="name">${a.name}</span> <span style="color:var(--text-3);font-size:11px">${esc(a.model)}</span></div>
       <div class="row" style="gap:4px"><span class="status ${a.status}">${statusLabel[a.status]}</span>
-        ${a.status === 'working' ? `<button class="btn btn-ghost btn-sm" style="padding:0 4px" title="Pause" data-toast="${a.name} paused">❚❚</button><button class="btn btn-ghost btn-sm" style="padding:0 4px" title="Stop" data-toast="${a.name} stopped — no new tool calls">■</button>` : ''}</div>
+        ${a.status === 'working' ? '<button class="icon-btn" title="Stop" data-act="agent.stop">■</button>' : ''}</div>
       <div class="task">${esc(a.task)}</div>
-      <div class="meter" title="${a.used} of 25 tool calls"><i style="width:${a.used * 4}%;background:${a.color}"></i></div>
+      <div class="meter" title="${a.used} tool calls"><i style="width:${Math.min(100, a.used * 4)}%;background:${a.color}"></i></div>
     </div>`).join('');
-  bindToasts($('#agentCards'));
 }
 function setAgent(k: AgentKey, status: AgentStatus, task: string, used?: number): void {
   Object.assign(agentsDef[k], { status, task });
@@ -1708,143 +1963,501 @@ function addMsg(html: string): HTMLElement {
   const d = document.createElement('div'); d.innerHTML = html;
   const el = d.firstElementChild as HTMLElement;
   chat.appendChild(el); chat.scrollTop = chat.scrollHeight;
+  saveChat();
   return el;
 }
-function agentMsg(k: AgentKey, text: string): HTMLElement {
+function agentMsg(k: AgentKey, html: string): HTMLElement {
   const a = agentsDef[k];
-  return addMsg(`<div class="msg"><div class="meta"><span class="avatar" style="background:${a.color};width:16px;height:16px;font-size:9px;margin:0;border:none">${a.letter}</span><b>${a.name}</b> just now</div><div class="body">${text}</div></div>`);
+  const when = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return addMsg(`<div class="msg"><div class="meta"><span class="avatar" style="background:${a.color};width:16px;height:16px;font-size:9px;margin:0;border:none">${a.letter}</span><b>${a.name}</b> ${when}</div><div class="body">${html}</div></div>`);
 }
-function userMsg(text: string, who = 'You'): void {
-  addMsg(`<div class="msg user"><div class="meta"><b>${who}</b> just now</div><div class="body">${esc(text)}</div></div>`);
+function userMsg(text: string): void {
+  const when = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${when}</div><div class="body">${esc(text)}</div></div>`);
 }
 function emptyChat(): void {
   chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
 }
+// A small, safe subset of Markdown for agent replies: code blocks, inline code, bold and line breaks.
+function md(text: string): string {
+  return text.split(/```[\w-]*\n?/).map((part, i) => (i % 2
+    ? `<pre>${esc(part.replace(/\n$/, ''))}</pre>`
+    : esc(part).replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>'))).join('');
+}
+const TOOL_ICON: Record<string, string> = { read: '◔', edit: '✎', run: '❯', search: '⌕', web: '◍', todo: '☑', agent: '◇', tool: '•', note: 'ℹ' };
+function toolLine(kind: string, label: string): void {
+  addMsg(`<div class="tool-line ${kind}"><span class="ti">${TOOL_ICON[kind] ?? '•'}</span><span class="tl">${esc(label)}</span></div>`);
+}
 
-let busy = false;
-$('#send').onclick = sendPrompt;
-$('#prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); } });
+// Chat history is kept per project folder so a reload brings it back.
+const chatKey = () => `breeze.chat:${rootInfo?.root ?? ''}`;
+const agentSessionKey = () => `breeze.agentSession:${rootInfo?.root ?? ''}:${appState.agent ?? ''}`;
+let chatTimer: number | undefined;
+function saveChat(): void {
+  clearTimeout(chatTimer);
+  chatTimer = setTimeout(() => {
+    if (!rootInfo) return;
+    const html = chat.querySelector('.empty') ? '' : chat.innerHTML;
+    if (html && html.length < 400000) store.set(chatKey(), html); else store.del(chatKey());
+  }, 400);
+}
+function restoreChat(): void {
+  const html = store.get<string>(chatKey(), '');
+  if (!html) { emptyChat(); return; }
+  chat.innerHTML = html;
+  // Buttons from an earlier run have no handlers any more; show them as settled.
+  $$('[data-live]', chat).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
+  chat.scrollTop = chat.scrollHeight;
+}
+
+interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; }
+let agentRun: Run | null = null;
+let lastRunFiles: string[] = [];
+const promptBox = $<HTMLTextAreaElement>('#prompt');
+$('#send').onclick = () => (agentRun ? stopAgent() : sendPrompt());
+promptBox.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); } });
+$('#newChat').onclick = () => {
+  if (agentRun) stopAgent();
+  store.del(agentSessionKey()); store.del(chatKey());
+  emptyChat();
+  setAgent('planner', 'idle', 'Waiting for a prompt', 0);
+  setAgent('builder', 'idle', 'Waiting for a plan', 0);
+  promptBox.focus();
+};
+commands['agent.stop'] = () => stopAgent();
+
+function setBusy(on: boolean): void {
+  const b = $('#send');
+  b.classList.toggle('stop', on);
+  b.textContent = on ? '■ Stop' : 'Send ↵';
+  b.title = on ? 'Stop the agent' : 'Send (Enter)';
+}
+function stopAgent(): void {
+  if (agentRun) api.agent.stop(agentRun.id);
+}
 
 async function sendPrompt(): Promise<void> {
-  const promptBox = $<HTMLTextAreaElement>('#prompt');
   const text = promptBox.value.trim();
-  if (!text || busy) return;
-  if (!selectedAgent()) { openAgentPicker(); return; }
-  busy = true; promptBox.value = '';
+  if (!text || agentRun) return;
+  const agent = selectedAgent();
+  if (!agent) { openAgentPicker(); return; }
+  if (!rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
+  const uiMode = $<HTMLSelectElement>('#agentMode').value;
+  promptBox.value = '';
   if (chat.querySelector('.empty')) chat.innerHTML = '';
   userMsg(text);
-  setAgent('planner', 'working', 'Reading your request', 2);
-  await wait(900);
+  await startAgentRun(agent.id, uiMode === 'build' ? 'build' : uiMode === 'ask' ? 'ask' : 'plan', text, uiMode);
+}
 
-  // Ask, don't guess
-  setAgent('planner', 'waiting', 'Asking you a question', 3);
-  const answer = await askCard('Quick question before I plan', "What's the shop called, and what vibe should the page have?",
-    ['Ember & Oak · cozy & warm', 'Ember & Oak · minimal & modern', 'Let me type it']);
-  userMsg(answer);
+async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string): Promise<void> {
+  const phase: AgentKey = mode === 'build' ? 'builder' : 'planner';
+  setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
+  if (phase === 'planner') setAgent('builder', 'idle', 'Waiting for a plan', 0);
+  setBusy(true);
+  try {
+    const id = await api.agent.run({ agent: agentId, mode, prompt, session: store.get<string | null>(agentSessionKey(), null) });
+    agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '' };
+  } catch (e) {
+    setBusy(false);
+    setAgent(phase, 'idle', 'Could not start', 0);
+    errorCard(errMsg(e));
+  }
+}
 
-  // The builder works on the project's index.html when there is one, else on the open file.
-  const target = (dirCache.get('') ?? []).find(e => !e.dir && /^index\.html?$/i.test(e.name))?.name ?? active;
-  setAgent('planner', 'working', 'Writing a plan', 5);
-  await wait(900);
-  const planEl = agentMsg('planner', `Here's the plan:<ol><li><b>Builder</b> → <code>${esc(target ?? 'index.html')}</code>: hero, menu, footer</li><li><b>Builder</b> → <code>styles.css</code>: warm palette</li><li>Start the preview</li></ol><div class="row" style="margin-top:8px"><button class="btn btn-primary btn-sm" data-plan="ok">Approve plan</button><button class="btn btn-sm" data-plan="edit">Change something</button></div>`);
-  setAgent('planner', 'waiting', 'Waiting for plan approval', 5);
-  await new Promise<void>(r => $$('[data-plan]', planEl).forEach(b => b.onclick = () => { $('.row', planEl).outerHTML = `<div class="resolved">✓ Approved by You</div>`; r(); }));
+function errorCard(text: string, hint?: string, action?: string): void {
+  const el = addMsg(`<div class="card error"><h5>⚠ The agent hit a problem</h5><pre>${esc(text)}</pre>${hint ? `<p>${esc(hint)}</p>` : ''}${action === 'openApp' ? '<div class="row" data-live><button class="btn btn-sm btn-primary" data-openapp>Open project in Antigravity</button></div>' : ''}</div>`);
+  el.querySelector<HTMLElement>('[data-openapp]')?.addEventListener('click', () => api.agent.openApp(agentRun?.agent ?? appState.agent ?? '').catch(e => toast(errMsg(e))));
+}
 
-  setAgent('planner', 'done', 'Plan handed off', 6);
-  addMsg(`<div class="handoff">Planner → Builder · checkpoint saved</div>`);
-  pushCommit({ msg: 'Safety checkpoint before Builder', agent: null, auto: true });
-
-  // Builder edits
-  if (target) {
-    locks[target] = 'builder';
+api.agent.onEvent((runId, ev) => {
+  const r = agentRun;
+  if (!r || runId !== r.id) return;
+  if (ev.t === 'session' && ev.id) store.set(agentSessionKey(), ev.id);
+  else if (ev.t === 'text' && ev.text) { r.lastText = ev.text; r.lastMsg = agentMsg(r.phase, md(ev.text)); }
+  else if (ev.t === 'tool') {
+    r.tools++;
+    toolLine(ev.kind ?? 'tool', ev.label ?? '');
+    setAgent(r.phase, 'working', ev.label ?? 'Working', r.tools);
+  } else if (ev.t === 'file' && ev.path) {
+    r.files.add(ev.path);
+    locks[ev.path] = r.phase;
     renderTree(); renderTabs();
-    setAgent('builder', 'working', `Editing ${baseName(target)}`, 4);
-    await actuallyOpen(target);
-    added[target] = new Set();
-    const lines = buffers.get(target)?.text.split('\n').length ?? 0;
-    for (const i of [8, 9, 10, 11, 12].filter(i => i < lines)) { added[target].add(i); renderCode(); await wait(260); }
+    queueGitRefresh();
+  } else if (ev.t === 'plan') r.plan = ev.text ?? '';
+  else if (ev.t === 'note' && ev.text) toolLine('note', ev.text);
+  else if (ev.t === 'error') {
+    // Some CLIs print the error as a reply too; show it once, in the error card.
+    if (r.lastMsg && ev.text?.trim() === r.lastText.trim()) r.lastMsg.remove();
+    errorCard(ev.text ?? 'Unknown error', ev.hint, ev.action);
   }
-  setAgent('builder', 'working', 'Editing styles.css', 9);
-  await wait(700);
+  else if (ev.t === 'done') finishRun(r, ev);
+});
 
-  // Approval card
-  setAgent('builder', 'waiting', 'Needs approval to run a command', 10);
-  const ok = await approvalCard('Builder wants to run a command', 'npx prettier --write index.html styles.css', 'Formats two files in this project. Nothing leaves your machine.');
-  if (ok) {
-    setAgent('builder', 'working', 'Running prettier', 11);
-    await wait(700);
-  }
-  if (target) delete locks[target];
+function finishRun(r: Run, ev: AgentEvent): void {
+  agentRun = null;
+  setBusy(false);
+  for (const k of Object.keys(locks)) delete locks[k];
   renderTree(); renderTabs();
-  setAgent('builder', 'done', 'Edited 2 files', 12);
-  agentMsg('builder', `Done! I changed <b>${esc(target ? baseName(target) : 'index.html')}</b> and <b>styles.css</b>. <div class="row" style="margin-top:8px"><button class="btn btn-sm" data-toast="Changes kept">Keep changes</button><button class="btn btn-sm btn-ghost" data-toast="Reverted to the last checkpoint">Undo</button></div>`);
-  bindToasts(chat);
-  pushCommit({ msg: 'Add coffee shop hero and menu', agent: 'builder' });
-  if (rootInfo && !running) startPreview();
-  busy = false;
+  lastRunFiles = [...r.files];
   vibeDone();
-}
-
-function askCard(title: string, q: string, options: string[]): Promise<string> {
-  return new Promise(res => {
-    const el = addMsg(`<div class="card ask"><h5><svg width="14" height="14" style="color:var(--blue)"><use href="#i-swirl"/></svg>${title}</h5><p>${q}</p><div class="chips">${options.map(o => `<button class="chip">${esc(o)}</button>`).join('')}</div></div>`);
-    $$('.chip', el).forEach(c => c.onclick = () => { $('.chips', el).outerHTML = `<div class="resolved">✓ Answered</div>`; res(c.textContent ?? ''); });
-  });
-}
-function approvalCard(title: string, cmd: string, why: string): Promise<boolean> {
-  return new Promise(res => {
-    const el = addMsg(`<div class="card approve"><h5>⚠ ${title}</h5><pre>${esc(cmd)}</pre><p>${why}</p><div class="row"><button class="btn btn-primary btn-sm" data-a="1">Allow once</button><button class="btn btn-sm" data-a="0">Deny</button><span style="margin-left:auto;color:var(--text-3);font-size:11px">Only the host can approve</span></div></div>`);
-    $$('[data-a]', el).forEach(b => b.onclick = () => {
-      const allowed = b.dataset.a === '1';
-      $('.row', el).outerHTML = `<div class="resolved">${allowed ? '✓ Allowed once' : '✕ Denied'}</div>`;
-      res(allowed);
+  queueGitRefresh();
+  if (ev.stopped) { addMsg('<div class="handoff">Stopped by you</div>'); setAgent(r.phase, 'idle', 'Stopped', r.tools); return; }
+  if (!ev.ok) { setAgent(r.phase, 'idle', 'Stopped with an error', r.tools); return; }
+  const bits = [ev.ms ? `${Math.max(1, Math.round(ev.ms / 1000))}s` : '', r.files.size ? `${r.files.size} file${r.files.size > 1 ? 's' : ''} changed` : '', ev.cost ? `$${ev.cost.toFixed(2)}` : ev.tokens ? `${ev.tokens.toLocaleString()} tokens` : ''].filter(Boolean);
+  if (r.uiMode === 'plan' && r.mode === 'plan') {
+    const plan = (r.plan || r.lastText).trim();
+    if (!plan) { setAgent('planner', 'done', 'Answered', r.tools); return; }
+    setAgent('planner', 'waiting', 'Waiting for plan approval', r.tools);
+    const el = addMsg(`<div class="card plan"><h5>📋 Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`);
+    $$('[data-plan]', el).forEach(b => b.onclick = () => {
+      const ok = b.dataset.plan === 'ok';
+      $('[data-live]', el).outerHTML = `<div class="resolved">${ok ? '✓ Approved' : '✎ Asked for changes'}</div>`;
+      saveChat();
+      if (ok) {
+        setAgent('planner', 'done', 'Plan handed off', r.tools);
+        addMsg('<div class="handoff">Planner → Builder</div>');
+        startAgentRun(r.agent, 'build', 'The plan is approved. Implement it now, then summarize what you changed.', 'build');
+      } else {
+        setAgent('planner', 'idle', 'Waiting for your changes', r.tools);
+        promptBox.focus();
+        promptBox.placeholder = 'What should change in the plan?';
+      }
     });
-  });
+    return;
+  }
+  setAgent(r.phase, 'done', r.files.size ? `Changed ${r.files.size} file${r.files.size > 1 ? 's' : ''}` : 'Answered', r.tools);
+  const el = addMsg(`<div class="run-done"><span>✓ Done${bits.length ? ' · ' + bits.join(' · ') : ''}</span>${r.files.size ? '<button class="btn btn-sm" data-live data-review>Review changes</button>' : ''}</div>`);
+  el.querySelector<HTMLElement>('[data-review]')?.addEventListener('click', () => showView('git', true));
+  promptBox.placeholder = 'Describe what you want to build…';
+  if (r.files.size && running) reloadPreview();
 }
 
-/* ================= Git graph ================= */
-const commits: Commit[] = [
-  { id: 'a91f3c2', msg: 'Start project', agent: null, time: '12 min ago', lane: 0, files: [['index.html', 16, 0]] },
-  { id: 'b72e1d0', msg: 'Add base styles', agent: 'planner', time: '9 min ago', lane: 0, files: [['styles.css', 11, 0]] },
-  { id: 'c3d5a8e', msg: 'Try dark menu', agent: 'builder', time: '6 min ago', lane: 1, files: [['styles.css', 4, 2]] },
-  { id: 'd4f0b19', msg: 'Greeting script', agent: null, time: '3 min ago', lane: 0, files: [['script.js', 4, 0]] },
-];
-let selCommit: string | null = null;
-function pushCommit({ msg, agent, auto = false }: { msg: string; agent: AgentKey | null; auto?: boolean }): void {
-  commits.push({ id: Math.random().toString(16).slice(2, 9), msg: (auto ? '⟲ ' : '') + msg, agent, time: 'just now', lane: 0, files: [['index.html', 5, 0], ['styles.css', 3, 1]] });
-  renderGraph();
+/* ================= Source control (git) ================= */
+let gitState: GitStatus = { repo: false };
+let gitLog: { head: string | null; commits: GitCommit[] } = { head: null, commits: [] };
+let gitBusy = false;
+let openCommit: string | null = null;
+const commitDetails = new Map<string, GitCommitDetail>();
+const scmCollapsed = new Set<string>(store.get<string[]>('breeze.scmCollapsed', []));
+let gitTimer: number | undefined;
+function queueGitRefresh(): void { clearTimeout(gitTimer); gitTimer = setTimeout(refreshGit, 400); }
+window.addEventListener('focus', () => { if (rootInfo) queueGitRefresh(); });
+
+async function refreshGit(): Promise<void> {
+  if (!rootInfo) { gitState = { repo: false }; renderScm(); renderBranch(); return; }
+  try {
+    gitState = await api.git.status();
+    gitLog = gitState.repo && gitState.hasCommits ? await api.git.log() : { head: null, commits: [] };
+  } catch (e) { gitState = { repo: false }; }
+  renderScm(); renderBranch(); renderTree();
 }
-function renderGraph(): void {
-  const list = [...commits].reverse();
-  const rowH = 40;
-  $('#graph').innerHTML = list.map((c, i) => {
-    const x = 16 + c.lane * 18, cy = rowH / 2;
-    const color = c.agent ? agentsDef[c.agent].color : '#7aa9ff';
-    const head = i === 0;
-    return `<div class="commit ${selCommit === c.id ? 'on' : ''}" data-c="${c.id}" style="height:${rowH}px">
-      <svg width="60" height="${rowH}">
-        ${i > 0 ? `<line x1="16" y1="0" x2="16" y2="${cy}" stroke="#3a3a42" stroke-width="2"/>` : ''}
-        ${i < list.length - 1 ? `<line x1="16" y1="${cy}" x2="16" y2="${rowH}" stroke="#3a3a42" stroke-width="2"/>` : ''}
-        ${c.lane ? `<path d="M16 0 C16 ${cy} ${x} 0 ${x} ${cy} M${x} ${cy} C${x} ${rowH} 16 ${cy} 16 ${rowH}" fill="none" stroke="var(--c-builder)" stroke-width="2" opacity=".6"/>` : ''}
-        <circle cx="${x}" cy="${cy}" r="${head ? 6 : 5}" fill="${head ? 'var(--blue)' : 'var(--bg-1)'}" stroke="${color}" stroke-width="2"/>
-      </svg>
-      <div class="msgline"><div>${esc(c.msg)}</div><small>${c.agent ? `<span class="agent-badge" style="background:${color}">${agentsDef[c.agent].name}</span>` : '<span>You</span>'}${c.time}${head ? ' · <b style="color:#7aa9ff">HEAD</b>' : ''}</small></div>
+function renderBranch(): void {
+  const b = $('#sbBranch');
+  const s = gitState;
+  b.textContent = s.repo ? `⎇ ${s.branch || 'main'}${s.ahead ? ` ↑${s.ahead}` : ''}${s.behind ? ` ↓${s.behind}` : ''}` : '⎇ no repository';
+  const n = s.files?.length ?? 0;
+  const badge = $('.act-btn[data-view=git] .badge');
+  badge.textContent = n > 99 ? '99+' : n ? String(n) : '';
+  badge.classList.toggle('hidden', !n);
+}
+// Explorer decorations: path -> status class, plus every folder that contains a change.
+function gitDecor(): { files: Map<string, string>; dirs: Set<string> } {
+  const files = new Map<string, string>(), dirs = new Set<string>();
+  for (const f of gitState.files ?? []) {
+    files.set(f.path, statusOf(f).cls);
+    for (let d = dirName(f.path); d; d = dirName(d)) dirs.add(d);
+  }
+  return { files, dirs };
+}
+function statusOf(f: GitFile, staged = false): { letter: string; cls: string; title: string } {
+  const c = staged ? f.x : f.y === ' ' ? f.x : f.y;
+  if (f.x === '?' || f.y === '?') return { letter: 'U', cls: 'git-u', title: 'Untracked' };
+  if (c === 'A') return { letter: 'A', cls: 'git-a', title: 'Added' };
+  if (c === 'D') return { letter: 'D', cls: 'git-d', title: 'Deleted' };
+  if (c === 'R') return { letter: 'R', cls: 'git-m', title: 'Renamed' };
+  if (c === 'U') return { letter: '!', cls: 'git-d', title: 'Conflict' };
+  return { letter: 'M', cls: 'git-m', title: 'Modified' };
+}
+
+function renderScm(): void {
+  const el = $('#scm');
+  if (!rootInfo) { el.innerHTML = '<p class="side-note">Open a folder to use source control.</p>'; return; }
+  if (!gitState.repo) {
+    el.innerHTML = `<div class="side-note">This folder isn't a git repository yet. Turn it on to save checkpoints you can always go back to.<button class="btn btn-primary btn-sm" data-act="git.init">Initialize Repository</button></div>`;
+    return;
+  }
+  const files = gitState.files ?? [];
+  const staged = files.filter(f => f.x !== ' ' && f.x !== '?');
+  const changes = files.filter(f => f.y !== ' ' || f.x === '?');
+  const commitLabel = staged.length ? 'Commit' : changes.length ? 'Commit All' : 'Commit';
+  const s = gitState;
+  const syncLabel = !s.hasRemote ? '' : !s.upstream ? 'Publish Branch' : s.behind ? `Sync ↓${s.behind}${s.ahead ? ` ↑${s.ahead}` : ''}` : s.ahead ? `Push ↑${s.ahead}` : '';
+  const row = (f: GitFile, inStaged: boolean) => {
+    const st = statusOf(f, inStaged);
+    return `<div class="scm-row ${st.cls}${seenScm.has(f.path + inStaged) ? '' : ' enter'}" data-file="${escAttr(f.path)}" data-staged="${inStaged ? 1 : ''}" title="${escAttr(f.path)} · ${st.title}">
+      <span class="ico">${fileIcon(baseName(f.path))}</span><span class="nm">${esc(baseName(f.path))}</span><span class="dir">${esc(dirName(f.path))}</span>
+      <span class="acts">
+        <button class="icon-btn" data-scm="open" title="Open File">↗</button>
+        ${inStaged ? '' : '<button class="icon-btn" data-scm="discard" title="Discard Changes">↺</button>'}
+        <button class="icon-btn" data-scm="${inStaged ? 'unstage' : 'stage'}" title="${inStaged ? 'Unstage' : 'Stage'} Changes">${inStaged ? '−' : '+'}</button>
+      </span><span class="st">${st.letter}</span></div>`;
+  };
+  const section = (key: string, title: string, list: GitFile[], inStaged: boolean, acts: string) => !list.length ? '' : `
+    <div class="scm-sec ${scmCollapsed.has(key) ? 'closed' : ''}" data-sec="${key}">
+      <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">${title}</span><span class="acts">${acts}</span><span class="count">${list.length}</span></div>
+      <div class="scm-list">${list.map(f => row(f, inStaged)).join('')}</div>
     </div>`;
+  const html = `
+    <div class="commit-box">
+      <textarea class="input" id="scmMsg" rows="2" placeholder="Message (Ctrl+Enter to commit on ‘${escAttr(s.branch || 'main')}’)"></textarea>
+      <button class="btn btn-primary btn-sm commit-btn" data-act="git.commit" ${files.length ? '' : 'disabled'}>✓ ${commitLabel}</button>
+      ${syncLabel ? `<button class="btn btn-sm commit-btn" data-act="git.sync">${syncLabel}</button>` : ''}
+    </div>
+    ${section('staged', 'Staged Changes', staged, true, '<button class="icon-btn" data-scm-all="unstage" title="Unstage All">−</button>')}
+    ${section('changes', 'Changes', changes, false, '<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">↺</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">+</button>')}
+    ${!files.length ? '<p class="side-note">No changes. Everything is saved in a checkpoint.</p>' : ''}
+    <div class="scm-sec graph ${scmCollapsed.has('graph') ? 'closed' : ''}" data-sec="graph">
+      <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">Checkpoints</span><span class="count">${gitLog.commits.length}</span></div>
+      <div class="scm-list">${renderGraphRows()}</div>
+    </div>`;
+  el.innerHTML = html;
+  seenScm.clear();
+  for (const f of staged) seenScm.add(f.path + true);
+  for (const f of changes) seenScm.add(f.path + false);
+  const msg = $<HTMLTextAreaElement>('#scmMsg', el);
+  msg.value = scmDraft;
+  msg.oninput = () => { scmDraft = msg.value; };
+  msg.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run('git.commit'); } };
+}
+let scmDraft = '';
+const seenScm = new Set<string>();
+
+$('#scm').addEventListener('click', async e => {
+  const t = e.target as HTMLElement;
+  const head = t.closest<HTMLElement>('.scm-head');
+  if (head && !t.closest('button')) {
+    const key = (head.parentElement as HTMLElement).dataset.sec as string;
+    if (scmCollapsed.has(key)) scmCollapsed.delete(key); else scmCollapsed.add(key);
+    head.parentElement?.classList.toggle('closed');
+    store.set('breeze.scmCollapsed', [...scmCollapsed]);
+    return;
+  }
+  const all = t.closest<HTMLElement>('[data-scm-all]');
+  if (all) {
+    const files = gitState.files ?? [];
+    const kind = all.dataset.scmAll;
+    if (kind === 'stage') gitOp(() => api.git.stage(files.filter(f => f.y !== ' ' || f.x === '?').map(f => f.path)));
+    if (kind === 'unstage') gitOp(() => api.git.unstage(files.filter(f => f.x !== ' ' && f.x !== '?').map(f => f.path), !!gitState.hasCommits));
+    if (kind === 'discard') confirmDiscardChanges(files.filter(f => f.y !== ' ' || f.x === '?'));
+    return;
+  }
+  const commitRow = t.closest<HTMLElement>('[data-commit]');
+  if (commitRow) { toggleCommit(commitRow.dataset.commit as string); return; }
+  const rowEl = t.closest<HTMLElement>('.scm-row');
+  if (!rowEl) return;
+  const path = rowEl.dataset.file as string;
+  const inStaged = !!rowEl.dataset.staged;
+  const f = (gitState.files ?? []).find(x => x.path === path);
+  const act = t.closest<HTMLElement>('[data-scm]')?.dataset.scm;
+  if (act === 'open') openFile(path);
+  else if (act === 'stage') gitOp(() => api.git.stage([path]));
+  else if (act === 'unstage') gitOp(() => api.git.unstage([path], !!gitState.hasCommits));
+  else if (act === 'discard' && f) confirmDiscardChanges([f]);
+  else if (f) showDiff(f, inStaged);
+});
+
+async function gitOp(fn: () => Promise<unknown>, done?: string): Promise<boolean> {
+  if (gitBusy) return false;
+  gitBusy = true;
+  $('#scm').classList.add('busy');
+  try { await fn(); if (done) toast(done); return true; }
+  catch (e) {
+    const m = errMsg(e);
+    if (m.length > 90 || m.includes('\n')) openModal(`<h3>Git said no</h3><pre class="git-err">${esc(m)}</pre><div class="row" style="justify-content:flex-end"><button class="btn btn-primary" data-close>OK</button></div>`);
+    else toast(m);
+    return false;
+  } finally {
+    gitBusy = false;
+    $('#scm').classList.remove('busy');
+    await refreshGit();
+  }
+}
+function confirmDiscardChanges(files: GitFile[]): void {
+  if (!files.length) return;
+  const untracked = files.filter(f => f.x === '?').length;
+  openModal(`<h3>Discard ${files.length === 1 ? `changes in ${esc(baseName(files[0].path))}` : `${files.length} changes`}?</h3>
+    <p class="sub">${untracked ? `${untracked} new file${untracked > 1 ? 's go' : ' goes'} to the Recycle Bin. ` : ''}Edits to tracked files go back to the last checkpoint. This can't be undone with Ctrl+Z.</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-close>Cancel</button><button class="btn btn-danger" id="discardOk">Discard</button></div>`, m => {
+    $('#discardOk', m).onclick = () => {
+      closeModal();
+      gitOp(() => api.git.discard(files.map(f => ({ path: f.path, untracked: f.x === '?' }))));
+    };
+  });
+}
+async function showDiff(f: GitFile, staged: boolean): Promise<void> {
+  let text = '';
+  try {
+    if (f.x === '?') {
+      const r = await api.fs.readFile(f.path);
+      text = (r.text ?? '(binary file)').split('\n').map(l => '+' + l).join('\n');
+    } else text = await api.git.diff(f.path, staged);
+  } catch (e) { toast(errMsg(e)); return; }
+  const lines = text.split('\n').filter(l => !/^(diff --git|index |--- |\+\+\+ )/.test(l));
+  const body = lines.map(l => {
+    const cls = l.startsWith('@@') ? 'hunk' : l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : '';
+    return `<div class="dl ${cls}">${esc(l) || ' '}</div>`;
+  }).join('') || '<div class="dl">No textual changes.</div>';
+  openModal(`<div class="diff-head"><span class="ico">${fileIcon(baseName(f.path))}</span><b>${esc(f.path)}</b><span class="pill">${staged ? 'Staged' : statusOf(f).title}</span></div>
+    <div class="diff">${body}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" id="diffOpen">Open File</button><button class="btn btn-primary" id="diffStage">${staged ? 'Unstage' : 'Stage'}</button></div>`, m => {
+    $('#diffOpen', m).onclick = () => { closeModal(); openFile(f.path); };
+    $('#diffStage', m).onclick = () => { closeModal(); gitOp(() => (staged ? api.git.unstage([f.path], !!gitState.hasCommits) : api.git.stage([f.path]))); };
+  }, undefined, 'top');
+}
+
+/* ----- Commit graph ----- */
+const LANE_COLORS = ['#7aa9ff', '#c4b5fd', '#86efac', '#fdba74', '#f9a8d4', '#7dd3fc'];
+interface GraphRow { c: GitCommit; lane: number; before: (string | null)[]; after: (string | null)[]; merges: number[]; forks: number[]; }
+function layoutGraph(commits: GitCommit[]): GraphRow[] {
+  const lanes: (string | null)[] = [];
+  const rows: GraphRow[] = [];
+  for (const c of commits) {
+    let lane = lanes.indexOf(c.hash);
+    if (lane === -1) { lane = lanes.indexOf(null); if (lane === -1) lane = lanes.length; lanes[lane] = c.hash; }
+    const before = lanes.slice();
+    const merges = before.map((h, i) => (h === c.hash && i !== lane ? i : -1)).filter(i => i >= 0);
+    merges.forEach(i => { lanes[i] = null; });
+    const forks: number[] = [];
+    lanes[lane] = c.parents[0] ?? null;
+    for (const p of c.parents.slice(1)) {
+      let i = lanes.indexOf(p);
+      if (i === -1) { i = lanes.indexOf(null); if (i === -1) i = lanes.length; lanes[i] = p; }
+      forks.push(i);
+    }
+    while (lanes.length && lanes[lanes.length - 1] == null) lanes.pop();
+    rows.push({ c, lane, before, after: lanes.slice(), merges, forks });
+  }
+  return rows;
+}
+function renderGraphRows(): string {
+  if (!gitLog.commits.length) return '<p class="side-note">No checkpoints yet. Commit your changes to save the first one.</p>';
+  const rows = layoutGraph(gitLog.commits);
+  const H = 30, X = (i: number) => 10 + i * 12, mid = H / 2;
+  const width = Math.min(6, Math.max(...rows.map(r => Math.max(r.before.length, r.after.length, r.lane + 1)))) * 12 + 8;
+  return rows.map(r => {
+    const col = (i: number) => LANE_COLORS[i % LANE_COLORS.length];
+    let svg = '';
+    r.before.forEach((h, i) => {
+      if (!h) return;
+      if (i === r.lane) svg += `<path d="M${X(i)} 0V${mid}" stroke="${col(i)}"/>`;
+      else if (r.merges.includes(i)) svg += `<path d="M${X(i)} 0C${X(i)} ${mid} ${X(r.lane)} ${mid / 2} ${X(r.lane)} ${mid}" stroke="${col(i)}"/>`;
+      else svg += `<path d="M${X(i)} 0V${H}" stroke="${col(i)}"/>`;
+    });
+    if (r.after[r.lane]) svg += `<path d="M${X(r.lane)} ${mid}V${H}" stroke="${col(r.lane)}"/>`;
+    for (const f of r.forks) svg += `<path d="M${X(r.lane)} ${mid}C${X(r.lane)} ${H} ${X(f)} ${mid} ${X(f)} ${H}" stroke="${col(f)}"/>`;
+    const isHead = r.c.hash === gitLog.head;
+    svg += `<circle cx="${X(r.lane)}" cy="${mid}" r="${isHead ? 5 : 4}" fill="${isHead ? col(r.lane) : 'var(--bg-1)'}" stroke="${col(r.lane)}" stroke-width="2"/>`;
+    const refs = r.c.refs.map(ref => {
+      const name = ref.replace(/^HEAD -> /, '');
+      const cls = ref.startsWith('HEAD') ? 'head' : ref.startsWith('tag: ') ? 'tag' : ref.includes('/') ? 'remote' : 'branch';
+      return `<span class="ref ${cls}">${esc(name.replace(/^tag: /, ''))}</span>`;
+    }).join('');
+    const open = openCommit === r.c.hash;
+    const detail = open ? commitDetailHtml(commitDetails.get(r.c.hash)) : '';
+    return `<div class="commit ${open ? 'on' : ''}" data-commit="${r.c.hash}" title="${escAttr(r.c.subject)}">
+      <svg width="${width}" height="${H}" fill="none" stroke-width="2">${svg}</svg>
+      <div class="msgline"><div>${refs}${esc(r.c.subject)}</div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
+    </div>${detail}`;
   }).join('');
-  $$('[data-c]').forEach(el => el.onclick = () => { selCommit = el.dataset.c ?? null; renderGraph(); renderCommitDetail(); });
 }
-function renderCommitDetail(): void {
-  const c = commits.find(x => x.id === selCommit);
-  const d = $('#commitDetail');
-  if (!c) { d.innerHTML = '<div style="color:var(--text-3);font-size:12px">Click a checkpoint to see what changed.</div>'; return; }
-  d.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${esc(c.msg)}</div>
-    ${c.files.map(([f, a, r]) => `<div class="file"><span>${f}</span><span><span class="add">+${a}</span> <span class="del">−${r}</span></span></div>`).join('')}
-    <button class="btn btn-sm" style="width:100%;margin-top:8px" id="goBack">Go back to this checkpoint</button>`;
-  $('#goBack').onclick = () => openModal(`<h3>Go back to "${esc(c.msg)}"?</h3><p class="sub">Your current work is saved as a safety checkpoint first, so you can always come back.</p><div class="row" style="justify-content:flex-end"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="confirmBack">Go back</button></div>`,
-    m => $('#confirmBack', m).onclick = () => { closeModal(); pushCommit({ msg: 'Safety checkpoint', agent: null, auto: true }); toast('Restored — safety checkpoint saved'); });
+function commitDetailHtml(d?: GitCommitDetail): string {
+  if (!d) return '<div class="commit-detail"><div class="side-note">Loading…</div></div>';
+  return `<div class="commit-detail">
+    <div class="cd-msg">${esc(d.message)}</div>
+    <div class="cd-meta">${esc(d.author)} · ${esc(d.when)} · <code>${d.hash.slice(0, 8)}</code></div>
+    ${d.files.map(f => `<div class="file" data-open-file="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp">${esc(f.path)}</span><span><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`).join('')}
+    <div class="row" style="margin-top:8px"><button class="btn btn-sm" data-branch-from="${d.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${d.hash}">Copy id</button></div>
+  </div>`;
 }
-$('#saveCp').onclick = () => openModal(`<h3>Save a checkpoint</h3><p class="sub">A snapshot you can go back to anytime (a git commit).</p><input class="input" style="width:100%;margin-bottom:14px" id="cpMsg" value="Tweak menu prices"><div class="row" style="justify-content:flex-end"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="cpSave">Save</button></div>`,
-  m => $('#cpSave', m).onclick = () => { pushCommit({ msg: $<HTMLInputElement>('#cpMsg').value || 'Checkpoint', agent: null }); closeModal(); toast('Checkpoint saved'); });
+async function toggleCommit(hash: string): Promise<void> {
+  openCommit = openCommit === hash ? null : hash;
+  renderScm();
+  if (openCommit && !commitDetails.has(hash)) {
+    try { commitDetails.set(hash, await api.git.show(hash)); } catch (e) { toast(errMsg(e)); openCommit = null; }
+    renderScm();
+  }
+}
+$('#scm').addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  const f = t.closest<HTMLElement>('[data-open-file]');
+  if (f) { e.stopPropagation(); openFile(f.dataset.openFile as string); }
+  const b = t.closest<HTMLElement>('[data-branch-from]');
+  if (b) { e.stopPropagation(); newBranch(b.dataset.branchFrom); }
+  const c = t.closest<HTMLElement>('[data-copy-hash]');
+  if (c) { e.stopPropagation(); navigator.clipboard?.writeText(c.dataset.copyHash ?? '').catch(() => {}); toast('Commit id copied'); }
+}, true);
+
+async function commitNow(): Promise<void> {
+  const msg = scmDraft.trim();
+  if (!msg) { toast('Write a short message describing this checkpoint'); $('#scmMsg')?.focus(); return; }
+  const files = gitState.files ?? [];
+  if (!files.length) { toast('Nothing to commit'); return; }
+  await saveAll();
+  const all = !files.some(f => f.x !== ' ' && f.x !== '?');
+  let hash = '';
+  if (await gitOp(async () => { hash = await api.git.commit(msg, all); })) {
+    scmDraft = '';
+    renderScm();
+    toast(`Checkpoint saved · ${hash}`);
+  }
+}
+async function newBranch(from?: string): Promise<void> {
+  const name = await askName(from ? 'New branch from this checkpoint' : 'New branch', '', 'Create');
+  if (!name) return;
+  gitOp(() => api.git.switchTo(name, true, from), `Switched to new branch ${name}`);
+}
+async function pickBranch(): Promise<void> {
+  if (!gitState.repo) { showView('git', true); return; }
+  const branches = await api.git.branches().catch(() => [] as string[]);
+  openModal(`<input class="input" style="width:100%" id="brIn" placeholder="Switch to a branch, or type a new name" spellcheck="false"><div class="qo-list" id="brList"></div>`, m => {
+    const input = $<HTMLInputElement>('#brIn', m);
+    input.focus();
+    const render = () => {
+      const q = input.value.trim();
+      const list = branches.filter(b => b.toLowerCase().includes(q.toLowerCase()));
+      $('#brList', m).innerHTML = (q && !branches.includes(q) ? `<div class="qo-item" data-new="1"><span>＋ Create branch “${esc(q)}”</span></div>` : '')
+        + list.map(b => `<div class="qo-item ${b === gitState.branch ? 'on' : ''}" data-br="${escAttr(b)}"><span>⎇ ${esc(b)}</span>${b === gitState.branch ? '<small>current</small>' : ''}</div>`).join('');
+      $$('[data-br]', m).forEach(el => el.onclick = () => { closeModal(); if (el.dataset.br !== gitState.branch) gitOp(() => api.git.switchTo(el.dataset.br as string, false), `Switched to ${el.dataset.br}`); });
+      $('[data-new]', m)?.addEventListener('click', () => { closeModal(); gitOp(() => api.git.switchTo(q, true), `Switched to new branch ${q}`); });
+    };
+    input.oninput = render;
+    input.onkeydown = e => { if (e.key === 'Enter') ($('[data-new], [data-br]', m) as HTMLElement | null)?.click(); };
+    render();
+  }, undefined, 'top');
+}
+$('#sbBranch').onclick = pickBranch;
+Object.assign(commands, {
+  'git.refresh': refreshGit,
+  'git.init': () => gitOp(() => api.git.init(), 'Repository created'),
+  'git.commit': commitNow,
+  'git.sync': () => {
+    const s = gitState;
+    if (!s.upstream) return gitOp(() => api.git.sync('push'), 'Branch published');
+    if (s.behind) return gitOp(async () => { await api.git.sync('pull'); if (s.ahead) await api.git.sync('push'); }, 'In sync');
+    return gitOp(() => api.git.sync('push'), 'Pushed');
+  },
+  'git.more': () => {
+    const r = $('[data-act="git.more"]').getBoundingClientRect();
+    popupMenu(r.left, r.bottom + 4, [
+      { label: 'Pull', run: () => gitOp(() => api.git.sync('pull'), 'Pulled') },
+      { label: 'Push', run: () => gitOp(() => api.git.sync('push'), 'Pushed') },
+      { label: 'Fetch', run: () => gitOp(() => api.git.sync('fetch'), 'Fetched') },
+      { sep: true },
+      { label: 'Switch Branch…', run: pickBranch },
+      { label: 'Create Branch…', run: () => newBranch() },
+    ]);
+  },
+});
 
 /* ================= Views ================= */
 function showView(v: string, reveal = false): void {
@@ -1853,7 +2466,7 @@ function showView(v: string, reveal = false): void {
   applyLayout();
   $$('.act-btn[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   $$('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== v));
-  if (v === 'git') { document.querySelector('.act-btn[data-view=git] .badge')?.remove(); renderGraph(); renderCommitDetail(); }
+  if (v === 'git') refreshGit();
   if (v === 'people') renderPeople();
 }
 // Clicking the active view's icon again collapses the side bar, like VS Code.
@@ -1861,7 +2474,6 @@ $$('.act-btn[data-view]').forEach(b => b.onclick = () => {
   const v = b.dataset.view as string;
   if (v === layout.view && layout.sideOpen) { layout.sideOpen = false; applyLayout(); } else showView(v, true);
 });
-$$('[data-view-jump]').forEach(b => b.onclick = () => showView(b.dataset.viewJump as string, true));
 
 /* ================= Collaboration ================= */
 let sharing = false;
@@ -1919,7 +2531,7 @@ function joinRequest(m: HTMLElement): void {
 }
 function updateShare(): void {
   $('#sbShare').textContent = sharing ? `● Sharing · ${guests.length + 1} people` : 'Not sharing';
-  $('#avatars').innerHTML = `<span class="avatar" style="background:#7aa9ff" title="You (host)">YO</span>` + guests.map(g => `<span class="avatar" style="background:${g.color}" title="${g.name} (${g.role})">${g.name.slice(0, 2).toUpperCase()}</span>`).join('');
+  renderUser();
   $('#termShare').textContent = share.terminal && sharing ? 'Shared' : 'Not shared';
   renderPeople();
 }
@@ -1951,7 +2563,7 @@ function vibeDone(): void {
   if (!$('#vibe').classList.contains('hidden')) $('#vibeReady').classList.remove('hidden');
 }
 $('#vibeClose').onclick = () => $('#vibe').classList.add('hidden');
-$('#vibeBack').onclick = () => { $('#vibe').classList.add('hidden'); const t = Object.keys(added)[0]; if (t) openFile(t); };
+$('#vibeBack').onclick = () => { $('#vibe').classList.add('hidden'); const t = lastRunFiles[0]; if (t) openFile(t); };
 
 /* ================= Discord ================= */
 let discord = false;
@@ -1967,18 +2579,23 @@ $('#discord').onclick = () => {
 
 /* ================= Modal & misc ================= */
 let modalOnClose: (() => void) | null = null;
+const modalOpen = () => !!document.querySelector('#modalRoot .scrim:not(.closing)');
 function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () => void, place: 'center' | 'top' = 'center'): void {
   closeModal();
-  $('#modalRoot').innerHTML = `<div class="scrim ${place === 'top' ? 'top' : ''}"><div class="modal ${place === 'top' ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
-  const m = $('#modalRoot .modal');
+  $$('#modalRoot .scrim.closing').forEach(x => x.remove());
+  $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${place === 'top' ? 'top' : ''}"><div class="modal ${place === 'top' ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`);
+  const m = $('#modalRoot .scrim:not(.closing) .modal');
   modalOnClose = onClose ?? null;
-  $('#modalRoot .scrim').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) closeModal(); };
+  $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) closeModal(); };
   $$('[data-close]', m).forEach(b => b.onclick = closeModal);
   bind?.(m);
 }
 function closeModal(): void {
-  if (!$('#modalRoot').childElementCount) return;
-  $('#modalRoot').innerHTML = '';
+  const scrim = $('#modalRoot .scrim:not(.closing)');
+  if (!scrim) return;
+  // Play the closing animation on a detached copy so a new modal can open immediately.
+  scrim.classList.add('closing');
+  setTimeout(() => scrim.remove(), 150);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {
@@ -1990,8 +2607,11 @@ async function boot(): Promise<void> {
   buildMenubar();
   applyLayout();
   showView(layout.view);
-  renderTree(); renderTabs(); renderEditor(); renderAgents(); renderPreview(); emptyChat(); renderGraph(); bindToasts();
+  renderTree(); renderTabs(); renderEditor(); renderAgents(); renderPreview(); emptyChat(); renderScm(); renderBranch(); bindToasts();
   renderDetection();
+  // The main process remembers who signed in; it wins over the renderer's copy.
+  const signed = await api.auth.user().catch(() => null);
+  if (signed || isDesktop) { user = signed; appState.user = signed; saveApp(); }
   if (appState.onboarded) showIde();
   else goStep(step);
   const info = await api.fs.restore().catch(() => null);
