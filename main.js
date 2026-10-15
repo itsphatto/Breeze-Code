@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored } = require('./toolchains');
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'out', '.cache', '__pycache__', '.venv']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -84,6 +85,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   if (process.platform === 'darwin') app.dock?.setIcon(APP_ICON);
   createWindow();
+  getTools().catch(logError('toolchains'));
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -378,18 +380,99 @@ function changeDir(command) {
   termCwd = target;
   return { cwd: termCwd };
 }
-ipcMain.handle('term:run', (_e, command) => {
+ipcMain.handle('term:run', async (_e, command) => {
   const cd = changeDir(command);
   if (cd) return cd;
+  const { tools, pathValue } = await getTools();
   const id = nextTermId++;
-  const child = spawn(command, { shell: true, cwd: termCwd, env: process.env, windowsHide: true });
+  const child = spawn(command, { shell: true, cwd: termCwd, env: toolEnv(process.env, tools.binDirs, process.platform, pathValue), windowsHide: true });
   terms.set(id, child);
+  child.stdin.on('error', ignoreEpipe);
   const send = chunk => win?.webContents.send('term:data', id, chunk.toString());
   child.stdout.on('data', send);
   child.stderr.on('data', send);
-  child.on('error', err => send(`${err.message}\n`));
+  child.on('error', err => send(`${err.message}
+`));
   child.on('close', code => { terms.delete(id); win?.webContents.send('term:exit', id, code); });
   return { id };
+});
+ipcMain.handle('term:write', (_e, id, text) => {
+  const stdin = terms.get(id)?.stdin;
+  if (stdin?.writable) stdin.write(String(text));
+});
+
+// Compilers and Python found on this PC (memoised; `force` looks again, e.g. after the user installs one).
+const ignoreEpipe = () => { /* the program exited before reading its input */ };
+const probe = (file, args) => new Promise(res => {
+  execFile(file, args, { windowsHide: true, timeout: 4000 }, (err, stdout) => res({ code: err ? (typeof err.code === 'number' ? err.code : null) : 0, stdout: String(stdout || '') }));
+});
+// lstat, not existsSync: Store app-execution aliases (WindowsApps\python.exe) fail existsSync
+const exists = p => { try { fs.lstatSync(p); return true; } catch { return false; } };
+// Expands one `*` in the last path segment that has one.
+function glob(pattern) {
+  const parts = pattern.split(/[\\/]/);
+  const i = parts.findIndex(p => p.includes('*'));
+  if (i === -1) return [pattern];
+  const parent = parts.slice(0, i).join(path.sep);
+  const re = new RegExp('^' + parts[i].split('*').map(x => x.replaceAll(/\W/g, String.raw`\$&`)).join('.*') + '$', 'i');
+  try {
+    return fs.readdirSync(parent).filter(n => re.test(n)).map(n => [parent, n, ...parts.slice(i + 1)].join(path.sep));
+  } catch { return []; }
+}
+let toolsPromise = null;
+function getTools(force = false) {
+  if (!toolsPromise || force) {
+    toolsPromise = (async () => {
+      const pathValue = await freshPath(process.platform, probe);
+      const tools = await findTools({ platform: process.platform, pathValue, env: process.env, exists, glob, run: probe });
+      return { tools, pathValue };
+    })();
+  }
+  return toolsPromise;
+}
+
+// Runs a .c, .cpp or .py file in the open folder, streaming into the terminal under one id.
+let activeRun = null; // { id, cancel }
+const SOURCE_FILE = /\.(?:c|cc|cpp|cxx|py)$/i;
+ipcMain.handle('run:file', async (_e, rel) => {
+  if (activeRun) return { error: 'A program is still running — press Ctrl+C to stop it' };
+  if (!root) return { error: 'Open a folder first' };
+  const claim = activeRun = { id: 0, cancel() { /* still starting */ } };
+  const fail = error => { activeRun = null; return { error }; };
+  try {
+    const abs = resolveIn(rel);
+    const stdioHeader = path.join(__dirname, 'runtime', 'breeze_stdio.h');
+    let { tools, pathValue } = await getTools();
+    let plan = runPlan(abs, tools, process.platform, stdioHeader);
+    if (plan.error && SOURCE_FILE.test(abs)) {
+      ({ tools, pathValue } = await getTools(true));
+      plan = runPlan(abs, tools, process.platform, stdioHeader);
+    }
+    if (plan.error) return fail(plan.error);
+    if (plan.steps.length > 1) fs.mkdirSync(path.join(plan.steps[0].cwd, 'build'), { recursive: true }); // gcc won't create it
+    ensureBuildIgnored(root);
+    const id = claim.id = nextTermId++;
+    const send = text => win?.webContents.send('term:data', id, text);
+    const { cancel } = runSteps(plan.steps, {
+      spawn,
+      env: toolEnv(process.env, tools.binDirs, process.platform, pathValue),
+      onStart: step => send(`${step.cwd}> ${step.display}
+`),
+      onData: send,
+      onChild: child => { terms.set(id, child); child.stdin.on('error', ignoreEpipe); },
+      onDone: (code, ms) => {
+        terms.delete(id);
+        activeRun = null;
+        send(`${code === null ? 'stopped' : `exited with code ${code}`} · ${(ms / 1000).toFixed(1)}s
+`);
+        win?.webContents.send('term:exit', id, code);
+      },
+    });
+    claim.cancel = cancel;
+    return { id };
+  } catch (err) {
+    return fail(err.message);
+  }
 });
 
 const TASKKILL = path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32', 'taskkill.exe');
@@ -397,7 +480,11 @@ function killTree(child) {
   if (process.platform === 'win32') execFile(TASKKILL, ['/pid', String(child.pid), '/T', '/F'], () => { /* already gone */ });
   else child.kill('SIGTERM');
 }
-ipcMain.handle('term:kill', (_e, id) => { const c = terms.get(id); if (c) killTree(c); });
+ipcMain.handle('term:kill', (_e, id) => {
+  if (activeRun?.id === id) activeRun.cancel();
+  const c = terms.get(id);
+  if (c) killTree(c);
+});
 // Completes the last word of a terminal line to a file or folder in the terminal's folder.
 ipcMain.handle('term:complete', async (_e, word) => {
   const w = unquote(String(word || ''));
@@ -508,6 +595,10 @@ ipcMain.handle('sys:detect', async () => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
   }));
+  const found = (await getTools(true)).tools;
+  for (const [id, name, t] of [['cc', 'C/C++', found.cc], ['python', 'Python', found.python]]) {
+    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true });
+  }
   return { agents, tools, platform: process.platform };
 });
 

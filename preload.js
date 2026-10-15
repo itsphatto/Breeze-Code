@@ -34,10 +34,14 @@ contextBridge.exposeInMainWorld('breeze', {
   term: {
     cwd: () => invoke('term:cwd'),
     run: command => invoke('term:run', command),
+    write: (id, text) => invoke('term:write', id, text),
     kill: id => invoke('term:kill', id),
     complete: word => invoke('term:complete', word),
     onData: cb => listen('term:data', cb),
     onExit: cb => listen('term:exit', cb),
+  },
+  run: {
+    file: rel => invoke('run:file', rel),
   },
   sys: {
     detect: () => invoke('sys:detect'),
