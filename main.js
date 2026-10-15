@@ -94,15 +94,25 @@ app.on('window-all-closed', () => {
 });
 
 /* ================= Paths ================= */
-// Resolve a project-relative path and refuse anything that escapes the open folder.
-function resolveIn(rel = '') {
-  if (!root) throw new Error('No folder is open');
-  const abs = path.resolve(root, rel);
-  const back = path.relative(root, abs);
+// Resolve a path inside `base` and refuse anything that escapes it.
+function resolveUnder(base, rel = '') {
+  const abs = path.resolve(base, rel);
+  const back = path.relative(base, abs);
   if (back.startsWith('..') || path.isAbsolute(back)) throw new Error('That path is outside the project');
   return abs;
 }
-const toRel = abs => path.relative(root, abs).split(path.sep).join('/');
+function resolveIn(rel = '') {
+  if (!root) throw new Error('No folder is open');
+  return resolveUnder(root, rel);
+}
+const relTo = (base, abs) => path.relative(base, abs).split(path.sep).join('/');
+const toRel = abs => relTo(root, abs);
+// Breeze Box chats work here when no project folder is open.
+function boxDir() {
+  const dir = path.join(app.getPath('documents'), 'Breeze Box');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 async function setRoot(dir) {
   const st = await fsp.stat(dir);
@@ -148,6 +158,22 @@ ipcMain.handle('fs:openFolder', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
   if (r.canceled || !r.filePaths[0]) return null;
   return setRoot(r.filePaths[0]);
+});
+
+// Asks where to create a new project folder (its name is typed in the dialog), creates it and opens it.
+ipcMain.handle('fs:createFolder', async () => {
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Create a new project', buttonLabel: 'Create',
+    defaultPath: path.join(app.getPath('documents'), 'my-breeze-project'),
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
+  });
+  if (r.canceled || !r.filePath) return null;
+  if (fs.existsSync(r.filePath)) {
+    const inside = await fsp.readdir(r.filePath).catch(() => ['(a file)']);
+    if (inside.length) throw new Error(`${path.basename(r.filePath)} already exists and isn't empty — pick another name`);
+  }
+  await fsp.mkdir(r.filePath, { recursive: true });
+  return setRoot(r.filePath);
 });
 
 ipcMain.handle('fs:restore', async () => {
@@ -244,15 +270,15 @@ function searchText(text, rel, needle, matchCase, results) {
   }
 }
 // Reads files a batch at a time and stops once there are enough results.
-async function searchProject(query, matchCase) {
+async function searchProject(query, matchCase, base = resolveIn('')) {
   if (!query) return [];
-  const files = await listFiles(resolveIn(''));
+  const files = await listFiles(base);
   const needle = matchCase ? query : query.toLowerCase();
   const results = [];
   const batch = async start => {
     if (start >= files.length || results.length >= MAX_SEARCH_RESULTS) return;
     const texts = await Promise.all(files.slice(start, start + 32).map(readSearchable));
-    texts.forEach((text, k) => { if (text != null) searchText(text, toRel(files[start + k]), needle, matchCase, results); });
+    texts.forEach((text, k) => { if (text != null) searchText(text, relTo(base, files[start + k]), needle, matchCase, results); });
     await batch(start + 32);
   };
   await batch(0);
@@ -372,6 +398,20 @@ function killTree(child) {
   else child.kill('SIGTERM');
 }
 ipcMain.handle('term:kill', (_e, id) => { const c = terms.get(id); if (c) killTree(c); });
+// Completes the last word of a terminal line to a file or folder in the terminal's folder.
+ipcMain.handle('term:complete', async (_e, word) => {
+  const w = unquote(String(word || ''));
+  const cut = Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\')) + 1;
+  const dirPart = w.slice(0, cut), start = w.slice(cut).toLowerCase();
+  let entries;
+  try { entries = await fsp.readdir(path.resolve(termCwd, dirPart || '.'), { withFileTypes: true }); } catch { return []; } // no such folder
+  return entries
+    .filter(d => d.name.toLowerCase().startsWith(start))
+    .map(d => ({ name: d.name, dir: d.isDirectory() }))
+    .sort(byDirThenName)
+    .slice(0, 60)
+    .map(d => ({ text: dirPart + d.name + (d.dir ? '/' : ''), dir: d.dir }));
+});
 function killAllTerms() {
   for (const c of terms.values()) killTree(c);
   terms.clear();
@@ -444,7 +484,7 @@ function versionIn(text) {
 }
 function versionOf(bin) {
   // Launching a GUI app's .exe would open its window, so only ask CLIs for a version.
-  if (bin.endsWith('.app') || (isWin && /\.exe$/i.test(bin) && !/(?:claude|codex|gemini|git|node)\.exe$/i.test(bin))) return Promise.resolve(null);
+  if (bin.endsWith('.app') || (isWin && /\.exe$/i.test(bin) && !/(?:claude|codex|git|node)\.exe$/i.test(bin))) return Promise.resolve(null);
   return new Promise(res => {
     exec(`"${bin}" --version`, { windowsHide: true, timeout: 8000 }, (err, stdout) => res(err ? null : versionIn(stdout)));
   });
@@ -461,8 +501,9 @@ ipcMain.handle('sys:detect', async () => {
     if (bin) agentBins.set(a.id, bin); else agentBins.delete(a.id);
     return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version: bin ? await versionOf(bin) : null };
   }));
-  // Gemini runs through Google's API with the user's own key instead of a local CLI.
-  agents.push({ id: 'gemini', name: 'Gemini', vendor: 'Google', url: 'https://aistudio.google.com/apikey', api: true, found: !!getSecret('geminiKey'), path: null, version: loadState().geminiModel || null });
+  // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
+  const llm = await llmConfig(true).catch(() => null);
+  agents.push({ id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [] });
   const tools = await Promise.all([['git', 'Git'], ['node', 'Node.js']].map(async ([cmd, name]) => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
@@ -500,35 +541,56 @@ function setSecret(name, value) {
   fs.writeFileSync(secretsPath(), JSON.stringify(all));
 }
 
-/* ================= Gemini API key ================= */
-const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta';
+/* ================= Local LLM API (Ollama, LM Studio or any OpenAI-compatible server) ================= */
+// The usual addresses of Ollama and LM Studio, tried when nothing is configured yet.
+const LLM_DEFAULTS = ['http://127.0.0.1:11434/v1', 'http://127.0.0.1:1234/v1'];
+// The server address without trailing slashes.
+function llmBase(url) {
+  const s = String(url || '').trim();
+  let end = s.length;
+  while (end > 0 && s[end - 1] === '/') end--;
+  return s.slice(0, end);
+}
+const llmHeaders = key => (key ? { Authorization: `Bearer ${key}` } : {});
 
-async function geminiModels(key) {
-  const r = await fetch(`${GEMINI_API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } });
+async function llmModels(url, key, timeout = 5000) {
+  const r = await fetch(`${llmBase(url)}/models`, { headers: llmHeaders(key), signal: AbortSignal.timeout(timeout) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error?.message || `Gemini answered with status ${r.status}`);
-  return (j.models || [])
-    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
-    .map(m => m.name.replace(/^models\//, ''));
+  if (!r.ok) throw new Error(j.error?.message || `The server answered with status ${r.status}`);
+  const ids = (j.data || j.models || []).map(m => m.id || m.name).filter(Boolean);
+  if (!ids.length) throw new Error('The server has no models yet. Download one first, for example: ollama pull llama3.1');
+  return ids;
 }
-// Prefer Google's rolling "latest flash" alias, else the newest stable Flash, else anything Gemini.
-function pickModel(names) {
-  if (names.includes('gemini-flash-latest')) return 'gemini-flash-latest';
-  const stable = names.filter(n => /^gemini-[\d.]+-(?:flash|pro)$/.test(n))
-    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-  return stable.find(n => n.endsWith('flash')) || stable[0] || names.find(n => n.startsWith('gemini')) || 'gemini-2.5-flash';
+// The saved server; with `probe`, otherwise the first usual address that answers (it is then saved).
+async function llmConfig(probe) {
+  const s = loadState();
+  if (s.llmUrl) return { url: s.llmUrl, model: s.llmModel, models: s.llmModels || [], key: getSecret('llmKey') };
+  if (!probe || s.llmOff) return null;
+  const answers = await Promise.all(LLM_DEFAULTS.map(u => llmModels(u, null, 700).then(models => ({ url: u, models }), () => null)));
+  const hit = answers.find(Boolean);
+  if (!hit) return null;
+  saveState({ llmUrl: hit.url, llmModel: hit.models[0], llmModels: hit.models });
+  return { url: hit.url, model: hit.models[0], models: hit.models, key: null };
 }
 
-ipcMain.handle('gemini:status', () => ({ hasKey: !!getSecret('geminiKey'), model: loadState().geminiModel || null }));
-ipcMain.handle('gemini:setKey', async (_e, key) => {
+ipcMain.handle('llm:connect', async (_e, url, key) => {
+  url = llmBase(url);
+  if (!/^https?:\/\/[^\s/]+/i.test(url)) throw new Error('Enter the server address, for example http://localhost:11434/v1');
   key = String(key || '').trim();
-  if (!key) throw new Error('Paste an API key first');
-  const model = pickModel(await geminiModels(key));
-  setSecret('geminiKey', key);
-  saveState({ geminiModel: model });
-  return { model };
+  const models = await llmModels(url, key);
+  setSecret('llmKey', key || null);
+  saveState({ llmUrl: url, llmModel: models[0], llmModels: models, llmOff: false });
+  return { model: models[0], models };
 });
-ipcMain.handle('gemini:clearKey', () => { setSecret('geminiKey', null); saveState({ geminiModel: null }); });
+ipcMain.handle('llm:setModel', (_e, model) => {
+  if (!(loadState().llmModels || []).includes(model)) throw new Error('That model is not on the server');
+  saveState({ llmModel: model });
+});
+// Forget the server, and stop looking for one until the user connects again.
+ipcMain.handle('llm:disconnect', () => {
+  setSecret('llmKey', null);
+  saveState({ llmUrl: null, llmModel: null, llmModels: null, llmOff: true });
+});
 
 /* ================= Agents ================= */
 // Every run streams normalized events to the renderer:
@@ -562,8 +624,8 @@ ipcMain.handle('agent:stop', (_e, runId) => {
 // Antigravity has no headless mode, so Breeze opens the project in its own window.
 ipcMain.handle('agent:openApp', (_e, id) => {
   const bin = agentBins.get(id);
-  if (!bin || !root) throw new Error('Open a folder first');
-  const child = spawn(`"${bin}" "${root}"`, { shell: true, detached: true, stdio: 'ignore', windowsHide: true });
+  if (!bin) throw new Error('That agent was not found on this computer');
+  const child = spawn(`"${bin}" "${root || boxDir()}"`, { shell: true, detached: true, stdio: 'ignore', windowsHide: true });
   child.unref();
 });
 
@@ -582,12 +644,14 @@ function cliArgs(agent, mode, prompt, session) {
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
-async function startRun(runId, { agent, mode, prompt, session }) {
-  if (!root) throw new Error('Open a folder first');
+// Agents work in the open project; Breeze Box chats may also run without one, in the Breeze Box folder.
+async function startRun(runId, { agent, mode, prompt, session, box }) {
+  const base = root || (box ? boxDir() : null);
+  if (!base) throw new Error('Open a folder first');
   if (session && !SAFE_ID.test(session)) session = null;
   const run = { child: null, abort: null, stopped: false };
   runs.set(runId, run);
-  if (agent === 'gemini') return runGemini(runId, run, { mode, prompt, session });
+  if (agent === 'local') return runLocal(runId, run, { mode, prompt, session, base });
   const bin = agentBins.get(agent);
   if (!bin) throw new Error('That agent was not found on this computer. Rescan from Settings → Run Setup Again.');
   if (agent === 'antigravity') {
@@ -599,7 +663,7 @@ async function startRun(runId, { agent, mode, prompt, session }) {
   const cli = cliArgs(agent, mode, prompt, session);
   // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags and
   // a validated session id do (npm .cmd shims need a shell on Windows).
-  const child = spawn(bin, cli.args, { cwd: root, shell: /\.(?:cmd|bat)$/i.test(bin), windowsHide: true, env: process.env });
+  const child = spawn(bin, cli.args, { cwd: base, shell: /\.(?:cmd|bat)$/i.test(bin), windowsHide: true, env: process.env });
   run.child = child;
   child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
   child.stdin.end(cli.prompt);
@@ -707,91 +771,98 @@ function codexEvent(runId, d, ctx, mode) {
   }
 }
 
-/* ----- Gemini agent loop (function calling over the project folder) ----- */
-const geminiSessions = new Map(); // session id -> conversation contents
-const GEMINI_TOOLS = [
+/* ----- Local LLM agent loop (OpenAI-style function calling over the project folder) ----- */
+const llmSessions = new Map(); // session id -> chat messages
+const LLM_TOOLS = [
   { name: 'list_files', description: 'List the files and folders in a project folder. Folders end with "/".', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Folder relative to the project root; "." for the root' } } } },
   { name: 'read_file', description: 'Read a text file from the project.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
   { name: 'search_files', description: 'Find lines containing some text across the project.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'write_file', description: 'Create or overwrite a file with its complete new contents.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-];
+].map(fn => ({ type: 'function', function: fn }));
 
-const GEMINI_TOOL_FNS = {
-  async list_files(runId, a) {
-    const entries = await fsp.readdir(resolveIn(a.path || '.'), { withFileTypes: true });
-    emit(runId, { t: 'tool', kind: 'read', label: `Listed ${a.path && a.path !== '.' ? a.path : 'the project'}` });
+// Each tool works inside ctx.base: the open project, or the Breeze Box folder.
+const LLM_TOOL_FNS = {
+  async list_files(ctx, a) {
+    const entries = await fsp.readdir(resolveUnder(ctx.base, a.path || '.'), { withFileTypes: true });
+    emit(ctx.runId, { t: 'tool', kind: 'read', label: `Listed ${a.path && a.path !== '.' ? a.path : 'the project'}` });
     return entries.slice(0, 500).map(d => d.name + (d.isDirectory() ? '/' : '')).join('\n');
   },
-  async read_file(runId, a) {
-    const abs = resolveIn(a.path);
+  async read_file(ctx, a) {
+    const abs = resolveUnder(ctx.base, a.path);
     const st = await fsp.stat(abs);
-    emit(runId, { t: 'tool', kind: 'read', label: `Read ${relOut(abs)}` });
+    emit(ctx.runId, { t: 'tool', kind: 'read', label: `Read ${relTo(ctx.base, abs)}` });
     if (st.size > 400 * 1024) return 'File is too large to read.';
     return fsp.readFile(abs, 'utf8');
   },
-  async search_files(runId, a) {
-    emit(runId, { t: 'tool', kind: 'search', label: `Searched for ${a.query}` });
-    const hits = await searchProject(String(a.query || ''), false);
+  async search_files(ctx, a) {
+    emit(ctx.runId, { t: 'tool', kind: 'search', label: `Searched for ${a.query}` });
+    const hits = await searchProject(String(a.query || ''), false, ctx.base);
     return hits.slice(0, 100).map(h => `${h.path}:${h.line + 1}: ${h.text}`).join('\n') || 'No matches.';
   },
-  async write_file(runId, a) {
-    const abs = resolveIn(a.path);
+  async write_file(ctx, a) {
+    const abs = resolveUnder(ctx.base, a.path);
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await fsp.writeFile(abs, String(a.content ?? ''), 'utf8');
-    emit(runId, { t: 'tool', kind: 'edit', label: `Wrote ${relOut(abs)}` });
-    emit(runId, { t: 'file', path: relOut(abs) });
+    emit(ctx.runId, { t: 'tool', kind: 'edit', label: `Wrote ${relTo(ctx.base, abs)}` });
+    emit(ctx.runId, { t: 'file', path: relOut(abs) });
     return 'Saved.';
   },
 };
-async function geminiTool(runId, name, args = {}) {
-  const fn = GEMINI_TOOL_FNS[name];
-  if (!fn) throw new Error(`Unknown tool ${name}`);
-  return fn(runId, args);
+async function llmTool(ctx, call) {
+  const fn = LLM_TOOL_FNS[call.function?.name];
+  if (!fn) throw new Error(`Unknown tool ${call.function?.name}`);
+  return fn(ctx, JSON.parse(call.function.arguments || '{}'));
 }
-// Runs the reply's tool calls one after another (a later call may read what an earlier one wrote).
-function runToolCalls(runId, parts) {
-  const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
+// Runs a reply's tool calls one after another (a later call may read what an earlier one wrote).
+function runToolCalls(ctx, calls) {
   return calls.reduce(async (prev, call) => {
     const replies = await prev;
-    let result;
-    try { result = await geminiTool(runId, call.name, call.args); } catch (err) { result = `Error: ${err.message}`; }
-    return [...replies, { functionResponse: { name: call.name, response: { result } } }];
+    let content;
+    try { content = String(await llmTool(ctx, call)); } catch (err) { content = `Error: ${err.message}`; }
+    return [...replies, { role: 'tool', tool_call_id: call.id, content }];
   }, Promise.resolve([]));
 }
-function geminiSystem(mode) {
-  const build = mode === 'build';
-  return [
-    `You are Breeze, a coding agent working inside the user's project folder "${path.basename(root)}".`,
-    'Use the tools to look at the project before answering. Keep replies short and friendly.',
-    build ? 'You may change files with write_file; always write the complete file.' : 'Do not change any files.',
-    mode === 'plan' ? 'Reply with a short numbered plan of the changes you would make.' : '',
-  ].join(' ');
-}
-async function geminiRequest(model, key, body, signal) {
-  const r = await fetch(`${GEMINI_API}/models/${encodeURIComponent(model)}:generateContent`, {
+const LLM_MODE_NOTE = {
+  build: 'You may change files with write_file; always write the complete file.',
+  plan: 'Do not change any files. Reply with a short numbered plan of the changes you would make.',
+  ask: 'Do not change any files.',
+};
+async function llmPost(cfg, body, signal) {
+  const r = await fetch(`${cfg.url}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    headers: { 'Content-Type': 'application/json', ...llmHeaders(cfg.key) },
     body: JSON.stringify(body),
     signal,
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error?.message || `Gemini answered with status ${r.status}`);
+  if (!r.ok) throw new Error(j.error?.message || j.error || `The server answered with status ${r.status}`);
   return j;
 }
-async function runGemini(runId, run, { mode, prompt, session }) {
-  const key = getSecret('geminiKey');
-  if (!key) throw new Error('Add a Gemini API key first (Settings → Run Setup Again).');
-  const model = loadState().geminiModel || 'gemini-2.5-flash';
-  const sid = session && geminiSessions.has(session) ? session : crypto.randomUUID();
-  const contents = geminiSessions.get(sid) || [];
-  geminiSessions.set(sid, contents);
-  emit(runId, { t: 'session', id: sid, model });
-  contents.push({ role: 'user', parts: [{ text: prompt }] });
-  const body = {
-    contents,
-    tools: [{ functionDeclarations: GEMINI_TOOLS.filter(t => mode === 'build' || t.name !== 'write_file') }],
-    systemInstruction: { parts: [{ text: geminiSystem(mode) }] },
-  };
+// Some local models can't call tools; they still answer, just without looking at files.
+async function llmRequest(ctx, body, signal) {
+  if (ctx.noTools) return llmPost(ctx.cfg, { ...body, tools: undefined }, signal);
+  try {
+    return await llmPost(ctx.cfg, body, signal);
+  } catch (err) {
+    if (!/tool/i.test(err.message)) throw err;
+    ctx.noTools = true;
+    emit(ctx.runId, { t: 'note', text: `${ctx.cfg.model} can't use tools, so it answers without looking at your files.` });
+    return llmPost(ctx.cfg, { ...body, tools: undefined }, signal);
+  }
+}
+async function runLocal(runId, run, { mode, prompt, session, base }) {
+  const cfg = await llmConfig(false);
+  if (!cfg?.model) throw new Error('Connect a local LLM server first (Settings → Run Setup Again).');
+  const sid = session && llmSessions.has(session) ? session : crypto.randomUUID();
+  const messages = llmSessions.get(sid) || [{
+    role: 'system',
+    content: `You are Breeze, a coding agent working inside the user's folder "${path.basename(base)}". Use the tools to look at the files before answering. Keep replies short and friendly.`,
+  }];
+  llmSessions.set(sid, messages);
+  emit(runId, { t: 'session', id: sid, model: cfg.model });
+  messages.push({ role: 'user', content: `${prompt}\n\n(${LLM_MODE_NOTE[mode] ?? LLM_MODE_NOTE.ask})` });
+  const tools = LLM_TOOLS.filter(t => mode === 'build' || t.function.name !== 'write_file');
+  const ctx = { runId, base, cfg, noTools: false };
   run.abort = new AbortController();
   const started = Date.now();
   let tokens = 0, lastText = '';
@@ -800,19 +871,18 @@ async function runGemini(runId, run, { mode, prompt, session }) {
     if (n >= 30 || run.stopped) return;
     let j;
     try {
-      j = await geminiRequest(model, key, body, run.abort.signal);
+      j = await llmRequest(ctx, { model: cfg.model, messages, tools, stream: false }, run.abort.signal);
     } catch (err) {
       if (run.stopped) return; // stopping aborts the request
       throw err;
     }
-    tokens += j.usageMetadata?.totalTokenCount || 0;
-    const content = j.candidates?.[0]?.content;
-    if (!content?.parts?.length) throw new Error(`Gemini returned no answer (${j.candidates?.[0]?.finishReason || 'empty response'})`);
-    contents.push(content);
-    for (const part of content.parts) if (part.text && !part.thought) { lastText = part.text; emit(runId, { t: 'text', text: part.text }); }
-    const replies = await runToolCalls(runId, content.parts);
-    if (!replies.length) return;
-    contents.push({ role: 'user', parts: replies });
+    tokens += j.usage?.total_tokens || 0;
+    const msg = j.choices?.[0]?.message;
+    if (!msg) throw new Error('The model returned no answer');
+    messages.push(msg);
+    if (msg.content?.trim()) { lastText = msg.content; emit(runId, { t: 'text', text: msg.content }); }
+    if (!msg.tool_calls?.length) return;
+    messages.push(...await runToolCalls(ctx, msg.tool_calls));
     await turn(n + 1);
   };
   await turn(0);
@@ -970,11 +1040,33 @@ const sleep = (ms, signal) => new Promise((res, rej) => {
   signal.addEventListener('abort', () => { clearTimeout(t); rej(new Error('cancelled')); }, { once: true });
 });
 
+// Every account signed in on this computer is remembered; one of them is active.
+const accountId = u => `${u.provider}:${u.login}`;
+function accountsState() {
+  const s = loadState();
+  const accounts = s.accounts || (s.user ? [s.user] : []);
+  return { accounts, active: s.user ? accountId(s.user) : null };
+}
+function addAccount(user) {
+  const { accounts } = accountsState();
+  saveState({ user, accounts: [...accounts.filter(a => accountId(a) !== accountId(user)), user] });
+}
 ipcMain.handle('auth:user', () => loadState().user || null);
+ipcMain.handle('auth:accounts', () => accountsState());
+ipcMain.handle('auth:switch', (_e, id) => {
+  const user = accountsState().accounts.find(a => accountId(a) === id);
+  if (!user) throw new Error('That account is no longer signed in');
+  saveState({ user });
+  return user;
+});
+// Signs the active account out and switches to the next one, if any.
 ipcMain.handle('auth:signOut', () => {
-  saveState({ user: null });
-  setSecret('githubToken', null);
-  setSecret('googleToken', null);
+  const { accounts, active } = accountsState();
+  if (active) setSecret(`token:${active}`, null);
+  const rest = accounts.filter(a => accountId(a) !== active);
+  const user = rest[0] || null;
+  saveState({ accounts: rest, user });
+  return user;
 });
 ipcMain.handle('auth:cancel', () => { authAbort?.abort(); authAbort = null; });
 ipcMain.handle('auth:start', (_e, provider) => {
@@ -985,7 +1077,7 @@ ipcMain.handle('auth:start', (_e, provider) => {
   const ac = new AbortController();
   authAbort = ac;
   (provider === 'GitHub' ? githubSignIn(cfg.github, ac.signal) : googleSignIn(cfg.google, ac.signal))
-    .then(user => { saveState({ user }); authEmit({ t: 'done', user }); })
+    .then(user => { addAccount(user); authEmit({ t: 'done', user }); })
     .catch(err => { if (!ac.signal.aborted) authEmit({ t: 'error', text: err.message }); })
     .finally(() => { if (authAbort === ac) authAbort = null; });
   return { started: true };
@@ -1016,19 +1108,48 @@ async function githubSignIn({ clientId }, signal) {
     throw new Error(t.error_description || t.error);
   };
   const token = await poll((dc.interval || 5) * 1000);
-  setSecret('githubToken', token);
   const ur = await fetch('https://api.github.com/user', {
     signal, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'Breeze-IDE' },
   });
   if (!ur.ok) throw new Error('GitHub signed you in but did not share your profile. Try again.');
   const u = await ur.json();
-  return { provider: 'GitHub', name: u.name || u.login, login: u.login, email: u.email || null, avatar: u.avatar_url || null };
+  const user = { provider: 'GitHub', name: u.name || u.login, login: u.login, email: u.email || null, avatar: u.avatar_url || null };
+  setSecret(`token:${accountId(user)}`, token);
+  return user;
 }
 
 // Google: authorization code + PKCE through a one-shot loopback server on 127.0.0.1.
+// The page the browser lands on after Google: Breeze's look, with Unbounded headings and Inter text.
+const PAGE_ICON = {
+  ok: '<path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+  fail: '<path d="M12 7.5v5.5M12 16.5v.01" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>',
+};
 function googleRedirectPage(ok) {
-  const title = ok ? 'You are signed in to Breeze' : 'Sign-in did not finish';
-  return `<!doctype html><title>Breeze</title><body style="margin:0;height:100vh;display:grid;place-items:center;background:#000;color:#f5f5f7;font-family:system-ui"><div style="text-align:center"><h2>${title}</h2><p style="color:#a1a1aa">You can close this tab and go back to Breeze.</p></div>`;
+  const title = ok ? 'You’re signed in' : 'Sign-in didn’t finish';
+  const text = ok ? 'Breeze has your account now. You can close this tab and head back to Breeze.' : 'Nothing was changed. Close this tab and try again from Breeze.';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Breeze</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #f5f5f7; font: 15px/1.6 Inter, system-ui, sans-serif;
+    background: radial-gradient(900px 460px at 50% -10%, rgba(0,94,255,.32), transparent 70%), #000; }
+  .card { width: min(440px, 100%); text-align: center; padding: 40px 36px 34px; border-radius: 24px; border: 1px solid rgba(255,255,255,.1);
+    background: rgba(28,28,34,.55); backdrop-filter: blur(22px) saturate(160%); box-shadow: 0 30px 90px rgba(0,0,0,.55); animation: rise .5s cubic-bezier(.2,.8,.2,1); }
+  .badge { width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 20px; display: grid; place-items: center;
+    background: ${ok ? '#005EFF' : '#d97706'}; box-shadow: 0 10px 30px ${ok ? 'rgba(0,94,255,.45)' : 'rgba(217,119,6,.4)'}; }
+  h1 { margin: 0 0 10px; font: 700 26px/1.2 Unbounded, Inter, sans-serif; letter-spacing: -.01em; }
+  p { margin: 0; color: #a1a1aa; }
+  .brand { margin-top: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #6b6b75; font: 600 12px Unbounded, Inter, sans-serif; }
+  .brand svg { color: #005EFF; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+</style></head><body>
+<main class="card">
+  <div class="badge"><svg width="30" height="30" viewBox="0 0 24 24">${ok ? PAGE_ICON.ok : PAGE_ICON.fail}</svg></div>
+  <h1>${title}</h1>
+  <p>${text}</p>
+  <div class="brand"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7a2.5 2.5 0 1 1-2.5 2.5"/></svg>Breeze</div>
+</main></body></html>`;
 }
 function waitForGoogleCode({ clientId, challenge, state }, signal) {
   return new Promise((res, rej) => {
@@ -1070,11 +1191,12 @@ async function googleSignIn({ clientId, clientSecret }, signal) {
   });
   const tok = await tr.json();
   if (!tr.ok) throw new Error(tok.error_description || tok.error || 'Google did not accept the sign-in');
-  if (tok.refresh_token) setSecret('googleToken', tok.refresh_token);
   const ur = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { signal, headers: { Authorization: `Bearer ${tok.access_token}` } });
   if (!ur.ok) throw new Error('Google signed you in but did not share your profile. Try again.');
   const u = await ur.json();
-  return { provider: 'Google', name: u.name || u.email, login: u.email, email: u.email || null, avatar: u.picture || null };
+  const user = { provider: 'Google', name: u.name || u.email, login: u.email, email: u.email || null, avatar: u.picture || null };
+  if (tok.refresh_token) setSecret(`token:${accountId(user)}`, tok.refresh_token);
+  return user;
 }
 
 /* ================= Vibe Mode: social feeds ================= */

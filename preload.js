@@ -11,6 +11,7 @@ const listen = (ch, cb) => {
 contextBridge.exposeInMainWorld('breeze', {
   fs: {
     openFolder: () => invoke('fs:openFolder'),
+    createFolder: () => invoke('fs:createFolder'),
     restore: () => invoke('fs:restore'),
     closeFolder: () => invoke('fs:closeFolder'),
     recent: () => invoke('fs:recent'),
@@ -34,6 +35,7 @@ contextBridge.exposeInMainWorld('breeze', {
     cwd: () => invoke('term:cwd'),
     run: command => invoke('term:run', command),
     kill: id => invoke('term:kill', id),
+    complete: word => invoke('term:complete', word),
     onData: cb => listen('term:data', cb),
     onExit: cb => listen('term:exit', cb),
   },
@@ -41,10 +43,10 @@ contextBridge.exposeInMainWorld('breeze', {
     detect: () => invoke('sys:detect'),
     openExternal: url => invoke('sys:openExternal', url),
   },
-  gemini: {
-    status: () => invoke('gemini:status'),
-    setKey: key => invoke('gemini:setKey', key),
-    clearKey: () => invoke('gemini:clearKey'),
+  llm: {
+    connect: (url, key) => invoke('llm:connect', url, key),
+    setModel: model => invoke('llm:setModel', model),
+    disconnect: () => invoke('llm:disconnect'),
   },
   agent: {
     run: opts => invoke('agent:run', opts),
@@ -68,6 +70,8 @@ contextBridge.exposeInMainWorld('breeze', {
   },
   auth: {
     user: () => invoke('auth:user'),
+    accounts: () => invoke('auth:accounts'),
+    switchTo: id => invoke('auth:switch', id),
     start: provider => invoke('auth:start', provider),
     cancel: () => invoke('auth:cancel'),
     signOut: () => invoke('auth:signOut'),

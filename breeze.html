@@ -41,7 +41,7 @@
 <!-- ================= ONBOARDING ================= -->
 <div class="onboard" id="onboard">
   <div class="drag-strip"></div>
-  <!-- Step 1: Welcome -->
+  <!-- Welcome -->
   <section class="ob-step" data-step="0">
     <svg class="ob-logo" width="72" height="72"><use href="#i-swirl"/></svg>
     <h1>Breeze</h1>
@@ -49,68 +49,77 @@
     <button class="btn btn-primary btn-lg" data-next>Start breezing</button>
   </section>
 
-  <!-- Step 2: Sign in -->
+  <!-- 1 · Login -->
   <section class="ob-step hidden" data-step="1">
     <h2>Sign in to Breeze</h2>
     <p class="lead">Your browser opens to finish signing in, then you're back here.</p>
-    <div id="signinChoices" class="signin-btns">
-      <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
-      <button class="btn" data-signin="Google"><svg width="18" height="18"><use href="#i-google"/></svg>Continue with Google</button>
-      <p class="signin-error hidden" id="signinError" role="alert"></p>
-      <button class="btn btn-ghost btn-sm" id="signinSkip">Continue without signing in</button>
-    </div>
-    <div id="signinWait" class="waiting hidden">
-      <div class="spinner"></div>
-      <div id="signinMsg">Waiting for your browser…</div>
-      <div class="device-code hidden" id="signinCode">
-        <span id="codeText"></span>
-        <button class="btn btn-sm" id="copyCode">Copy</button>
-        <button class="btn btn-sm" id="openCodePage">Open page ↗</button>
+    <div class="signin" id="obSignin">
+      <div class="signin-btns" data-si="choices">
+        <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
+        <button class="btn" data-signin="Google"><svg width="18" height="18"><use href="#i-google"/></svg>Continue with Google</button>
+        <p class="signin-error hidden" data-si="error" role="alert"></p>
+        <button class="btn btn-ghost btn-sm" id="signinSkip">Continue without signing in</button>
       </div>
-      <button class="btn btn-sm" id="signinCancel">Cancel</button>
+      <div class="waiting hidden" data-si="wait">
+        <div class="spinner"></div>
+        <div data-si="msg">Waiting for your browser…</div>
+        <div class="device-code hidden" data-si="code">
+          <span data-si="codeText"></span>
+          <button class="btn btn-sm" data-si="copy">Copy</button>
+          <button class="btn btn-sm" data-si="openPage">Open page ↗</button>
+        </div>
+        <button class="btn btn-sm" data-si="cancel">Cancel</button>
+      </div>
     </div>
   </section>
 
-  <!-- Step 3: Vibe Mode feeds -->
-  <section class="ob-step social hidden" data-step="2">
-    <h2>Vibe while your agents work</h2>
-    <p class="lead">Connect a feed. While an agent writes your code, Breeze fades the editor away and plays your Shorts or Reels, then brings you back when the code is ready.</p>
-    <div class="social-grid" id="socialList"></div>
-    <p class="social-note">Connecting opens the site in a Breeze browser window. You sign in on the site itself, and Breeze only checks whether you're signed in.</p>
-    <div class="row center">
-      <button class="btn btn-ghost" data-next>Skip for now</button>
-      <button class="btn btn-primary btn-lg" data-next>Continue</button>
-    </div>
-  </section>
-
-  <!-- Step 4: Setup -->
-  <section class="ob-step setup hidden" data-step="3">
-    <h2>Let's get you set up</h2>
-    <p class="lead">Every card is optional — come back any time from Settings (the gear icon) → Run Setup Again.</p>
+  <!-- 2 · Agent -->
+  <section class="ob-step setup hidden" data-step="2">
+    <h2>Pick your AI agent</h2>
+    <p class="lead">Breeze hands your requests to an agent on this computer, or to a local LLM server. You can change this any time.</p>
     <div class="setup-grid">
       <div class="setup-card">
-        <header><h3>1 · Your AI agent</h3><span class="row gap-6"><span class="pill" id="aiPill">Scanning…</span><button class="icon-btn" id="rescan" title="Scan again"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></span></header>
+        <header><h3>AI agents</h3><span class="row gap-6"><span class="pill" id="aiPill">Scanning…</span><button class="icon-btn" id="rescan" title="Scan again"><svg width="13" height="13"><use href="#i-refresh"/></svg></button></span></header>
         <p class="muted" id="aiHint">Looking for coding agents installed on this computer…</p>
         <div class="agent-list" id="agentList"></div>
       </div>
       <div class="setup-col">
         <div class="setup-card">
-          <header><h3>2 · Git and Node</h3><span class="pill" id="toolsPill">Scanning…</span></header>
+          <header><h3>Git and Node</h3><span class="pill" id="toolsPill">Scanning…</span></header>
+          <p class="muted">Agents use these to save checkpoints and run your project.</p>
           <div class="row" id="toolList"></div>
         </div>
-        <div class="setup-card">
-          <header><h3>3 · Start a project</h3></header>
-          <div class="seg mb-10">
-            <button class="on" data-seg="describe">Describe it</button><button data-seg="folder">Open a folder</button><button data-seg="blank">Blank</button>
-          </div>
-          <input class="input w-full" id="projPrompt" aria-label="Describe your project" placeholder="e.g. A landing page for my coffee shop" value="">
-          <div class="row hidden" id="projFolderRow">
-            <span class="folder-path" id="projFolder">No folder chosen</span>
-            <button class="btn btn-sm" id="pickFolder">Choose folder…</button>
-          </div>
-        </div>
-        <button class="btn btn-primary btn-lg" id="startBuilding">Start building</button>
+        <button class="btn btn-primary btn-lg w-full" data-next>Continue</button>
       </div>
+    </div>
+  </section>
+
+  <!-- 3 · Mode -->
+  <section class="ob-step mode-step hidden" data-step="3">
+    <h2>How do you want to work?</h2>
+    <p class="lead">Switch between them any time from Settings (the gear icon).</p>
+    <div class="mode-grid">
+      <button class="mode-card on" data-mode="ide">
+        <span class="mode-art ide-art" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="nm">IDE</span>
+        <span class="sub">Files, editor, terminal, preview and agents side by side.</span>
+      </button>
+      <button class="mode-card" data-mode="box">
+        <span class="mode-art box-art" aria-hidden="true"><i></i><i></i></span>
+        <span class="nm">Breeze Box</span>
+        <span class="sub">Just a prompt. Chat with any agent Breeze found, no editor.</span>
+      </button>
+    </div>
+    <div class="setup-card project-card" id="projectCard">
+      <header><h3>Start a project</h3><span class="folder-path" id="projFolder">No folder yet</span></header>
+      <div class="seg">
+        <button id="pickFolder"><svg width="16" height="16"><use href="#i-newdir"/></svg> Open folder</button>
+        <button id="createFolder"><svg width="16" height="16"><use href="#i-newfile"/></svg> Create new</button>
+      </div>
+    </div>
+    <div class="row center mode-actions">
+      <button class="btn btn-ghost btn-sm" id="feedsLink">Vibe Mode feeds…</button>
+      <button class="btn btn-primary btn-lg" id="startBuilding">Start building</button>
     </div>
   </section>
 
@@ -131,7 +140,7 @@
       <button class="icon-btn" id="tglTerm" title="Toggle Panel (Ctrl+`)"><svg width="16" height="16"><use href="#i-bottom"/></svg></button>
       <button class="icon-btn" id="tglAgents" title="Toggle Agents (Ctrl+Alt+B)"><svg width="16" height="16"><use href="#i-right-on"/></svg></button>
     </div>
-    <div class="avatars" id="avatars"><span class="avatar tint-host" title="You (host)">YO</span></div>
+    <button class="avatars" id="avatars" aria-haspopup="menu" title="Account"><span class="avatar tint-host">YO</span></button>
     <button class="btn btn-sm btn-primary" id="shareBtn"><svg class="btn-ico" width="12" height="12"><use href="#i-share"/></svg>&nbsp; Share</button>
   </header>
 
@@ -233,7 +242,7 @@
         </div>
         <div class="term-body" id="termBody">
           <div id="termOut"></div>
-          <div class="term-line"><span class="ps" id="termPs">&gt;</span><input id="termInput" spellcheck="false" autocomplete="off" aria-label="Terminal input"></div>
+          <div class="term-line"><span class="ps" id="termPs">&gt;</span><span class="term-field"><span class="term-ghost" id="termGhost" aria-hidden="true"></span><input id="termInput" spellcheck="false" autocomplete="off" aria-label="Terminal input"></span></div>
         </div>
       </div>
     </section>
@@ -268,6 +277,34 @@
     <span class="sb" id="sbEol">UTF-8</span>
     <span class="sb" id="userChip">—</span>
   </footer>
+</div>
+
+<!-- ================= BREEZE BOX (chat only) ================= -->
+<div class="box hidden" id="box">
+  <header class="titlebar box-bar">
+    <span class="logo"><img src="BreezeIDE.png" alt="Breeze IDE"></span>
+    <span class="box-name">Box</span>
+    <span class="spacer"></span>
+    <button class="btn btn-sm btn-ghost" data-act="chat.new" title="Start a new chat">＋ New chat</button>
+    <button class="btn btn-sm" data-act="mode.ide" title="Switch to the full IDE">Open IDE</button>
+    <button class="icon-btn box-gear" id="boxSettings" title="Settings" aria-haspopup="menu"><svg width="18" height="18"><use href="#i-gear"/></svg></button>
+    <button class="avatars" id="boxAvatar" aria-haspopup="menu" title="Account"></button>
+  </header>
+  <main class="box-main">
+    <div class="box-chat" id="boxChat" aria-live="polite"></div>
+  </main>
+  <div class="box-composer">
+    <div class="composer-box">
+      <textarea id="boxPrompt" rows="2" aria-label="Message to the agent" placeholder="Ask Breeze anything…"></textarea>
+      <div class="row">
+        <button class="pill blue pill-btn" id="boxModel" aria-haspopup="menu" title="Choose the agent">No agent</button>
+        <select class="select" id="boxMode" aria-label="How the agent should work"><option value="ask">Ask (read-only)</option><option value="plan">Plan, then build</option><option value="build">Build directly</option></select>
+        <button class="pill pill-btn box-folder" id="boxFolder" title="The folder the agent works in">No folder</button>
+        <span class="flex-1"></span>
+        <button class="btn btn-primary btn-sm" id="boxSend">Send ↵</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ================= VIBE MODE ================= -->

@@ -34,7 +34,9 @@ interface Diag { line: number; col: number; len: number; msg: string; }
 type SyntaxResult = { ok: true } | (Diag & { eof?: boolean }) | null;
 interface RootInfo { root: string; name: string; }
 interface SearchHit { path: string; line: number; col: number; text: string; }
-interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; }
+interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
+interface Accounts { accounts: User[]; active: string | null; }
+interface Completion { text: string; dir: boolean; }
 interface DetectedTool { id: string; name: string; found: boolean; version: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 interface Rect { x: number; y: number; width: number; height: number; }
@@ -42,6 +44,7 @@ interface Rect { x: number; y: number; width: number; height: number; }
 interface BreezeApi {
   fs: {
     openFolder(): Promise<RootInfo | null>;
+    createFolder(): Promise<RootInfo | null>;
     restore(): Promise<RootInfo | null>;
     closeFolder(): Promise<void>;
     recent(): Promise<{ path: string; name: string }[]>;
@@ -63,13 +66,15 @@ interface BreezeApi {
     cwd(): Promise<string>;
     run(command: string): Promise<{ id?: number; cwd?: string; error?: string }>;
     kill(id: number): Promise<void>;
+    complete(word: string): Promise<Completion[]>;
     onData(cb: (id: number, chunk: string) => void): () => void;
     onExit(cb: (id: number, code: number | null) => void): () => void;
   };
   sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; };
-  gemini: { status(): Promise<{ hasKey: boolean; model: string | null }>; setKey(key: string): Promise<{ model: string }>; clearKey(): Promise<void>; };
+  // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
+  llm: { connect(url: string, key: string): Promise<{ model: string; models: string[] }>; setModel(model: string): Promise<void>; disconnect(): Promise<void>; };
   agent: {
-    run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null }): Promise<number>;
+    run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null; box?: boolean }): Promise<number>;
     stop(runId: number): Promise<void>;
     openApp(id: string): Promise<void>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
@@ -90,9 +95,11 @@ interface BreezeApi {
   };
   auth: {
     user(): Promise<User | null>;
+    accounts(): Promise<Accounts>;
+    switchTo(id: string): Promise<User>;
     start(provider: string): Promise<{ started?: boolean; error?: string }>;
     cancel(): Promise<void>;
-    signOut(): Promise<void>;
+    signOut(): Promise<User | null>;
     onEvent(cb: (ev: AuthEvent) => void): () => void;
   };
   // Social feeds for Vibe Mode. The desktop app signs in through its own browser window and lays the feed over #vibeFrame.
@@ -259,7 +266,10 @@ function demoApi(): BreezeApi {
   const files = new Map(Object.entries(DEMO_FILES));
   const binary = new Set(['assets/beans.jpg']);
   const dirs = new Set(['assets']);
-  const info: RootInfo = { root: 'demo:/coffee-shop-landing', name: 'coffee-shop-landing' };
+  let info: RootInfo = { root: 'demo:/coffee-shop-landing', name: 'coffee-shop-landing' };
+  let accounts: User[] = [];
+  let current: User | null = null;
+  const accountKey = (u: User) => u.provider + ':' + (u.login ?? '');
   const under = (p: string, rel: string) => (rel ? p.startsWith(rel + '/') : true);
   const exists = (p: string) => files.has(p) || dirs.has(p);
   const inside = (k: string, rel: string) => k === rel || k.startsWith(rel + '/');
@@ -268,6 +278,14 @@ function demoApi(): BreezeApi {
   return {
     fs: {
       async openFolder() { store.set('breeze.demoOpen', true); return info; },
+      // Browser preview: a new, empty in-memory project.
+      async createFolder() {
+        files.clear(); dirs.clear(); binary.clear();
+        files.set('README.md', '# My Breeze project\n');
+        info = { root: 'demo:/my-breeze-project', name: 'my-breeze-project' };
+        store.set('breeze.demoOpen', true);
+        return info;
+      },
       async restore() { return store.get('breeze.demoOpen', false) ? info : null; },
       async closeFolder() { store.del('breeze.demoOpen'); },
       async recent() { return [{ path: info.root, name: info.name }]; },
@@ -331,20 +349,24 @@ function demoApi(): BreezeApi {
       async cwd() { return 'coffee-shop-landing'; },
       async run() { return { error: 'The terminal runs commands only in the Breeze desktop app (npm start).' }; },
       async kill() { /* nothing runs in the browser */ },
+      async complete(word) {
+        const names = [...new Set([...files.keys(), ...dirs].map(p => p.split('/')[0]))];
+        return names.filter(n => n.toLowerCase().startsWith(word.toLowerCase())).sort((a, b) => a.localeCompare(b)).map(n => ({ text: dirs.has(n) ? n + '/' : n, dir: dirs.has(n) }));
+      },
       onData() { return () => {}; },
       onExit() { return () => {}; },
     },
     sys: {
       async detect() {
         await wait(500);
-        const demoKey = store.get('breeze.demoKey', false);
+        const llm = store.get<string | null>('breeze.demoLlm', null);
         return {
           demo: true, platform: 'browser',
           agents: [
             { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', url: 'https://claude.com/product/claude-code', found: true, path: null, version: null },
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
             { id: 'antigravity', name: 'Antigravity', vendor: 'Google', url: 'https://antigravity.google', found: false, path: null, version: null },
-            { id: 'gemini', name: 'Gemini', vendor: 'Google', url: 'https://aistudio.google.com/apikey', api: true, found: demoKey, path: null, version: demoKey ? 'gemini-flash-latest' : null },
+            { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null }],
         };
@@ -352,15 +374,15 @@ function demoApi(): BreezeApi {
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
     },
     // Browser preview only: canned answers so every panel can be tried without the desktop app.
-    gemini: {
-      async status() { return { hasKey: store.get('breeze.demoKey', false), model: 'gemini-flash-latest' }; },
-      async setKey(key) {
-        await wait(600);
-        if (key.trim().length < 10) throw new Error('API key not valid. Please pass a valid API key.');
-        store.set('breeze.demoKey', true);
-        return { model: 'gemini-flash-latest' };
+    llm: {
+      async connect(url) {
+        await wait(500);
+        if (!/^https?:\/\/\S+/i.test(url.trim())) throw new Error('Enter the server address, for example http://localhost:11434/v1');
+        store.set('breeze.demoLlm', 'llama3.1');
+        return { model: 'llama3.1', models: ['llama3.1', 'qwen2.5-coder'] };
       },
-      async clearKey() { store.del('breeze.demoKey'); },
+      async setModel(model) { store.set('breeze.demoLlm', model); },
+      async disconnect() { store.del('breeze.demoLlm'); },
     },
     agent: {
       async run({ mode }) {
@@ -397,13 +419,30 @@ function demoApi(): BreezeApi {
       async sync() { throw new Error('Push and pull work in the desktop app.'); },
     },
     auth: {
-      async user() { return null; },
+      async user() { return current; },
+      async accounts() { return { accounts, active: current ? accountKey(current) : null }; },
+      async switchTo(id) {
+        const u = accounts.find(a => accountKey(a) === id);
+        if (!u) throw new Error('That account is no longer signed in');
+        current = u;
+        return u;
+      },
       async start(provider) {
-        setTimeout(() => authListeners.forEach(cb => cb({ t: 'done', user: { provider, name: 'Demo user', login: 'demo' } })), 1400);
+        const n = accounts.filter(a => a.provider === provider).length + 1;
+        const user: User = { provider, name: `Demo ${provider} ${n}`, login: 'demo' + n };
+        setTimeout(() => {
+          accounts = [...accounts, user];
+          current = user;
+          authListeners.forEach(cb => cb({ t: 'done', user }));
+        }, 1400);
         return { started: true };
       },
       async cancel() { /* the demo sign-in finishes by itself */ },
-      async signOut() { /* nothing is stored */ },
+      async signOut() {
+        accounts = accounts.filter(a => a !== current);
+        current = accounts[0] ?? null;
+        return current;
+      },
       onEvent(cb) { authListeners.push(cb); return () => {}; },
     },
     // Browser preview: "connecting" opens the site in a new tab; the feed itself only plays in the desktop app.
@@ -444,86 +483,155 @@ const isDesktop = !!window.breeze;
 const api: BreezeApi = window.breeze ?? demoApi();
 
 /* ================= App state (survives reloads) ================= */
+type WorkMode = 'ide' | 'box';
 interface AppState {
   onboarded: boolean; step: number; user: User | null; agent: string | null; detect: Detection | null;
-  vibeArmed: boolean; vibeSites: string[]; vibeSite: string | null;
+  vibeArmed: boolean; vibeSites: string[]; vibeSite: string | null; mode: WorkMode;
 }
 const appState: AppState = {
-  onboarded: false, step: 0, user: null, agent: null, detect: null, vibeArmed: false, vibeSites: [], vibeSite: null,
+  onboarded: false, step: 0, user: null, agent: null, detect: null, vibeArmed: false, vibeSites: [], vibeSite: null, mode: 'ide',
   ...store.get<Partial<AppState>>('breeze.app', {}),
 };
 const saveApp = () => store.set('breeze.app', appState);
 
-/* ================= Onboarding ================= */
-const STEP = { welcome: 0, signIn: 1, feeds: 2, setup: 3 };
-let step = appState.step;
+/* ================= Onboarding: welcome → login → agent → mode ================= */
+const STEP = { welcome: 0, signIn: 1, agent: 2, mode: 3 };
+let step = Math.min(appState.step, STEP.mode);
 let user: User | null = appState.user;
 function goStep(n: number): void {
   step = n; appState.step = n; saveApp();
   $$('.ob-step').forEach(s => s.classList.toggle('hidden', Number(s.dataset.step) !== n));
   $$('.ob-dots span').forEach((d, i) => d.classList.toggle('on', i === n));
-  if (n === STEP.feeds) void renderFeedChoices($('#socialList'));
-  if (n === STEP.setup) {
-    detectTools().catch(() => { /* the setup card shows the error */ });
-    renderProjectChoice();
-  }
+  if (n === STEP.agent) detectTools().catch(() => { /* the agent card shows the error */ });
+  if (n === STEP.mode) renderModeChoice();
 }
 $$('[data-next]').forEach(b => b.onclick = () => goStep(step + 1));
 
-/* ----- Sign in (GitHub device flow / Google loopback, handled in main.js) ----- */
+/* ----- Accounts ----- */
 function setUser(u: User | null): void {
   user = u; appState.user = u; saveApp();
   renderUser();
 }
 const initialsOf = (name: string) => name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+function avatarHtml(u: User | null, title: string): string {
+  const name = u?.name ?? 'You';
+  if (u?.avatar) return `<img class="avatar" src="${escAttr(u.avatar)}" alt="" title="${escAttr(title)}">`;
+  return `<span class="avatar tint-host" title="${escAttr(title)}">${esc(initialsOf(name))}</span>`;
+}
 function renderUser(): void {
-  const name = user?.name ?? 'You';
-  const me = user?.avatar
-    ? `<img class="avatar" src="${escAttr(user.avatar)}" alt="" title="${escAttr(name)} (host)">`
-    : `<span class="avatar tint-host" title="${escAttr(name)} (host)">${esc(initialsOf(name))}</span>`;
+  const title = user ? `${user.name} · ${user.provider}` : 'Not signed in';
   const others = guests.map(g => `<span class="avatar tint-${g.tint}" title="${g.name} (${g.role})">${g.name.slice(0, 2).toUpperCase()}</span>`);
-  $('#avatars').innerHTML = me + others.join('');
+  $('#avatars').innerHTML = avatarHtml(user, title + ' (host)') + others.join('');
+  $('#boxAvatar').innerHTML = avatarHtml(user, title);
   $('#userChip').textContent = user ? `● ${user.name} · ${user.provider}` : 'Not signed in';
 }
+let accounts: Accounts = { accounts: [], active: null };
+const accountKey = (u: User) => `${u.provider}:${u.login ?? ''}`;
+async function refreshAccounts(): Promise<void> {
+  accounts = await api.auth.accounts().catch(() => accounts);
+}
+async function switchAccount(a: User): Promise<void> {
+  if (accountKey(a) === accounts.active) return;
+  setUser(await api.auth.switchTo(accountKey(a)));
+  await refreshAccounts();
+  toast(`Switched to ${a.name}`);
+}
+async function signOut(): Promise<void> {
+  const next = await api.auth.signOut();
+  setUser(next);
+  await refreshAccounts();
+  toast(next ? `Signed out — now using ${next.name}` : 'Signed out');
+}
+function accountItems(): MenuItem[] {
+  const list: MenuItem[] = accounts.accounts.map(a => ({
+    label: a.name, key: a.provider, checked: () => accountKey(a) === accounts.active, run: () => background(switchAccount(a)),
+  }));
+  return [...list, ...(list.length ? [{ sep: true }] : []), { label: 'Add account…', run: addAccount }];
+}
+// Clicking your picture: who you are, your other accounts (in a submenu) and signing out.
+function openAccountMenu(anchor: HTMLElement): void {
+  const r = anchor.getBoundingClientRect();
+  const items: MenuItem[] = user
+    ? [{ header: user }, { label: 'Accounts', sub: accountItems }, { sep: true }, { label: 'Sign Out', run: () => background(signOut()) }]
+    : [{ label: 'Sign In…', run: addAccount }, ...(accounts.accounts.length ? [{ label: 'Accounts', sub: accountItems }] : [])];
+  popupMenu(r.right - 260, r.bottom + 6, items);
+}
+for (const id of ['#avatars', '#boxAvatar']) {
+  $(id).onclick = e => {
+    if (openMenuIdx === -2) { closeMenu(); return; }
+    const anchor = e.currentTarget as HTMLElement; // gone from the event once we've awaited
+    background(refreshAccounts().then(() => openAccountMenu(anchor)));
+  };
+}
+
+/* ----- Sign in (GitHub device flow / Google loopback, handled in main.js) ----- */
+// The onboarding step and the "Add account" dialog share this panel; signinRoot is the one in use.
+const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
+    <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
+    <button class="btn" data-signin="Google"><svg width="18" height="18"><use href="#i-google"/></svg>Continue with Google</button>
+    <p class="signin-error hidden" data-si="error" role="alert"></p>
+  </div>
+  <div class="waiting hidden" data-si="wait">
+    <div class="spinner"></div><div data-si="msg">Waiting for your browser…</div>
+    <div class="device-code hidden" data-si="code"><span data-si="codeText"></span><button class="btn btn-sm" data-si="copy">Copy</button><button class="btn btn-sm" data-si="openPage">Open page ↗</button></div>
+    <button class="btn btn-sm" data-si="cancel">Cancel</button>
+  </div>`;
+const onboardSignin = $('#obSignin');
+let signinRoot = onboardSignin;
+const si = (part: string) => $(`[data-si="${part}"]`, signinRoot);
 function signinView(waiting: boolean): void {
-  $('#signinChoices').classList.toggle('hidden', waiting);
-  $('#signinWait').classList.toggle('hidden', !waiting);
-  if (waiting) { $('#signinError').classList.add('hidden'); $('#signinCode').classList.add('hidden'); }
+  si('choices').classList.toggle('hidden', waiting);
+  si('wait').classList.toggle('hidden', !waiting);
+  if (waiting) { si('error').classList.add('hidden'); si('code').classList.add('hidden'); }
 }
 function signinError(text: string): void {
   signinView(false);
-  $('#signinError').textContent = text;
-  $('#signinError').classList.remove('hidden');
+  si('error').textContent = text;
+  si('error').classList.remove('hidden');
 }
 async function startSignIn(provider: string): Promise<void> {
   signinView(true);
-  $('#signinMsg').textContent = `Opening ${provider} in your browser…`;
-  const r = await api.auth.start(provider).catch(e => ({ error: errMsg(e) }) as { error?: string });
+  si('msg').textContent = `Opening ${provider} in your browser…`;
+  const r = await api.auth.start(provider).catch((e: unknown) => ({ error: errMsg(e) }) as { error?: string });
   if (r.error === 'not-configured') {
     signinError(`Looks like ${provider} login isn't hooked up yet! Grab a Client ID, add it to .env (or breeze.config.json — there's an example config to help), and give Breeze a restart. Or, skip it for now and jump right in.`);
   } else if (r.error) signinError(r.error);
 }
-$$('[data-signin]').forEach(b => b.onclick = () => startSignIn(b.dataset.signin ?? 'GitHub'));
-$('#signinCancel').onclick = () => { background(api.auth.cancel()); signinView(false); };
-$('#signinSkip').onclick = () => goStep(STEP.feeds);
-$('#copyCode').onclick = () => { navigator.clipboard?.writeText($('#codeText').textContent ?? '').catch(() => toast('Copy failed')); toast('Code copied'); };
+function bindSignin(root: HTMLElement): void {
+  $$('[data-signin]', root).forEach(b => b.onclick = () => void startSignIn(b.dataset.signin ?? 'GitHub'));
+  $('[data-si="cancel"]', root).onclick = () => { background(api.auth.cancel()); signinView(false); };
+  $('[data-si="copy"]', root).onclick = () => background(navigator.clipboard.writeText(si('codeText').textContent ?? '').then(() => toast('Code copied')));
+}
+bindSignin(onboardSignin);
+$('#signinSkip').onclick = () => goStep(STEP.agent);
+function addAccount(): void {
+  openModal(`<h3>Add an account</h3><p class="sub">Sign in with another GitHub or Google account. Switch between accounts from your picture in the title bar.</p><div class="signin-modal">${SIGNIN_PANEL}</div>`, m => {
+    signinRoot = $('.signin-modal', m);
+    bindSignin(signinRoot);
+  }, () => {
+    if (!si('wait').classList.contains('hidden')) background(api.auth.cancel());
+    signinRoot = onboardSignin;
+  });
+}
 api.auth.onEvent(ev => {
   if (ev.t === 'code') {
-    $('#signinMsg').textContent = 'Enter this code on the GitHub page that just opened:';
-    $('#codeText').textContent = ev.code ?? '';
-    $('#signinCode').classList.remove('hidden');
-    $('#openCodePage').onclick = () => background(api.sys.openExternal(ev.uri ?? 'https://github.com/login/device'));
+    si('msg').textContent = 'Enter this code on the GitHub page that just opened:';
+    si('codeText').textContent = ev.code ?? '';
+    si('code').classList.remove('hidden');
+    si('openPage').onclick = () => background(api.sys.openExternal(ev.uri ?? 'https://github.com/login/device'));
   } else if (ev.t === 'waiting') {
-    $('#signinMsg').textContent = `Finish signing in with ${ev.provider} in your browser…`;
+    si('msg').textContent = `Finish signing in with ${ev.provider} in your browser…`;
   } else if (ev.t === 'done' && ev.user) {
     setUser(ev.user);
     signinView(false);
+    background(refreshAccounts());
     toast(`Signed in as ${ev.user.name}`);
-    if (!appState.onboarded && step === STEP.signIn) goStep(STEP.feeds);
+    if (signinRoot === onboardSignin) { if (!appState.onboarded && step === STEP.signIn) goStep(STEP.agent); }
+    else closeModal();
   } else if (ev.t === 'error') signinError(ev.text ?? 'Sign-in failed');
 });
 
-/* ----- Vibe Mode feeds (onboarding step and picker) ----- */
+/* ----- Vibe Mode feeds (the feed picker) ----- */
 // Sites the user connected live in appState.vibeSites; signedIn says which of them have a session cookie.
 let signedIn: Record<string, boolean> = {};
 const siteById = (id: string | null) => SOCIAL_SITES.find(s => s.id === id);
@@ -580,7 +688,7 @@ const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
   claude: { letter: 'C', tint: 'claude' },
   codex: { letter: 'Cx', tint: 'codex' },
   antigravity: { letter: 'A', tint: 'antigravity' },
-  gemini: { letter: 'G', tint: 'gemini' },
+  local: { letter: 'L', tint: 'local' },
 };
 let detecting: Promise<Detection> | null = null;
 
@@ -609,18 +717,28 @@ function fixSelectedAgent(): void {
 }
 
 const pillClass = (on: boolean) => (on ? 'blue' : 'ok');
-function apiAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
-  const pill = `<span class="pill ${pillClass(on)}">${on ? 'Selected' : 'Ready'}</span>`;
-  const side = a.found
-    ? `<span class="side row gap-6">${pill}<button class="get" data-clearkey title="Remove the saved key">Remove</button></span>`
-    : `<button class="get side" data-get="${escAttr(a.url)}">Get a key ↗</button>`;
-  const model = a.version ? ' · ' + a.version : '';
-  const sub = a.found ? 'API key saved securely' + model : 'Uses your own Google AI Studio API key';
-  const keyRow = '<div class="key-row"><input class="input" type="password" aria-label="Gemini API key" placeholder="Paste your Gemini API key" autocomplete="off" spellcheck="false" data-key><button class="btn btn-sm" data-savekey>Save key</button></div><div class="key-err hidden"></div>';
-  const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
-  return `<div class="agent-opt api ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
-    ${mark}<span class="nm">${esc(a.name)} <small>API</small></span>${side}
-    <span class="sub">${esc(sub)}</span>${a.found ? '' : keyRow}</div>`;
+const LLM_DEFAULT_URL = 'http://localhost:11434/v1';
+function trimSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === '/') end--;
+  return s.slice(0, end);
+}
+// The local LLM card: server address to connect, or (once connected) its address and a model picker.
+function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
+  const name = `<span class="nm">${esc(a.name)} <small>API</small></span>`;
+  if (!a.found) {
+    return `<div class="agent-opt api missing">${mark}${name}
+      <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ↗</button>
+      <span class="sub">Ollama, LM Studio or any OpenAI-compatible server</span>
+      <div class="key-row"><input class="input url" data-llm-url aria-label="Server address" placeholder="${LLM_DEFAULT_URL}" value="${LLM_DEFAULT_URL}" spellcheck="false"><input class="input" type="password" data-llm-key aria-label="API key (optional)" placeholder="API key (optional)" autocomplete="off"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
+      <div class="key-err hidden"></div></div>`;
+  }
+  const label = on ? 'Selected' : 'Ready';
+  const options = (a.models ?? []).map(m => `<option value="${escAttr(m)}"${m === a.version ? ' selected' : ''}>${esc(m)}</option>`).join('');
+  return `<div class="agent-opt api ${on ? 'on' : ''}" role="button" tabindex="0" data-agent="${a.id}">${mark}${name}
+    <span class="side row gap-6"><span class="pill ${pillClass(on)}">${label}</span><button class="get" data-llm-off title="Forget this server">Remove</button></span>
+    <span class="sub" title="${escAttr(a.path ?? '')}">${esc(a.path ?? '')}</span>
+    <div class="key-row"><select class="select" data-llm-model aria-label="Model">${options}</select></div></div>`;
 }
 function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean): string {
   const where = a.path ?? (demo ? 'browser preview' : '');
@@ -640,38 +758,43 @@ function agentOptionsHtml(d: Detection): string {
     const st = AGENT_STYLE[a.id] ?? { letter: a.name[0], tint: 'default' };
     const on = a.found && a.id === appState.agent;
     const mark = `<span class="mark tint-${st.tint}">${st.letter}</span>`;
-    return a.api ? apiAgentHtml(a, on, mark) : cliAgentHtml(a, on, mark, !!d.demo);
+    return a.api ? localAgentHtml(a, on, mark) : cliAgentHtml(a, on, mark, !!d.demo);
   }).join('');
 }
-function bindGeminiKey(root: HTMLElement, onChange: () => void): void {
-  const input = root.querySelector<HTMLInputElement>('[data-key]');
-  const saveBtn = root.querySelector<HTMLButtonElement>('[data-savekey]');
-  const gemini = () => appState.detect?.agents.find(a => a.id === 'gemini');
-  if (input && saveBtn) {
+function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
+  const local = () => appState.detect?.agents.find(a => a.id === 'local');
+  const connect = root.querySelector<HTMLButtonElement>('[data-llm-connect]');
+  if (connect) {
+    const url = $<HTMLInputElement>('[data-llm-url]', root), key = $<HTMLInputElement>('[data-llm-key]', root);
     const save = async () => {
       const err = root.querySelector<HTMLElement>('.key-err');
-      saveBtn.disabled = true; saveBtn.textContent = 'Checking…';
+      connect.disabled = true; connect.textContent = 'Connecting…';
       try {
-        const { model } = await api.gemini.setKey(input.value);
-        const g = gemini();
-        if (g) { g.found = true; g.version = model; }
-        if (!selectedAgent()) appState.agent = 'gemini';
+        const r = await api.llm.connect(url.value, key.value);
+        Object.assign(local() ?? {}, { found: true, path: trimSlashes(url.value.trim()), version: r.model, models: r.models });
+        if (!selectedAgent()) appState.agent = 'local';
         saveApp();
-        toast('Gemini key saved');
+        toast(`Connected · ${r.model}`);
         onChange();
       } catch (e) {
-        saveBtn.disabled = false; saveBtn.textContent = 'Save key';
+        connect.disabled = false; connect.textContent = 'Connect';
         if (err) { err.textContent = errMsg(e); err.classList.remove('hidden'); }
       }
     };
-    saveBtn.onclick = save;
-    input.onkeydown = e => { if (e.key === 'Enter') void save(); };
+    connect.onclick = () => void save();
+    for (const input of [url, key]) input.onkeydown = e => { if (e.key === 'Enter') void save(); };
   }
-  root.querySelector<HTMLElement>('[data-clearkey]')?.addEventListener('click', e => {
+  const model = root.querySelector<HTMLSelectElement>('[data-llm-model]');
+  if (model) model.onchange = () => background(api.llm.setModel(model.value).then(() => {
+    Object.assign(local() ?? {}, { version: model.value });
+    saveApp();
+    renderAgentPill();
+    toast(`Local LLM model · ${model.value}`);
+  }));
+  root.querySelector<HTMLElement>('[data-llm-off]')?.addEventListener('click', e => {
     e.stopPropagation();
-    background(api.gemini.clearKey().then(() => {
-      const g = gemini();
-      if (g) { g.found = false; g.version = null; }
+    background(api.llm.disconnect().then(() => {
+      Object.assign(local() ?? {}, { found: false, path: null, version: null, models: [] });
       fixSelectedAgent();
       onChange();
     }));
@@ -680,11 +803,11 @@ function bindGeminiKey(root: HTMLElement, onChange: () => void): void {
 function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
   $$('[data-agent]', root).forEach(el => {
     const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onChange(); };
-    el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input')) pick(); };
+    el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input, select')) pick(); };
     el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); pick(); } };
   });
   $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
-  bindGeminiKey(root, onChange);
+  bindLocalLlm(root, onChange);
 }
 
 const TOOL_DOWNLOADS: Record<string, string> = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
@@ -702,8 +825,8 @@ function renderDetection(): void {
   $('#aiPill').className = found.length ? 'pill ok' : 'pill warn';
   $('#aiPill').textContent = found.length ? `${found.length} ready` : 'None ready';
   $('#aiHint').textContent = found.length
-    ? 'Pick the agent Breeze hands work to. Installed agents use their own sign-in; Gemini uses your API key.'
-    : 'No coding agent found. Install one and rescan, or paste a Gemini API key.';
+    ? 'Pick the agent Breeze hands work to. Installed agents use their own sign-in; a local LLM runs on your own computer.'
+    : 'No coding agent found. Install one and rescan, or connect a local LLM server.';
   if (d.demo) $('#aiHint').textContent += ' (Browser preview.)';
 
   $('#toolList').innerHTML = d.tools.map(toolHtml).join('');
@@ -716,7 +839,7 @@ function renderDetection(): void {
   $('#sbTools').innerHTML = `<span class="${missing.length ? 'dot-warn' : 'dot-ok'}"></span> ${summary}`;
   renderAgentPill();
 }
-$('#rescan').onclick = () => { detectTools().catch(() => { /* the setup card shows the error */ }); };
+$('#rescan').onclick = () => { detectTools().catch(() => { /* the agent card shows the error */ }); };
 
 function selectedAgent(): DetectedAgent | null {
   return appState.detect?.agents.find(a => a.id === appState.agent && a.found) ?? null;
@@ -728,12 +851,14 @@ function modelLabel(a: DetectedAgent | null): string {
 function renderAgentPill(): void {
   const a = selectedAgent();
   $('#agentPill').textContent = a ? a.name : 'Choose an agent';
+  const model = a?.api && a.version ? ' · ' + a.version : '';
+  $('#boxModel').textContent = a ? `${a.name}${model} ▾` : 'Choose an agent ▾';
   agentsDef.planner.model = agentsDef.builder.model = modelLabel(a);
   renderAgents();
 }
 $('#agentPill').onclick = openAgentPicker;
 function openAgentPicker(): void {
-  openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. Gemini works with an API key.</p>
+  openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. A local LLM connects by its server address.</p>
     <div class="agent-list" id="pickList"></div>
     <div class="row between spaced"><button class="btn btn-sm btn-ghost" id="pickRescan">Scan again</button><button class="btn btn-primary" data-close>Done</button></div>`, m => {
     const scanning = '<div class="text-3">Scanning…</div>';
@@ -743,32 +868,40 @@ function openAgentPicker(): void {
       bindAgentOptions($('#pickList', m), () => { render(); renderDetection(); });
     };
     render();
-    $('#pickRescan', m).onclick = () => { $('#pickList', m).innerHTML = scanning; detectTools().then(render, () => { /* the setup card shows the error */ }); };
+    $('#pickRescan', m).onclick = () => { $('#pickList', m).innerHTML = scanning; detectTools().then(render, () => { /* shown in the agent card */ }); };
   });
 }
 
-/* ----- Start a project ----- */
-let projMode = 'describe';
-function renderProjectChoice(): void {
-  $$('[data-seg]').forEach(x => x.classList.toggle('on', x.dataset.seg === projMode));
-  $('#projPrompt').classList.toggle('hidden', projMode !== 'describe');
-  $('#projFolderRow').classList.toggle('hidden', projMode !== 'folder');
-  $('#projFolder').textContent = rootInfo ? rootInfo.root : 'No folder chosen';
+/* ----- Mode: IDE or Breeze Box, and the project to start with ----- */
+function renderModeChoice(): void {
+  $$('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === appState.mode));
+  $('#projFolder').textContent = rootInfo ? rootInfo.root : 'No folder yet';
+  $('#projFolder').title = rootInfo?.root ?? '';
+  $('#startBuilding').textContent = appState.mode === 'box' ? 'Open Breeze Box' : 'Start building';
 }
-$$('[data-seg]').forEach(b => b.onclick = () => { projMode = b.dataset.seg ?? 'describe'; renderProjectChoice(); });
-$('#pickFolder').onclick = () => background(api.fs.openFolder().then(async r => {
+$$('[data-mode]').forEach(b => b.onclick = () => {
+  appState.mode = b.dataset.mode === 'box' ? 'box' : 'ide';
+  saveApp();
+  renderModeChoice();
+});
+// "Open folder" picks an existing folder; "Create new" makes a new, empty project folder. Both open it.
+async function chooseProject(create: boolean): Promise<void> {
+  const r = await (create ? api.fs.createFolder() : api.fs.openFolder());
   if (!r) return;
   await loadWorkspace(r);
-  renderProjectChoice();
-}));
+  renderModeChoice();
+  toast(create ? `Created ${r.name}` : `Opened ${r.name}`);
+}
+$('#pickFolder').onclick = () => background(chooseProject(false));
+$('#createFolder').onclick = () => background(chooseProject(true));
+$('#feedsLink').onclick = () => openFeedPicker();
 $('#startBuilding').onclick = () => {
   appState.onboarded = true; saveApp();
-  showIde();
-  const p = $<HTMLInputElement>('#projPrompt').value.trim();
-  if (projMode === 'describe' && p) $<HTMLTextAreaElement>('#prompt').value = p;
+  enterMode(appState.mode);
 };
 function showIde(): void {
-  $('#onboard').classList.add('hidden'); $('#ide').classList.remove('hidden');
+  $('#onboard').classList.add('hidden'); $('#box').classList.add('hidden'); $('#ide').classList.remove('hidden');
+  useSurface('ide');
   renderUser();
   applyLayout();
   renderEditor();
@@ -1447,7 +1580,8 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   }
   active = s.active && openTabs.includes(s.active) ? s.active : openTabs[0] ?? null;
   renderTabs(); renderEditor(); renderTree();
-  restoreChat();
+  restoreChat(SURFACES.ide);
+  renderBoxFolder();
   void refreshGit();
   term.cwd = await api.term.cwd(); renderPs();
 }
@@ -1542,7 +1676,12 @@ function createTextarea(b: Buffer): HTMLTextAreaElement {
     if (wasDirty !== isDirty(b)) { renderTabs(); renderTree(); }
     if (findOpen) runFind(false);
     queueRender(); saveSession(); scheduleLint(b);
+    // Suggest words while typing one; any other edit closes the list.
+    if (b.lastEdit?.kind === 'type' && Date.now() - b.lastEdit.at < 100) editorSuggest(b); else hideSuggest();
   });
+  ta.addEventListener('blur', hideSuggest);
+  ta.addEventListener('mousedown', hideSuggest);
+  ta.addEventListener('scroll', () => { if (suggest?.owner === ta) editorSuggest(b); }); // follow the caret
   ta.addEventListener('scroll', syncScroll);
   ta.addEventListener('keydown', editorKeys);
   for (const ev of ['keyup', 'mouseup', 'select', 'selectionchange', 'focus']) ta.addEventListener(ev, updateCaret);
@@ -1845,6 +1984,50 @@ $('#tabs').addEventListener('auxclick', e => {
   if (tab && e.button === 1) closeTab(tab.dataset.tab as string);
 });
 
+// Closes several tabs at once, asking once about any unsaved ones.
+function closeTabs(paths: string[]): void {
+  const dirty = paths.map(p => buffers.get(p)).filter((b): b is Buffer => isDirty(b));
+  const finish = () => {
+    for (const p of paths) dropTab(p);
+    renderTabs(); renderEditor(); renderTree(); saveSession();
+  };
+  if (!dirty.length) { finish(); return; }
+  openModal(`<h3>Save changes to ${plural(dirty.length, 'file')}?</h3><p class="sub">${dirty.map(b => esc(b.path)).join('<br>')}</p>
+    <div class="row end"><button class="btn" data-close>Cancel</button><button class="btn" id="tabsDontSave">Don't Save</button><button class="btn btn-primary" id="tabsSave">Save</button></div>`, m => {
+    $('#tabsDontSave', m).onclick = () => { closeModal(); finish(); };
+    $('#tabsSave', m).onclick = () => {
+      closeModal();
+      background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => { if (saved.every(Boolean)) finish(); }));
+    };
+  });
+}
+// Shows a file in the explorer, opening the folders above it.
+function revealInTree(p: string): void {
+  for (let d = dirName(p); d; d = dirName(d)) expanded.add(d);
+  showView('files', true);
+  background(refreshTree().then(() => $$('#tree [data-path]').find(el => el.dataset.path === p)?.scrollIntoView({ block: 'nearest' })));
+}
+// Right-clicking a tab: close it, the others, the ones to its right, the saved ones or all of them.
+$('#tabs').addEventListener('contextmenu', e => {
+  const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
+  if (!tab) return;
+  e.preventDefault();
+  const p = tab.dataset.tab as string;
+  const others = openTabs.filter(x => x !== p);
+  const right = openTabs.slice(openTabs.indexOf(p) + 1);
+  const saved = openTabs.filter(x => !isDirty(buffers.get(x)));
+  popupMenu(e.clientX, e.clientY, [
+    { label: 'Close', key: 'Ctrl+W', run: () => closeTab(p) },
+    { label: 'Close Other Tabs', enabled: () => others.length > 0, run: () => closeTabs(others) },
+    { label: 'Close Tabs to the Right', enabled: () => right.length > 0, run: () => closeTabs(right) },
+    { label: 'Close Saved Tabs', enabled: () => saved.length > 0, run: () => closeTabs(saved) },
+    { label: 'Close All Tabs', run: () => closeTabs([...openTabs]) },
+    { sep: true },
+    { label: 'Copy Relative Path', run: () => background(navigator.clipboard.writeText(p).then(() => toast('Path copied'))) },
+    { label: 'Reveal in Explorer', run: () => revealInTree(p) },
+  ]);
+});
+
 /* ----- Dragging tabs to reorder them ----- */
 // The dragged tab follows the pointer; once its middle passes a neighbour's middle the two swap,
 // and the neighbour slides into its new place.
@@ -1993,6 +2176,7 @@ function editorNote(b: Buffer): string {
   return `This file is too large to open (${(b.size / 1048576).toFixed(1)} MB).`;
 }
 function renderEditor(): void {
+  hideSuggest();
   const b = activeBuf();
   for (const x of buffers.values()) x.ta?.classList.toggle('hidden', x !== b);
   const empty = $('#editorEmpty');
@@ -2242,6 +2426,8 @@ function editorKeys(e: KeyboardEvent): void {
   const ta = e.target as HTMLTextAreaElement;
   const b = textareaOwner.get(ta);
   const k = e.key.toLowerCase();
+  if (suggestKeys(e, ta)) return;
+  if (b && e.ctrlKey && e.key === ' ') { e.preventDefault(); editorSuggest(b, true); return; }
   if (b && (e.ctrlKey || e.metaKey) && !e.altKey && (k === 'z' || k === 'y')) {
     e.preventDefault();
     stepHistory(b, k === 'z' && !e.shiftKey);
@@ -2535,6 +2721,7 @@ async function runCommand(cmd: string): Promise<void> {
   if (r.id != null) { term.proc = r.id; $('#termPs').classList.add('busy'); }
 }
 termInput.addEventListener('keydown', e => {
+  if (terminalAutofillKeys(e)) return;
   if (e.key === 'c' && e.ctrlKey && term.proc != null && termInput.selectionStart === termInput.selectionEnd) { e.preventDefault(); killCommand(); return; }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     e.preventDefault();
@@ -2545,6 +2732,7 @@ termInput.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const cmd = termInput.value;
   termInput.value = '';
+  termGhost.innerHTML = '';
   void runCommand(cmd);
 });
 api.term.onData((id, chunk) => { if (id === term.proc) termWrite(chunk); });
@@ -2555,6 +2743,188 @@ api.term.onExit((id, code) => {
 });
 $('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString()) termInput.focus(); });
 $('#termToggle').addEventListener('click', e => { if (!(e.target as HTMLElement).closest('button')) run('term.toggle'); });
+
+/* ================= Autofill ================= */
+// One suggestion list, used by the code editor (words and keywords) and the terminal (files, commands, history).
+interface Suggestion { text: string; hint?: string; }
+interface SuggestState { owner: HTMLElement; items: Suggestion[]; sel: number; typed: number; accept: (s: Suggestion) => void; }
+let suggest: SuggestState | null = null;
+const suggestEl = document.createElement('div');
+suggestEl.className = 'suggest hidden';
+suggestEl.setAttribute('role', 'listbox');
+document.body.append(suggestEl);
+suggestEl.addEventListener('mousedown', e => e.preventDefault()); // keep focus where the user is typing
+suggestEl.addEventListener('click', e => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>('[data-sg]');
+  if (row && suggest) suggest.accept(suggest.items[Number(row.dataset.sg)]);
+});
+function renderSuggest(): void {
+  if (!suggest) return;
+  const { items, sel, typed } = suggest;
+  suggestEl.innerHTML = items.map((s, i) => {
+    const hint = s.hint ? `<small>${esc(s.hint)}</small>` : '';
+    return `<div class="${i === sel ? 'on' : ''}" data-sg="${i}" role="option"><span><b>${esc(s.text.slice(0, typed))}</b>${esc(s.text.slice(typed))}</span>${hint}</div>`;
+  }).join('');
+  suggestEl.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+}
+// Shows suggestions under (x, y), or above `above` when they don't fit below.
+function showSuggest(state: SuggestState, x: number, y: number, above: number): void {
+  if (!state.items.length) { hideSuggest(); return; }
+  suggest = state;
+  renderSuggest();
+  suggestEl.classList.remove('hidden');
+  const h = suggestEl.offsetHeight, w = suggestEl.offsetWidth;
+  suggestEl.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8))}px`;
+  suggestEl.style.top = `${y + h > innerHeight - 8 ? Math.max(8, above - h) : y}px`;
+}
+function hideSuggest(): void {
+  suggest = null;
+  suggestEl.classList.add('hidden');
+}
+// Arrow keys move, Tab or Enter accepts, Escape closes. True when the key was used.
+function suggestKeys(e: KeyboardEvent, owner: HTMLElement): boolean {
+  if (suggest?.owner !== owner) return false;
+  const s = suggest;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') s.sel = (s.sel + (e.key === 'ArrowDown' ? 1 : -1) + s.items.length) % s.items.length;
+  else if (e.key === 'Tab' || e.key === 'Enter') s.accept(s.items[s.sel]);
+  else if (e.key === 'Escape') hideSuggest();
+  else return false;
+  e.preventDefault();
+  e.stopPropagation();
+  if (suggest) renderSuggest();
+  return true;
+}
+
+/* ----- Code editor: words from the file plus the language's keywords ----- */
+const CSS_PROPS = 'display position top right bottom left margin padding color background background-color border border-radius box-shadow font font-family font-size font-weight line-height letter-spacing text-align text-decoration width height min-width max-width min-height max-height flex flex-direction flex-wrap align-items justify-content gap grid grid-template-columns grid-template-rows place-items overflow opacity transform transition animation cursor z-index content outline visibility white-space inset aspect-ratio object-fit';
+const HTML_TAGS = 'html head body title meta link script style div span section header footer main nav article aside button input label form select option textarea img picture video audio a ul ol li p h1 h2 h3 h4 h5 h6 strong em small code pre table thead tbody tr td th template iframe canvas svg';
+const JS_EXTRA = 'console log document window querySelector querySelectorAll addEventListener removeEventListener getElementById createElement appendChild classList textContent innerHTML length forEach filter reduce includes startsWith endsWith JSON stringify parse Promise resolve setTimeout clearTimeout fetch Math Object keys values entries Array Number String Boolean Map Set';
+const PY_EXTRA = 'print range len str int float list dict set tuple open enumerate zip isinstance sorted append extend items keys values format join split strip __init__ __name__ __main__';
+const EDITOR_WORDS: Record<string, string[]> = {
+  js: `${JS_KW} ${JS_EXTRA}`.split(' '),
+  py: `${PY_KW} ${PY_EXTRA}`.split(' '),
+  css: CSS_PROPS.split(' '),
+  html: HTML_TAGS.split(' '),
+  json: ['true', 'false', 'null'],
+};
+// Word counts per open file, refreshed at most every second and a half while typing.
+const wordCache = new WeakMap<Buffer, { at: number; counts: Map<string, number> }>();
+function fileWords(b: Buffer): Map<string, number> {
+  const cached = wordCache.get(b);
+  if (cached && Date.now() - cached.at < 1500) return cached.counts;
+  const counts = new Map<string, number>();
+  for (const m of b.text.slice(0, LINT_MAX).matchAll(/[A-Za-z_$][\w$-]{2,}/g)) counts.set(m[0], (counts.get(m[0]) ?? 0) + 1);
+  wordCache.set(b, { at: Date.now(), counts });
+  return counts;
+}
+function editorCandidates(b: Buffer, prefix: string): Suggestion[] {
+  const counts = fileWords(b);
+  const lower = prefix.toLowerCase();
+  const words = new Map<string, number>();
+  for (const w of EDITOR_WORDS[langOf(b.path)[0]] ?? []) words.set(w, 1000);
+  for (const [w, n] of counts) words.set(w, (words.get(w) ?? 0) + n);
+  // The word being typed counts once in the file; it isn't a suggestion by itself.
+  return [...words]
+    .filter(([w, n]) => w.toLowerCase().startsWith(lower) && w !== prefix && !(n === 1 && counts.get(w) === 1 && w.startsWith(prefix)))
+    .sort((a, b2) => Number(b2[0].startsWith(prefix)) - Number(a[0].startsWith(prefix)) || b2[1] - a[1] || a[0].length - b2[0].length)
+    .slice(0, 8)
+    .map(([w, n]) => ({ text: w, hint: n >= 1000 ? 'keyword' : '' }));
+}
+// The word (letters, digits, _ $ and -) that ends at the caret.
+function wordBefore(ta: HTMLTextAreaElement): string {
+  const v = ta.value, end = ta.selectionStart;
+  let i = end;
+  while (i > 0 && end - i < 60 && /[\w$-]/.test(v[i - 1])) i--;
+  while (i < end && !/[A-Za-z_$]/.test(v[i])) i++; // words start with a letter, _ or $
+  return v.slice(i, end);
+}
+function editorSuggest(b: Buffer, force = false): void {
+  const ta = b.ta;
+  if (!ta || ta.selectionStart !== ta.selectionEnd) { hideSuggest(); return; }
+  const prefix = wordBefore(ta);
+  if (prefix.length < (force ? 0 : 2)) { hideSuggest(); return; }
+  const pos = ta.selectionStart, ls = lineStart(b.text, pos);
+  const cw = measureChar();
+  const r = ta.getBoundingClientRect();
+  const x = r.left + 4 + visualCol(b.text.slice(ls, pos), pos - ls - prefix.length) * cw - ta.scrollLeft;
+  const top = r.top + 10 + lineAt(b.text, pos) * LINE_H - ta.scrollTop;
+  showSuggest({
+    owner: ta, items: editorCandidates(b, prefix), sel: 0, typed: prefix.length,
+    accept: s => { hideSuggest(); replaceRange(ta, pos - prefix.length, ta.selectionStart, s.text); },
+  }, x - 8, top + LINE_H + 2, top - 2);
+}
+
+/* ----- Terminal: files and folders, commands, and your history ----- */
+const COMMANDS = ['git', 'npm', 'npx', 'node', 'cd', 'dir', 'ls', 'cls', 'clear', 'mkdir', 'python', 'pip', 'echo', 'type', 'cat', 'code'];
+const SUBCOMMANDS: Record<string, string[]> = {
+  git: ['status', 'add', 'commit', 'push', 'pull', 'fetch', 'switch', 'checkout', 'branch', 'log', 'diff', 'init', 'clone', 'merge', 'stash', 'restore'],
+  npm: ['install', 'run', 'start', 'test', 'init', 'uninstall', 'update'],
+};
+const termGhost = $('#termGhost');
+// Greyed-out rest of the last matching command from history; → accepts it.
+function historyMatch(value: string): string {
+  if (!value) return '';
+  return [...term.history].reverse().find(h => h.startsWith(value) && h !== value) ?? '';
+}
+function updateGhost(): void {
+  const v = termInput.value, match = historyMatch(v);
+  termGhost.innerHTML = match ? `<span class="typed">${esc(v)}</span>${esc(match.slice(v.length))}` : '';
+}
+// Width of text in an input's own font.
+const measureCtx = document.createElement('canvas').getContext('2d');
+function textWidth(text: string, el: HTMLElement): number {
+  if (!measureCtx) return text.length * 7;
+  measureCtx.font = getComputedStyle(el).font;
+  return measureCtx.measureText(text).width;
+}
+function commonPrefix(words: string[]): string {
+  let shared = words[0] ?? '';
+  for (const w of words) {
+    let i = 0;
+    while (i < shared.length && shared[i].toLowerCase() === w[i]?.toLowerCase()) i++;
+    shared = shared.slice(0, i);
+  }
+  return shared;
+}
+async function terminalCandidates(line: string): Promise<{ token: string; items: Suggestion[] }> {
+  const words = line.split(' ');
+  const token = words.at(-1) ?? '';
+  if (words.length === 1) {
+    const known = [...new Set([...term.history.map(h => h.split(' ')[0]), ...COMMANDS])];
+    const commands = known.filter(c => c.startsWith(token) && c !== token).map(c => ({ text: c, hint: 'command' }));
+    const files = token ? await api.term.complete(token).catch(() => []) : [];
+    return { token, items: [...commands, ...files.map(f => ({ text: f.text, hint: f.dir ? 'folder' : 'file' }))].slice(0, 40) };
+  }
+  const subs = words.length === 2 ? (SUBCOMMANDS[words[0]] ?? []).filter(c => c.startsWith(token) && c !== token).map(c => ({ text: c, hint: words[0] })) : [];
+  const files = await api.term.complete(token).catch(() => []);
+  return { token, items: [...subs, ...files.map(f => ({ text: f.text, hint: f.dir ? 'folder' : 'file' }))].slice(0, 40) };
+}
+// Tab completes the last word: one match fills in, several fill the shared start and list the rest.
+async function completeTerminal(): Promise<void> {
+  const line = termInput.value;
+  const { token, items } = await terminalCandidates(line);
+  if (termInput.value !== line || !items.length) return;
+  const base = line.slice(0, line.length - token.length);
+  const put = (text: string) => { termInput.value = base + text; updateGhost(); };
+  if (items.length === 1) { put(items[0].text); hideSuggest(); return; }
+  const shared = commonPrefix(items.map(i => i.text));
+  if (shared.length > token.length) put(shared);
+  const r = termInput.getBoundingClientRect();
+  const x = r.left + textWidth(base, termInput);
+  showSuggest({ owner: termInput, items, sel: 0, typed: termInput.value.length - base.length, accept: s => { put(s.text); hideSuggest(); termInput.focus(); } }, x, r.bottom + 4, r.top - 4);
+}
+// Keys the terminal's autofill handles before the normal ones; true when handled.
+function terminalAutofillKeys(e: KeyboardEvent): boolean {
+  if (suggestKeys(e, termInput)) return true;
+  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) { e.preventDefault(); void completeTerminal(); return true; }
+  const atEnd = termInput.selectionStart === termInput.value.length;
+  const match = historyMatch(termInput.value);
+  if (e.key === 'ArrowRight' && atEnd && match) { e.preventDefault(); termInput.value = match; updateGhost(); return true; }
+  return false;
+}
+termInput.addEventListener('input', () => { updateGhost(); if (suggest?.owner === termInput) hideSuggest(); });
+termInput.addEventListener('blur', () => { termGhost.innerHTML = ''; hideSuggest(); });
+termInput.addEventListener('focus', updateGhost);
 
 /* ================= Layout: resizable, collapsible panels ================= */
 interface Layout { side: number; agents: number; term: number; preview: number; sideOpen: boolean; agentsOpen: boolean; termOpen: boolean; previewOpen: boolean; view: string; }
@@ -2612,7 +2982,11 @@ $('#tglTerm').onclick = () => run('term.toggle');
 $('#tglAgents').onclick = () => run('view.toggleAgents');
 
 /* ================= Commands, menu bar & shortcuts ================= */
-interface MenuItem { label?: string; act?: string; run?: () => void; key?: string; sep?: boolean; checked?: () => boolean; enabled?: () => boolean; native?: boolean; }
+interface MenuItem {
+  label?: string; act?: string; run?: () => void; key?: string; sep?: boolean; checked?: () => boolean; enabled?: () => boolean; native?: boolean;
+  header?: User;              // a "who is signed in" row
+  sub?: () => MenuItem[];     // opens a submenu on hover
+}
 const hasFile = () => !!activeText();
 function searchSelection(): void {
   showView('search', true);
@@ -2624,7 +2998,7 @@ function searchSelection(): void {
 }
 function backToOnboarding(n: number): void {
   appState.onboarded = false; saveApp();
-  $('#ide').classList.add('hidden'); $('#onboard').classList.remove('hidden');
+  $('#ide').classList.add('hidden'); $('#box').classList.add('hidden'); $('#onboard').classList.remove('hidden');
   goStep(n);
 }
 const commands: Record<string, () => unknown> = {
@@ -2675,9 +3049,11 @@ const commands: Record<string, () => unknown> = {
   'explorer.collapse': () => { expanded.clear(); renderTree(); saveSession(); },
   'help.welcome': () => setActive(null),
   'help.keys': showShortcuts,
-  'help.setup': () => backToOnboarding(STEP.setup),
-  'account.signIn': () => backToOnboarding(STEP.signIn),
-  'account.signOut': async () => { await api.auth.signOut(); setUser(null); toast('Signed out'); },
+  'help.setup': () => backToOnboarding(STEP.agent),
+  'account.signIn': addAccount,
+  'account.signOut': signOut,
+  'mode.ide': () => enterMode('ide'),
+  'mode.box': () => enterMode('box'),
   'help.about': showAbout,
 };
 function showAbout(): void {
@@ -2820,7 +3196,10 @@ const MENUS: Menu[] = [
     { label: 'Run Setup Again', act: 'help.setup' },
     { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
     { sep: true },
-    { label: 'Sign In…', act: 'account.signIn', enabled: () => !user },
+    { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
+    { label: 'Breeze Box (chat only)', act: 'mode.box', checked: () => appState.mode === 'box' },
+    { sep: true },
+    { label: 'Add Account…', act: 'account.signIn' },
     { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
     { sep: true },
     { label: 'About Breeze IDE', act: 'help.about' },
@@ -2900,26 +3279,56 @@ function popupMenu(x: number, y: number, items: MenuItem[], onClose?: () => void
   menuPinned = true;
   menuOnClose = onClose ?? null;
 }
+// A non-clickable row showing who is signed in.
+function menuHeaderHtml(u: User): string {
+  const detail = [u.email ?? u.login, u.provider].filter(Boolean).join(' · ');
+  return `<div class="menu-label">${avatarHtml(u, '')}<span class="who"><b>${esc(u.name)}</b><small>${esc(detail)}</small></span></div>`;
+}
 function menuItemHtml(it: MenuItem, i: number): string {
   if (it.sep) return '<div class="menu-sep"></div>';
-  const cls = ['menu-item', it.checked?.() ? 'checked' : '', i === kbIdx ? 'kb' : ''].filter(Boolean).join(' ');
+  if (it.header) return menuHeaderHtml(it.header);
+  const cls = ['menu-item', it.checked?.() ? 'checked' : '', it.sub ? 'has-sub' : '', i === kbIdx ? 'kb' : ''].filter(Boolean).join(' ');
   const disabled = it.enabled && !it.enabled() ? ' disabled' : '';
-  const key = it.key ? `<span class="key">${it.key}</span>` : '';
-  return `<button class="${cls}" role="menuitem" data-mi="${i}"${disabled}><span>${esc(it.label ?? '')}</span>${key}</button>`;
+  const key = it.key ? `<span class="key">${esc(it.key)}</span>` : '';
+  const popup = it.sub ? ' aria-haspopup="menu"' : '';
+  return `<button class="${cls}" role="menuitem" data-mi="${i}"${disabled}${popup}><span>${esc(it.label ?? '')}</span>${key}</button>`;
+}
+// Builds a menu element at (x, y), kept inside the window.
+function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTMLElement {
+  const m = document.createElement('div');
+  m.className = cls;
+  m.setAttribute('role', 'menu');
+  m.innerHTML = items.map(menuItemHtml).join('');
+  $('#menuRoot').append(m);
+  m.style.left = `${Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8))}px`;
+  m.style.top = `${Math.max(8, Math.min(y, innerHeight - m.offsetHeight - 8))}px`;
+  $$('[data-mi]', m).forEach(b => {
+    const it = items[Number(b.dataset.mi)];
+    b.onmousedown = e => e.preventDefault(); // keep focus (and the selection) in the editor
+    b.onclick = () => (it.sub ? openSubmenu(b, it) : activateMenuItem(it));
+    if (cls === 'menu') b.onmouseenter = () => (it.sub ? openSubmenu(b, it) : closeSubmenu());
+  });
+  return m;
+}
+// Hovering an item with "›" opens its submenu beside it.
+function openSubmenu(btn: HTMLElement, it: MenuItem): void {
+  if (btn.classList.contains('sub-open')) return;
+  closeSubmenu();
+  btn.classList.add('sub-open');
+  const r = btn.getBoundingClientRect();
+  const sub = renderMenu(r.right + 4, r.top - 5, it.sub?.() ?? [], 'menu sub');
+  if (sub.getBoundingClientRect().left < r.right) sub.style.left = `${Math.max(8, r.left - sub.offsetWidth - 4)}px`; // no room on the right
+}
+function closeSubmenu(): void {
+  $$('#menuRoot .menu.sub').forEach(s => s.remove());
+  $$('#menuRoot .sub-open').forEach(b => b.classList.remove('sub-open'));
 }
 function showMenu(x: number, y: number, items: MenuItem[], viaKeyboard: boolean): void {
   cancelMenuClose();
   menuItems = items;
-  kbIdx = viaKeyboard ? items.findIndex(it => !it.sep) : -1;
-  const root = $('#menuRoot');
-  root.innerHTML = `<div class="menu" role="menu">${items.map(menuItemHtml).join('')}</div>`;
-  const m = $('.menu', root);
-  m.style.left = `${Math.min(x, innerWidth - m.offsetWidth - 8)}px`;
-  m.style.top = `${Math.min(y, innerHeight - m.offsetHeight - 8)}px`;
-  $$('[data-mi]', m).forEach(b => {
-    b.onmousedown = e => e.preventDefault(); // keep focus (and the selection) in the editor
-    b.onclick = () => activateMenuItem(items[Number(b.dataset.mi)]);
-  });
+  kbIdx = viaKeyboard ? items.findIndex(it => !it.sep && !it.header) : -1;
+  $('#menuRoot').innerHTML = '';
+  renderMenu(x, y, items);
 }
 function activateMenuItem(it: MenuItem): void {
   if (it.enabled && !it.enabled()) return;
@@ -2935,11 +3344,11 @@ function closeMenu(): void {
   const cb = menuOnClose; menuOnClose = null; cb?.();
 }
 document.addEventListener('mousedown', e => {
-  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn')) closeMenu();
+  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars')) closeMenu();
 });
 window.addEventListener('blur', closeMenu);
 function moveKbSelection(down: boolean): void {
-  const usable = menuItems.map((it, i) => (!it.sep && (!it.enabled || it.enabled()) ? i : -1)).filter(i => i !== -1);
+  const usable = menuItems.map((it, i) => (!it.sep && !it.header && (!it.enabled || it.enabled()) ? i : -1)).filter(i => i !== -1);
   const pos = usable.indexOf(kbIdx);
   kbIdx = usable[(pos + (down ? 1 : -1) + usable.length) % usable.length] ?? -1;
   $$('[data-mi]').forEach(b => b.classList.toggle('kb', Number(b.dataset.mi) === kbIdx));
@@ -2983,19 +3392,20 @@ document.addEventListener('keyup', e => {
   altAlone = false;
 }, true);
 
-// The gear turns while its menu is open and turns back when it closes.
-const settingsBtn = $('#settingsBtn');
-settingsBtn.onclick = () => {
-  if (settingsBtn.classList.contains('open')) { closeMenu(); return; }
+// The gear turns while its menu is open and turns back when it closes (in the IDE and in Breeze Box).
+function settingsMenu(gear: HTMLElement, place: (r: DOMRect) => [number, number]): void {
+  if (gear.classList.contains('open')) { closeMenu(); return; }
   closeMenu();
-  const r = settingsBtn.getBoundingClientRect();
-  settingsBtn.classList.add('open');
-  settingsBtn.setAttribute('aria-expanded', 'true');
-  popupMenu(r.right + 6, r.top, MENUS.find(m => m.name === 'Help')?.items ?? [], () => {
-    settingsBtn.classList.remove('open');
-    settingsBtn.setAttribute('aria-expanded', 'false');
+  const [x, y] = place(gear.getBoundingClientRect());
+  gear.classList.add('open');
+  gear.setAttribute('aria-expanded', 'true');
+  popupMenu(x, y, MENUS.find(m => m.name === 'Help')?.items ?? [], () => {
+    gear.classList.remove('open');
+    gear.setAttribute('aria-expanded', 'false');
   });
-};
+}
+$('#settingsBtn').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right + 6, r.top]);
+$('#boxSettings').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right - 260, r.bottom + 6]);
 
 function showShortcuts(): void {
   const rows: string[] = [];
@@ -3030,24 +3440,51 @@ function setAgent(k: AgentKey, status: AgentStatus, task: string, used?: number)
   renderAgents(); vibeTick();
 }
 
-const chat = $('#chat');
+/* ----- Chat surfaces: the IDE's agent panel and Breeze Box share one conversation engine ----- */
+interface Surface { name: WorkMode; chat: HTMLElement; prompt: HTMLTextAreaElement; send: HTMLElement; mode: HTMLSelectElement; }
+const SURFACES: Record<WorkMode, Surface> = {
+  ide: { name: 'ide', chat: $('#chat'), prompt: $<HTMLTextAreaElement>('#prompt'), send: $('#send'), mode: $<HTMLSelectElement>('#agentMode') },
+  box: { name: 'box', chat: $('#boxChat'), prompt: $<HTMLTextAreaElement>('#boxPrompt'), send: $('#boxSend'), mode: $<HTMLSelectElement>('#boxMode') },
+};
+let surface = SURFACES.ide;     // the one on screen
+let msgSurface = surface;       // the one messages go to: a running agent keeps writing where it started
+function useSurface(name: WorkMode): void {
+  surface = SURFACES[name];
+  if (!agentRun) msgSurface = surface;
+}
 function addMsg(html: string): HTMLElement {
+  const chat = msgSurface.chat;
   const d = document.createElement('div'); d.innerHTML = html;
   const el = d.firstElementChild as HTMLElement;
-  chat.appendChild(el); chat.scrollTop = chat.scrollHeight;
+  chat.appendChild(el);
+  const scroller = msgSurface.name === 'box' ? $('.box-main') : chat;
+  scroller.scrollTop = scroller.scrollHeight;
   saveChat();
   return el;
 }
 const clockTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// In the IDE replies come from the Planner or Builder; in Breeze Box from the agent itself (Claude Code, Codex…).
 function agentMsg(k: AgentKey, html: string): HTMLElement {
-  const a = agentsDef[k];
-  return addMsg(`<div class="msg"><div class="meta"><span class="avatar mini tint-${a.tint}">${a.letter}</span><b>${a.name}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
+  let { name, letter, tint } = agentsDef[k];
+  const chosen = selectedAgent();
+  if (msgSurface.name === 'box' && chosen) {
+    const st = AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: 'default' };
+    ({ name } = chosen);
+    ({ letter, tint } = st);
+  }
+  return addMsg(`<div class="msg"><div class="meta"><span class="avatar mini tint-${tint}">${letter}</span><b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
 }
 function userMsg(text: string): void {
   addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${esc(text)}</div></div>`);
 }
-function emptyChat(): void {
-  chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
+function emptyChat(s: Surface = SURFACES.ide): void {
+  if (s.name === 'box') {
+    const agent = selectedAgent();
+    const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
+    s.chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
+    return;
+  }
+  s.chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
 }
 // A small, safe subset of Markdown for agent replies: code blocks, inline code, bold and line breaks.
 function md(text: string): string {
@@ -3060,62 +3497,68 @@ function toolLine(kind: string, label: string): void {
   addMsg(`<div class="tool-line ${kind}"><span class="ti">${TOOL_ICON[kind] ?? '•'}</span><span class="tl">${esc(label)}</span></div>`);
 }
 
-// Chat history is kept per project folder so a reload brings it back.
-const chatKey = () => `breeze.chat:${rootInfo?.root ?? ''}`;
-const agentSessionKey = () => `breeze.agentSession:${rootInfo?.root ?? ''}:${appState.agent ?? ''}`;
+// Chat history is kept per project folder (and once for Breeze Box) so a reload brings it back.
+const chatKey = (s: Surface = msgSurface) => (s.name === 'box' ? 'breeze.chat:box' : `breeze.chat:${rootInfo?.root ?? ''}`);
+const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${s.name === 'box' ? 'box' : rootInfo?.root ?? ''}:${appState.agent ?? ''}`;
 let chatTimer: number | undefined;
 function saveChat(): void {
   clearTimeout(chatTimer);
+  const s = msgSurface;
   chatTimer = setTimeout(() => {
-    if (!rootInfo) return;
-    const html = chat.querySelector('.empty') ? '' : chat.innerHTML;
-    if (html && html.length < 400000) store.set(chatKey(), html); else store.del(chatKey());
+    if (s.name === 'ide' && !rootInfo) return;
+    const html = s.chat.querySelector('.empty') ? '' : s.chat.innerHTML;
+    if (html && html.length < 400000) store.set(chatKey(s), html); else store.del(chatKey(s));
   }, 400);
 }
-function restoreChat(): void {
-  const html = store.get<string>(chatKey(), '');
-  if (!html) { emptyChat(); return; }
-  chat.innerHTML = html;
+function restoreChat(s: Surface = SURFACES.ide): void {
+  const html = store.get<string>(chatKey(s), '');
+  if (!html) { emptyChat(s); return; }
+  s.chat.innerHTML = html;
   // Buttons from an earlier run have no handlers any more; show them as settled.
-  $$('[data-live]', chat).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
-  chat.scrollTop = chat.scrollHeight;
+  $$('[data-live]', s.chat).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
+  s.chat.scrollTop = s.chat.scrollHeight;
 }
 
 interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; }
 let agentRun: Run | null = null;
 let lastRunFiles: string[] = [];
-const promptBox = $<HTMLTextAreaElement>('#prompt');
-$('#send').onclick = () => (agentRun ? stopAgent() : void sendPrompt());
-promptBox.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
-$('#newChat').onclick = () => {
+for (const s of Object.values(SURFACES)) {
+  s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
+  s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
+}
+function newChat(): void {
   if (agentRun) stopAgent();
-  store.del(agentSessionKey()); store.del(chatKey());
-  emptyChat();
+  store.del(agentSessionKey(surface)); store.del(chatKey(surface));
+  emptyChat(surface);
   setAgent('planner', 'idle', 'Waiting for a prompt', 0);
   setAgent('builder', 'idle', 'Waiting for a plan', 0);
-  promptBox.focus();
-};
+  surface.prompt.focus();
+}
+$('#newChat').onclick = newChat;
+commands['chat.new'] = newChat;
 commands['agent.stop'] = () => stopAgent();
 
 function setBusy(on: boolean): void {
-  const b = $('#send');
-  b.classList.toggle('stop', on);
-  b.textContent = on ? '■ Stop' : 'Send ↵';
-  b.title = on ? 'Stop the agent' : 'Send (Enter)';
+  for (const { send } of Object.values(SURFACES)) {
+    send.classList.toggle('stop', on);
+    send.textContent = on ? '■ Stop' : 'Send ↵';
+    send.title = on ? 'Stop the agent' : 'Send (Enter)';
+  }
 }
 function stopAgent(): void {
   if (agentRun) background(api.agent.stop(agentRun.id));
 }
 const MODES: Record<string, AgentMode> = { build: 'build', ask: 'ask', plan: 'plan' };
 async function sendPrompt(): Promise<void> {
-  const text = promptBox.value.trim();
+  const text = surface.prompt.value.trim();
   if (!text || agentRun) return;
   const agent = selectedAgent();
   if (!agent) { openAgentPicker(); return; }
-  if (!rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
-  const uiMode = $<HTMLSelectElement>('#agentMode').value;
-  promptBox.value = '';
-  if (chat.querySelector('.empty')) chat.innerHTML = '';
+  if (surface.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
+  msgSurface = surface;
+  const uiMode = surface.mode.value;
+  surface.prompt.value = '';
+  if (surface.chat.querySelector('.empty')) surface.chat.innerHTML = '';
   userMsg(text);
   await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', text, uiMode);
 }
@@ -3126,7 +3569,8 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
   if (phase === 'planner') setAgent('builder', 'idle', 'Waiting for a plan', 0);
   setBusy(true);
   try {
-    const id = await api.agent.run({ agent: agentId, mode, prompt, session: store.get<string | null>(agentSessionKey(), null) });
+    const box = msgSurface.name === 'box';
+    const id = await api.agent.run({ agent: agentId, mode, prompt, session: store.get<string | null>(agentSessionKey(), null), box });
     agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '' };
   } catch (e) {
     setBusy(false);
@@ -3191,8 +3635,8 @@ function showPlan(r: Run): void {
       void startAgentRun(r.agent, 'build', 'The plan is approved. Implement it now, then summarize what you changed.', 'build');
     } else {
       setAgent('planner', 'idle', 'Waiting for your changes', r.tools);
-      promptBox.focus();
-      promptBox.placeholder = 'What should change in the plan?';
+      msgSurface.prompt.focus();
+      msgSurface.prompt.placeholder = 'What should change in the plan?';
     }
   });
 }
@@ -3214,7 +3658,7 @@ function finishRun(r: Run, ev: AgentEvent): void {
   const review = r.files.size ? '<button class="btn btn-sm" data-live data-review>Review changes</button>' : '';
   const el = addMsg(`<div class="run-done"><span>✓ Done${summary}</span>${review}</div>`);
   el.querySelector<HTMLElement>('[data-review]')?.addEventListener('click', () => showView('git', true));
-  promptBox.placeholder = 'Describe what you want to build…';
+  msgSurface.prompt.placeholder = msgSurface.name === 'box' ? 'Ask Breeze anything…' : 'Describe what you want to build…';
   if (r.files.size && running) void reloadPreview();
 }
 
@@ -3306,7 +3750,7 @@ function renderScm(): void {
   const files = gitState.files ?? [];
   const staged = files.filter(f => f.x !== ' ' && f.x !== '?');
   const changes = files.filter(f => f.y !== ' ' || f.x === '?');
-  const commitLabel = !staged.length && changes.length ? 'Commit All' : 'Commit';
+  const commitLabel = (!staged.length && changes.length ? 'Commit All' : 'Commit') + (gitState.hasRemote ? ' & Push' : '');
   const sync = syncLabel(gitState);
   const syncBtn = sync ? `<button class="btn btn-sm commit-btn" data-act="git.sync">${sync}</button>` : '';
   const empty = files.length ? '' : '<p class="side-note">No changes. Everything is saved in a checkpoint.</p>';
@@ -3523,11 +3967,17 @@ async function commitNow(): Promise<void> {
   await saveAll();
   const all = !files.some(f => f.x !== ' ' && f.x !== '?');
   let hash = '';
-  if (await gitOp(async () => { hash = await api.git.commit(msg, all); })) {
-    scmDraft = '';
-    renderScm();
-    toast(`Checkpoint saved · ${hash}`);
-  }
+  if (!(await gitOp(async () => { hash = await api.git.commit(msg, all); }))) return;
+  scmDraft = '';
+  renderScm();
+  // A checkpoint is committed and pushed in one go (pulling first if the branch is behind).
+  if (!gitState.hasRemote) { toast(`Checkpoint saved · ${hash} (no remote to push to yet)`); return; }
+  toast(`Checkpoint saved · ${hash} — pushing…`);
+  const behind = !!gitState.behind;
+  await gitOp(async () => {
+    if (behind) await api.git.sync('pull');
+    await api.git.sync('push');
+  }, `Checkpoint ${hash} saved and pushed`);
 }
 async function newBranch(from?: string): Promise<void> {
   const name = await askName(from ? 'New branch from this checkpoint' : 'New branch', '', 'Create');
@@ -3684,6 +4134,63 @@ function renderPeople(): void {
   const invite = sharing ? '' : '<p class="people-note">Press <b>Share</b> to invite someone.</p>';
   $('#people').innerHTML = people.join('') + invite;
 }
+
+/* ================= Breeze Box (chat only) ================= */
+// The same agents and conversation as the IDE's agent panel, with nothing else on screen.
+function enterMode(mode: WorkMode): void {
+  appState.mode = mode;
+  appState.onboarded = true;
+  saveApp();
+  closeMenu();
+  if (mode === 'ide') { showIde(); return; }
+  $('#onboard').classList.add('hidden'); $('#ide').classList.add('hidden'); $('#box').classList.remove('hidden');
+  useSurface('box');
+  renderUser(); renderAgentPill(); renderBoxFolder();
+  // Box lists every agent Breeze found, so look for them if that hasn't happened yet.
+  if (!appState.detect) detectTools().catch(() => toast('Could not look for agents on this computer'));
+  if (!SURFACES.box.chat.children.length) restoreChat(SURFACES.box);
+  SURFACES.box.prompt.focus();
+}
+function renderBoxFolder(): void {
+  const chip = $('#boxFolder');
+  chip.textContent = rootInfo ? `📁 ${rootInfo.name}` : '📁 Breeze Box folder';
+  chip.title = rootInfo ? `Agents work in ${rootInfo.root}` : 'No project open: agents work in Documents/Breeze Box';
+}
+// Every agent Breeze found, to pick from without leaving the chat.
+function boxAgentItems(): MenuItem[] {
+  const agents = appState.detect?.agents ?? [];
+  const items: MenuItem[] = agents.map(a => ({
+    label: a.api && a.version ? `${a.name} · ${a.version}` : a.name,
+    key: a.found ? undefined : 'not set up',
+    checked: () => a.id === appState.agent,
+    enabled: () => a.found,
+    run: () => {
+      appState.agent = a.id;
+      saveApp();
+      renderAgentPill();
+      if (SURFACES.box.chat.querySelector('.empty')) emptyChat(SURFACES.box);
+      toast(`Breeze Box now uses ${a.name}`);
+    },
+  }));
+  return [...items, { sep: true }, { label: 'Manage agents…', run: openAgentPicker }];
+}
+$('#boxModel').onclick = e => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  popupMenu(r.left, r.top - 8, boxAgentItems());
+  const m = $('#menuRoot .menu');
+  m.style.top = `${Math.max(8, r.top - m.offsetHeight - 6)}px`; // open upwards, above the composer
+};
+$('#boxFolder').onclick = e => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const choose = (create: boolean) => background(chooseProject(create).then(renderBoxFolder));
+  popupMenu(r.left, r.top, [
+    { label: 'Open Folder…', run: () => choose(false) },
+    { label: 'Create New Project…', run: () => choose(true) },
+    ...(rootInfo ? [{ sep: true }, { label: 'Close Folder', run: () => background(closeFolderCmd().then(renderBoxFolder)) }] : []),
+  ]);
+  const m = $('#menuRoot .menu');
+  m.style.top = `${Math.max(8, r.top - m.offsetHeight - 6)}px`;
+};
 
 /* ================= Vibe Mode ================= */
 // While an agent works, the IDE fades and blurs away and the user's feed plays in a 9:16 frame.
@@ -3848,13 +4355,15 @@ async function boot(): Promise<void> {
   // The main process remembers who signed in; it wins over the renderer's copy.
   const signed = await api.auth.user().catch(() => null);
   if (signed || isDesktop) { user = signed; appState.user = signed; saveApp(); }
-  if (appState.onboarded) showIde();
+  await refreshAccounts();
+  if (appState.onboarded) enterMode(appState.mode);
   else goStep(step);
   const info = await api.fs.restore().catch(() => null);
   if (info) await loadWorkspace(info);
   else { term.cwd = await api.term.cwd(); renderPs(); }
   renderTree();
-  if (step === STEP.setup) renderProjectChoice();
+  if (step === STEP.mode) renderModeChoice();
+  renderBoxFolder();
   // Refresh the tool and agent status in the background; the cached result shows meanwhile.
   if (appState.onboarded) detectTools().catch(() => { /* shown in the setup card */ });
 }
