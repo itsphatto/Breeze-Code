@@ -2716,10 +2716,8 @@ function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|c
 async function runFile(): Promise<void> {
   const b = activeBuf();
   if (!active || b?.kind !== 'text') { toast('Save the file first'); return; }
-  if (term.proc != null) { toast('A command is still running — press Ctrl+C to stop it'); return; }
   if (isDirty(b) && !(await saveFile(active))) return;
   layout.termOpen = true; applyLayout();
-  termWrite(`${term.cwd}> `, 'ps'); termWrite(`Run ${active}\n`, 'cmd');
   const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
   if (r.error) termWrite(r.error + '\n', 'err');
   else if (r.id != null) { term.proc = term.runId = r.id; $('#termPs').classList.add('busy'); }
@@ -2743,8 +2741,9 @@ termInput.addEventListener('keydown', e => {
 api.term.onData((id, chunk) => { if (id === term.proc) termWrite(chunk); });
 api.term.onExit((id, code) => {
   if (id !== term.proc) return;
+  const runId = term.runId;
   term.proc = null; term.runId = null; $('#termPs').classList.remove('busy');
-  if (code) termWrite(`exited with code ${code}\n`, 'err');
+  if (code && id !== runId) termWrite(`exited with code ${code}\n`, 'err');
 });
 $('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString()) termInput.focus(); });
 $('#termToggle').addEventListener('click', e => { if (!(e.target as HTMLElement).closest('button')) run('term.toggle'); });

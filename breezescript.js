@@ -3139,16 +3139,10 @@ async function runFile() {
         toast('Save the file first');
         return;
     }
-    if (term.proc != null) {
-        toast('A command is still running — press Ctrl+C to stop it');
-        return;
-    }
     if (isDirty(b) && !(await saveFile(active)))
         return;
     layout.termOpen = true;
     applyLayout();
-    termWrite(`${term.cwd}> `, 'ps');
-    termWrite(`Run ${active}\n`, 'cmd');
     const r = await api.run.file(active).catch((err) => ({ error: errMsg(err) }));
     if (r.error)
         termWrite(r.error + '\n', 'err');
@@ -3184,10 +3178,11 @@ api.term.onData((id, chunk) => { if (id === term.proc)
 api.term.onExit((id, code) => {
     if (id !== term.proc)
         return;
+    const runId = term.runId;
     term.proc = null;
     term.runId = null;
     $('#termPs').classList.remove('busy');
-    if (code)
+    if (code && id !== runId)
         termWrite(`exited with code ${code}\n`, 'err');
 });
 $('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString())

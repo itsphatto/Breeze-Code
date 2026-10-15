@@ -453,22 +453,32 @@ ipcMain.handle('run:file', async (_e, rel) => {
     ensureBuildIgnored(root);
     const id = claim.id = nextTermId++;
     const send = text => win?.webContents.send('term:data', id, text);
-    const { cancel } = runSteps(plan.steps, {
-      spawn,
-      env: toolEnv(process.env, tools.binDirs, process.platform, pathValue),
-      onStart: step => send(`${step.cwd}> ${step.display}
+    // Start after the reply is sent, so the renderer knows the id before the first output arrives.
+    setImmediate(() => {
+      try {
+        const { cancel } = runSteps(plan.steps, {
+          spawn,
+          env: toolEnv(process.env, tools.binDirs, process.platform, pathValue),
+          onStart: step => send(`${step.cwd}> ${step.display}
 `),
-      onData: send,
-      onChild: child => { terms.set(id, child); child.stdin.on('error', ignoreEpipe); },
-      onDone: (code, ms) => {
-        terms.delete(id);
-        activeRun = null;
-        send(`${code === null ? 'stopped' : `exited with code ${code}`} · ${(ms / 1000).toFixed(1)}s
+          onData: send,
+          onChild: child => { terms.set(id, child); child.stdin.on('error', ignoreEpipe); },
+          onDone: (code, ms) => {
+            terms.delete(id);
+            activeRun = null;
+            send(`${code === null ? 'stopped' : `exited with code ${code}`} · ${(ms / 1000).toFixed(1)}s
 `);
-        win?.webContents.send('term:exit', id, code);
-      },
+            win?.webContents.send('term:exit', id, code);
+          },
+        });
+        claim.cancel = cancel;
+      } catch (err) {
+        activeRun = null;
+        send(err.message + '
+');
+        win?.webContents.send('term:exit', id, 1);
+      }
     });
-    claim.cancel = cancel;
     return { id };
   } catch (err) {
     return fail(err.message);
