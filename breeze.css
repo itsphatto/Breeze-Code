@@ -368,7 +368,7 @@ body.resizing-h .term-body { transition: none; }
 .tab.on::after { transform: scaleX(1); }
 .tab.enter { animation: tabIn .2s cubic-bezier(.2,.8,.2,1); }
 .tree-item.enter { animation: rowIn .18s cubic-bezier(.2,.8,.2,1) both; }
-.hl.switch, .gutter.switch { animation: fade .16s; }
+.hl.tab-swap, .gutter.tab-swap { animation: fade .16s; }
 .findbar:not(.hidden) { animation: dropIn .16s cubic-bezier(.2,.8,.2,1); }
 [data-panel]:not(.hidden) > .side-body, [data-panel]:not(.hidden) > .search-box { animation: fade .18s; }
 .ob-dots span.on { box-shadow: 0 0 10px rgba(0,94,255,.6); }
@@ -496,3 +496,5 @@ body.resizing-h .term-body { transition: none; }
 @keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } }
 @keyframes tabIn { from { opacity: 0; max-width: 0; } to { max-width: 260px; } }
 @keyframes pop { 0% { transform: scale(.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+/* Overflowing tabs scroll sideways with the mouse wheel instead of showing a scrollbar. */
+.tabs { scrollbar-width: none; }

@@ -1138,9 +1138,9 @@ function setActive(path) {
     saveSession();
     if (changed)
         for (const el of [$('#hl'), $('#gutter')]) {
-            el.classList.remove('switch');
+            el.classList.remove('tab-swap');
             void el.offsetWidth;
-            el.classList.add('switch');
+            el.classList.add('tab-swap');
         }
     if (running && path && /\.(html?|css|js)$/i.test(path))
         $('#urlText').title = path;
@@ -1164,6 +1164,13 @@ $('#tabs').addEventListener('click', e => {
     else
         setActive(p);
 });
+$('#tabs').addEventListener('wheel', e => {
+    const t = e.currentTarget;
+    if (!e.deltaX && e.deltaY) {
+        t.scrollLeft += e.deltaY;
+        e.preventDefault();
+    }
+}, { passive: false });
 $('#tabs').addEventListener('auxclick', e => {
     const tab = e.target.closest('[data-tab]');
     if (tab && e.button === 1)

@@ -1031,7 +1031,7 @@ function setActive(path: string | null): void {
   const changed = active !== path;
   active = path;
   renderTabs(); renderEditor(); renderTree(); saveSession();
-  if (changed) for (const el of [$('#hl'), $('#gutter')]) { el.classList.remove('switch'); void el.offsetWidth; el.classList.add('switch'); }
+  if (changed) for (const el of [$('#hl'), $('#gutter')]) { el.classList.remove('tab-swap'); void el.offsetWidth; el.classList.add('tab-swap'); }
   if (running && path && /\.(html?|css|js)$/i.test(path)) $('#urlText').title = path;
 }
 const seenTabs = new Set<string>();
@@ -1049,6 +1049,10 @@ $('#tabs').addEventListener('click', e => {
   const p = tab.dataset.tab as string;
   if ((e.target as HTMLElement).closest('[data-close-tab]')) closeTab(p); else setActive(p);
 });
+$('#tabs').addEventListener('wheel', e => {
+  const t = e.currentTarget as HTMLElement;
+  if (!e.deltaX && e.deltaY) { t.scrollLeft += e.deltaY; e.preventDefault(); }
+}, { passive: false });
 $('#tabs').addEventListener('auxclick', e => {
   const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
   if (tab && e.button === 1) closeTab(tab.dataset.tab as string);
