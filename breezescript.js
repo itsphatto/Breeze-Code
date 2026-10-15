@@ -3497,7 +3497,6 @@ const commands = {
     'view.files': () => showView('files', true),
     'view.search': searchSelection,
     'view.git': () => showView('git', true),
-    'view.people': () => showView('people', true),
     'view.toggleSide': () => { layout.sideOpen = !layout.sideOpen; applyLayout(); },
     'view.toggleAgents': () => { layout.agentsOpen = !layout.agentsOpen; applyLayout(); },
     'view.togglePreview': () => { layout.previewOpen = !layout.previewOpen; applyLayout(); },
@@ -3657,7 +3656,6 @@ const MENUS = [
             { label: 'Explorer', act: 'view.files', key: 'Ctrl+Shift+E' },
             { label: 'Search', act: 'view.search', key: 'Ctrl+Shift+F' },
             { label: 'Checkpoints', act: 'view.git', key: 'Ctrl+Shift+G' },
-            { label: 'People', act: 'view.people' },
             { sep: true },
             { label: 'Primary Side Bar', act: 'view.toggleSide', key: 'Ctrl+B', checked: () => layout.sideOpen },
             { label: 'Agents Panel', act: 'view.toggleAgents', key: 'Ctrl+Alt+B', checked: () => layout.agentsOpen },
@@ -4746,8 +4744,6 @@ function showView(v, reveal = false) {
     $$('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== v));
     if (v === 'git')
         void refreshGit();
-    if (v === 'people')
-        renderPeople();
 }
 // Clicking the active view's icon again collapses the side bar, like VS Code.
 $$('.act-btn[data-view]').forEach(b => b.onclick = () => {
@@ -4770,7 +4766,6 @@ function newKey() {
     const groups = raw.match(/.{1,6}/g) ?? [];
     return 'brz-' + groups.join('-');
 }
-$('#shareBtn').onclick = openShare;
 const switchHtml = (key, label, note = '') => `<div class="toggle-row"><span>${label}${note}</span><button class="switch ${share[key] ? 'on' : ''}" data-sw="${key}" aria-label="${label}"></button></div>`;
 function endSharing() {
     sharing = false;
@@ -4838,13 +4833,6 @@ function updateShare() {
     $('#sbShare').textContent = sharing ? `● Sharing · ${guests.length + 1} people` : 'Not sharing';
     renderUser();
     $('#termShare').textContent = share.terminal && sharing ? 'Shared' : 'Not shared';
-    renderPeople();
-}
-function renderPeople() {
-    const rows = [{ name: 'You', role: 'Host', tint: 'host' }, ...guests];
-    const people = rows.map(p => `<div class="tree-item"><span class="avatar small tint-${p.tint}">${p.name.slice(0, 2).toUpperCase()}</span>${p.name}<span class="pill ml-auto">${p.role}</span></div>`);
-    const invite = sharing ? '' : '<p class="people-note">Press <b>Share</b> to invite someone.</p>';
-    $('#people').innerHTML = people.join('') + invite;
 }
 /* ================= Breeze Box (chat only) ================= */
 // The same agents and conversation as the IDE's agent panel, with nothing else on screen.
