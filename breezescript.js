@@ -268,6 +268,7 @@ function demoApi() {
             async cwd() { return 'coffee-shop-landing'; },
             async run() { return { error: 'The terminal runs commands only in the Breeze desktop app (npm start).' }; },
             async kill() { },
+            async write() { },
             async complete(word) {
                 const names = [...new Set([...files.keys(), ...dirs].map(p => p.split('/')[0]))];
                 return names.filter(n => n.toLowerCase().startsWith(word.toLowerCase())).sort((a, b) => a.localeCompare(b)).map(n => ({ text: dirs.has(n) ? n + '/' : n, dir: dirs.has(n) }));
@@ -275,6 +276,7 @@ function demoApi() {
             onData() { return () => { }; },
             onExit() { return () => { }; },
         },
+        run: { async file() { return { error: 'Programs run only in the Breeze desktop app (npm start).' }; } },
         sys: {
             async detect() {
                 await wait(500);
@@ -792,10 +794,10 @@ function renderDetection() {
         $('#aiHint').textContent += ' (Browser preview.)';
     $('#toolList').innerHTML = d.tools.map(toolHtml).join('');
     $$('[data-get]', $('#toolList')).forEach(b => b.onclick = () => background(api.sys.openExternal(b.dataset.get ?? '')));
-    const missing = d.tools.filter(t => !t.found).map(t => t.name);
+    const missing = d.tools.filter(t => !t.found && !t.optional).map(t => t.name);
     $('#toolsPill').className = missing.length ? 'pill warn' : 'pill ok';
     $('#toolsPill').textContent = missing.length ? `${missing.join(' & ')} missing` : 'Ready';
-    const summary = d.tools.map(t => `${t.name.replace('.js', '')} ${t.found ? 'ready' : 'missing'}`).join(' · ');
+    const summary = d.tools.filter(t => t.found || !t.optional).map(t => `${t.name.replace('.js', '').replace('C/C++', 'C')} ${t.found ? 'ready' : 'missing'}`).join(' · ');
     $('#sbTools').innerHTML = `<span class="${missing.length ? 'dot-warn' : 'dot-ok'}"></span> ${summary}`;
     renderAgentPill();
 }
@@ -2195,9 +2197,13 @@ function renderTabs() {
         tabDrag.stale = true;
         return;
     }
-    $('#tabs').innerHTML = openTabs.map(tabHtml).join('');
+    $('#tabs').innerHTML = openTabs.map(tabHtml).join('') + (runnable(active) ? '<button class="tab-run" data-run-file="1" title="Run File (F5)">▶ Run</button>' : '');
 }
 $('#tabs').addEventListener('click', e => {
+    if (e.target.closest('[data-run-file]')) {
+        run('run.file');
+        return;
+    }
     const tab = e.target.closest('[data-tab]');
     if (!tab || justDragged)
         return;
@@ -3075,7 +3081,7 @@ async function reloadPreview() {
 }
 function stopPreview() { running = false; previewPath = null; renderPreview(); }
 /* ================= Terminal ================= */
-const term = { cwd: '', proc: null, history: [], hIdx: 0 };
+const term = { cwd: '', proc: null, runId: null, history: [], hIdx: 0 };
 const termOut = $('#termOut');
 const termInput = $('#termInput');
 // Colour codes and lone carriage returns don't render in the panel.
@@ -3099,8 +3105,8 @@ function killCommand() {
 }
 async function runCommand(cmd) {
     if (term.proc != null) {
-        termWrite(cmd + '\n');
-        toast('A command is still running — press Ctrl+C to stop it');
+        background(api.term.write(term.proc, cmd + '\n'));
+        termWrite(cmd + '\n', 'cmd');
         return;
     }
     termWrite(`${term.cwd}> `, 'ps');
@@ -3124,6 +3130,33 @@ async function runCommand(cmd) {
         term.proc = r.id;
         $('#termPs').classList.add('busy');
     }
+}
+// C, C++ and Python files run in the terminal; their input comes from the terminal's input line.
+function runnable(path) { return !!path && /\.(?:c|cpp|cc|cxx|py)$/i.test(path); }
+async function runFile() {
+    const b = activeBuf();
+    if (!active || b?.kind !== 'text') {
+        toast('Save the file first');
+        return;
+    }
+    if (term.proc != null) {
+        toast('A command is still running — press Ctrl+C to stop it');
+        return;
+    }
+    if (isDirty(b) && !(await saveFile(active)))
+        return;
+    layout.termOpen = true;
+    applyLayout();
+    termWrite(`${term.cwd}> `, 'ps');
+    termWrite(`Run ${active}\n`, 'cmd');
+    const r = await api.run.file(active).catch((err) => ({ error: errMsg(err) }));
+    if (r.error)
+        termWrite(r.error + '\n', 'err');
+    else if (r.id != null) {
+        term.proc = term.runId = r.id;
+        $('#termPs').classList.add('busy');
+    }
+    termInput.focus();
 }
 termInput.addEventListener('keydown', e => {
     if (terminalAutofillKeys(e))
@@ -3152,6 +3185,7 @@ api.term.onExit((id, code) => {
     if (id !== term.proc)
         return;
     term.proc = null;
+    term.runId = null;
     $('#termPs').classList.remove('busy');
     if (code)
         termWrite(`exited with code ${code}\n`, 'err');
@@ -3352,6 +3386,10 @@ function ghostMatch(value) {
     return word ? value + word.slice(token.length) : '';
 }
 function updateGhost() {
+    if (term.proc != null) {
+        termGhost.innerHTML = '';
+        return;
+    }
     const v = termInput.value, match = ghostMatch(v);
     termGhost.innerHTML = match ? `<span class="typed">${esc(v)}</span>${esc(match.slice(v.length))}` : '';
 }
@@ -3408,6 +3446,8 @@ async function completeTerminal() {
 }
 // Keys the terminal's autofill handles before the normal ones; true when handled.
 function terminalAutofillKeys(e) {
+    if (term.proc != null)
+        return false;
     if (suggestKeys(e, termInput))
         return true;
     if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
@@ -3547,9 +3587,15 @@ const commands = {
     'go.nextProblem': nextProblem,
     'go.nextEditor': () => cycleTab(1),
     'go.prevEditor': () => cycleTab(-1),
-    'run.start': () => (running ? reloadPreview() : startPreview()),
+    'run.file': runFile,
+    'run.start': () => (runnable(active) ? run('run.file') : running ? reloadPreview() : startPreview()),
     'run.reload': reloadPreview,
-    'run.stop': () => { stopPreview(); toast('Preview stopped'); },
+    'run.stop': () => { if (term.runId != null)
+        killCommand();
+    else {
+        stopPreview();
+        toast('Preview stopped');
+    } },
     'term.toggle': () => { layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
         termInput.focus(); },
     'term.focus': () => { layout.termOpen = true; applyLayout(); termInput.focus(); },
@@ -3714,9 +3760,10 @@ const MENUS = [
             { label: 'Previous Editor', act: 'go.prevEditor', key: 'Ctrl+Shift+Tab' },
         ] },
     { name: 'Run', items: [
-            { label: 'Start Preview', act: 'run.start', key: 'F5' },
+            { label: 'Run File', act: 'run.file', enabled: () => runnable(active) },
+            { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
             { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
-            { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running },
+            { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
         ] },
     { name: 'Terminal', items: [
             { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
