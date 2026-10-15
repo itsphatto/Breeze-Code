@@ -39,6 +39,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ---------- logo ---------- */
 .logo { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 700; letter-spacing: -.01em; }
 .logo svg { color: var(--blue); }
+.logo img { display: block; height: 22px; width: auto; }
 
 /* ---------- onboarding ---------- */
 .onboard { position: fixed; inset: 0; display: grid; place-items: center; background:
