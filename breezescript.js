@@ -3139,6 +3139,10 @@ async function runFile() {
         toast('Save the file first');
         return;
     }
+    if (term.proc != null && term.runId == null) {
+        toast('A command is still running — press Ctrl+C to stop it');
+        return;
+    }
     if (isDirty(b) && !(await saveFile(active)))
         return;
     layout.termOpen = true;

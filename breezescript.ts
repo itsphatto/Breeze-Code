@@ -2716,6 +2716,7 @@ function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|c
 async function runFile(): Promise<void> {
   const b = activeBuf();
   if (!active || b?.kind !== 'text') { toast('Save the file first'); return; }
+  if (term.proc != null && term.runId == null) { toast('A command is still running — press Ctrl+C to stop it'); return; }
   if (isDirty(b) && !(await saveFile(active))) return;
   layout.termOpen = true; applyLayout();
   const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
