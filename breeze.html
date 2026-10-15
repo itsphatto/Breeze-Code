@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file:; frame-src 'self' file:">
 <title>Breeze IDE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Inter:wght@400;500;600&family=B612+Mono&display=swap" rel="stylesheet">
@@ -23,10 +23,22 @@
   <symbol id="i-share" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></g></symbol>
   <symbol id="i-gh" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.4 1.1 2.9.8.1-.6.4-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.6 9.6 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9V21c0 .3.2.6.7.5A10 10 0 0 0 12 2z"/></symbol>
   <symbol id="i-google" viewBox="0 0 24 24"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.4 14c-.2-.6-.3-1.3-.3-2s.1-1.4.3-2V7.4H3.1a10 10 0 0 0 0 9.2z"/><path fill="#EA4335" d="M12 6c1.5 0 2.8.5 3.8 1.5l2.9-2.9A10 10 0 0 0 3.1 7.4L6.4 10C7.2 7.7 9.4 6 12 6z"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></g></symbol>
+  <symbol id="i-left-on" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></g><rect x="3.8" y="4.8" width="4.4" height="14.4" fill="currentColor"/></symbol>
+  <symbol id="i-bottom" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 14h18"/></g></symbol>
+  <symbol id="i-bottom-on" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 14h18"/></g><rect x="3.8" y="14.8" width="16.4" height="4.4" fill="currentColor"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></g></symbol>
+  <symbol id="i-right-on" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></g><rect x="15.8" y="4.8" width="4.4" height="14.4" fill="currentColor"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-newfile" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z M13 3v6h6"/><path d="M12 12v6M9 15h6"/></g></symbol>
+  <symbol id="i-newdir" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/></g></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></g></symbol>
+  <symbol id="i-collapse" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12h8"/></g></symbol>
 </svg>
 
 <!-- ================= ONBOARDING ================= -->
 <div class="onboard" id="onboard">
+  <div class="drag-strip"></div>
   <!-- Step 1: Welcome -->
   <section class="ob-step" data-step="0">
     <svg width="72" height="72" style="color:var(--blue)"><use href="#i-swirl"/></svg>
@@ -57,32 +69,27 @@
   <!-- Step 3: Setup -->
   <section class="ob-step hidden" data-step="2" style="width:min(620px, calc(100vw - 32px))">
     <h2>Let's get you set up</h2>
-    <p class="lead">Every card is optional. You can come back to this in Settings.</p>
+    <p class="lead">Every card is optional. You can come back to this from Settings (the gear icon) → Run Setup Again.</p>
     <div class="setup-grid">
       <div class="setup-card">
-        <header><h3>1 · Connect your AI</h3><span class="pill" id="aiPill">Not connected</span></header>
-        <p class="muted">We didn't find a local model. Paste a Google Gemini key — it's saved in Windows' credential store, never in a file.</p>
-        <div class="row">
-          <select class="select" style="padding:8px" aria-label="Provider"><option>Google Gemini</option><option>Anthropic</option><option>OpenAI</option><option>Ollama (local)</option></select>
-          <input class="input" id="aiKey" type="password" placeholder="Paste your API key" autocomplete="off">
-          <button class="btn" id="aiTest">Test</button>
-          <svg id="aiSwirl" class="hidden" width="22" height="22" style="color:var(--blue)"><use href="#i-swirl"/></svg>
-        </div>
+        <header><h3>1 · Your AI agent</h3><span class="row" style="gap:6px"><span class="pill" id="aiPill">Scanning…</span><button class="btn btn-ghost btn-sm" id="rescan" title="Scan again"><svg width="13" height="13" style="vertical-align:-2px"><use href="#i-refresh"/></svg></button></span></header>
+        <p class="muted" id="aiHint">Looking for coding agents installed on this computer…</p>
+        <div class="agent-list" id="agentList"></div>
       </div>
       <div class="setup-card">
-        <header><h3>2 · Git and Node</h3><span class="pill warn" id="nodePill">Node missing</span></header>
-        <p class="muted"><span class="pill ok">Git 2.47 ready</span> &nbsp;Node.js wasn't found on this PC.</p>
-        <div class="row">
-          <code style="font:12px var(--font-code);color:var(--text-2);flex:1">winget install OpenJS.NodeJS.LTS</code>
-          <button class="btn btn-sm" id="nodeInstall">Install with consent</button>
-        </div>
+        <header><h3>2 · Git and Node</h3><span class="pill" id="toolsPill">Scanning…</span></header>
+        <div class="row" id="toolList"></div>
       </div>
       <div class="setup-card">
         <header><h3>3 · Start a project</h3></header>
         <div class="seg" style="margin-bottom:10px">
-          <button class="on" data-seg>Describe it</button><button data-seg>Open a folder</button><button data-seg>Blank</button>
+          <button class="on" data-seg="describe">Describe it</button><button data-seg="folder">Open a folder</button><button data-seg="blank">Blank</button>
         </div>
         <input class="input" style="width:100%" id="projPrompt" placeholder="e.g. A landing page for my coffee shop" value="">
+        <div class="row hidden" id="projFolderRow">
+          <span class="folder-path" id="projFolder">No folder chosen</span>
+          <button class="btn btn-sm" id="pickFolder">Choose folder…</button>
+        </div>
       </div>
     </div>
     <button class="btn btn-primary btn-lg" id="startBuilding">Start building</button>
@@ -95,37 +102,56 @@
 <div class="ide hidden" id="ide">
   <header class="titlebar">
     <span class="logo"><img src="BreezeIDE.png" alt="Breeze IDE"></span>
-    <span class="project">coffee-shop-landing</span>
+    <nav class="menubar" id="menubar" aria-label="Application menu"></nav>
     <span class="spacer"></span>
+    <span class="project" id="projectName">No folder</span>
+    <span class="spacer"></span>
+    <div class="layout-btns">
+      <button class="icon-btn" id="tglSide" title="Toggle Primary Side Bar (Ctrl+B)"><svg width="16" height="16"><use href="#i-left-on"/></svg></button>
+      <button class="icon-btn" id="tglTerm" title="Toggle Panel (Ctrl+`)"><svg width="16" height="16"><use href="#i-bottom"/></svg></button>
+      <button class="icon-btn" id="tglAgents" title="Toggle Agents (Ctrl+Alt+B)"><svg width="16" height="16"><use href="#i-right-on"/></svg></button>
+    </div>
     <div class="avatars" id="avatars"><span class="avatar" style="background:#7aa9ff" title="You (host)">YO</span></div>
     <button class="btn btn-sm" id="runBtn"><svg width="11" height="11" style="vertical-align:-1px;color:var(--ok)"><use href="#i-play"/></svg>&nbsp; Run</button>
     <button class="btn btn-sm btn-primary" id="shareBtn"><svg width="12" height="12" style="vertical-align:-1px"><use href="#i-share"/></svg>&nbsp; Share</button>
   </header>
 
-  <div class="main">
+  <div class="main" id="main">
     <nav class="activity" aria-label="Views">
-      <button class="act-btn on" data-view="files" title="Files"><svg width="20" height="20"><use href="#i-files"/></svg></button>
-      <button class="act-btn" data-view="search" title="Search"><svg width="20" height="20"><use href="#i-search"/></svg></button>
-      <button class="act-btn" data-view="git" title="Checkpoints"><svg width="20" height="20"><use href="#i-git"/></svg><span class="badge"></span></button>
+      <button class="act-btn on" data-view="files" title="Explorer (Ctrl+Shift+E)"><svg width="20" height="20"><use href="#i-files"/></svg></button>
+      <button class="act-btn" data-view="search" title="Search (Ctrl+Shift+F)"><svg width="20" height="20"><use href="#i-search"/></svg></button>
+      <button class="act-btn" data-view="git" title="Checkpoints (Ctrl+Shift+G)"><svg width="20" height="20"><use href="#i-git"/></svg><span class="badge"></span></button>
       <button class="act-btn" data-view="people" title="People"><svg width="20" height="20"><use href="#i-users"/></svg></button>
       <span style="flex:1"></span>
-      <button class="act-btn" title="Settings" data-toast="Settings — re-run setup, sign out, Discord presence"><svg width="20" height="20"><use href="#i-gear"/></svg></button>
+      <button class="act-btn" title="Settings" id="settingsBtn"><svg width="20" height="20"><use href="#i-gear"/></svg></button>
     </nav>
 
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <!-- Files -->
       <div data-panel="files" style="display:contents">
-        <div class="side-head">Files <span class="pill" title="File-lock map">locks on</span></div>
-        <div class="side-body" id="tree"></div>
+        <div class="side-head"><span>Explorer</span>
+          <span class="head-actions">
+            <button class="icon-btn" data-act="file.newFile" title="New File"><svg width="14" height="14"><use href="#i-newfile"/></svg></button>
+            <button class="icon-btn" data-act="file.newFolder" title="New Folder"><svg width="14" height="14"><use href="#i-newdir"/></svg></button>
+            <button class="icon-btn" data-act="explorer.refresh" title="Refresh"><svg width="14" height="14"><use href="#i-refresh"/></svg></button>
+            <button class="icon-btn" data-act="explorer.collapse" title="Collapse Folders"><svg width="14" height="14"><use href="#i-collapse"/></svg></button>
+            <button class="icon-btn" data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14"><use href="#i-chev"/></svg></button>
+          </span>
+        </div>
+        <div class="side-body" id="tree" tabindex="-1"></div>
       </div>
       <!-- Search -->
       <div data-panel="search" class="hidden" style="display:contents">
-        <div class="side-head">Search</div>
-        <div class="side-body"><input class="input" style="width:100%" placeholder="Find in project"><p style="color:var(--text-3);padding:8px">Type to search across files.</p></div>
+        <div class="side-head"><span>Search</span><span class="head-actions"><button class="icon-btn" data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
+        <div class="search-box">
+          <input class="input" id="searchInput" placeholder="Find in project" spellcheck="false">
+          <button class="icon-btn toggle" id="searchCase" title="Match Case">Aa</button>
+        </div>
+        <div class="side-body" id="searchResults"><p class="side-note">Type and press Enter to search across files.</p></div>
       </div>
       <!-- Git -->
       <div data-panel="git" class="hidden" style="display:contents">
-        <div class="side-head">Checkpoints <span style="text-transform:none;letter-spacing:0">main</span></div>
+        <div class="side-head"><span>Checkpoints <span style="text-transform:none;letter-spacing:0">main</span></span><span class="head-actions"><button class="icon-btn" data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
         <div style="display:flex;gap:6px;padding:0 10px 8px">
           <button class="btn btn-sm btn-primary" style="flex:1" id="saveCp">Save a checkpoint</button>
           <button class="btn btn-sm" data-toast="Branch created: try-dark-theme">New branch</button>
@@ -135,48 +161,68 @@
       </div>
       <!-- People -->
       <div data-panel="people" class="hidden" style="display:contents">
-        <div class="side-head">People in session</div>
+        <div class="side-head"><span>People in session</span><span class="head-actions"><button class="icon-btn" data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
         <div class="side-body" id="people"></div>
       </div>
+      <div class="sash sash-v" data-sash="side"></div>
     </aside>
 
     <section class="center">
       <div class="work" id="work">
-        <div class="pane">
+        <div class="pane" id="editorPane">
           <div class="tabs" id="tabs"></div>
-          <div class="editor" id="editor"></div>
+          <div class="editor" id="editor">
+            <div class="gutter" id="gutter"></div>
+            <div class="code">
+              <pre class="hl" id="hl" aria-hidden="true"></pre>
+            </div>
+            <div class="findbar hidden" id="findbar">
+              <input class="input" id="findInput" placeholder="Find" spellcheck="false">
+              <span class="find-count" id="findCount"></span>
+              <button class="icon-btn" id="findPrev" title="Previous (Shift+Enter)">↑</button>
+              <button class="icon-btn" id="findNext" title="Next (Enter)">↓</button>
+              <button class="icon-btn" id="findClose" title="Close (Escape)">✕</button>
+            </div>
+            <div class="empty editor-empty" id="editorEmpty"></div>
+          </div>
         </div>
-        <div class="pane preview">
+        <div class="pane preview" id="previewPane">
+          <div class="sash sash-v sash-left" data-sash="preview"></div>
           <div class="preview-bar">
             <span style="color:var(--text-3);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600">Preview</span>
             <span class="url" id="previewUrl"><span class="live hidden" id="liveDot"></span><span id="urlText">Not running</span></span>
-            <button class="btn btn-ghost btn-sm" title="Open in browser" data-toast="Opened in your system browser">↗</button>
+            <button class="icon-btn" title="Reload Preview" data-act="run.reload"><svg width="13" height="13"><use href="#i-refresh"/></svg></button>
+            <button class="icon-btn" title="Close Preview" data-act="view.togglePreview">✕</button>
           </div>
           <div class="empty" id="previewEmpty">
             <div>
               <svg width="36" height="36"><use href="#i-play"/></svg>
               <h4>Nothing to preview yet</h4>
-              <div>Press <b>Run</b> to start the live server.</div>
+              <div>Press <b>Run</b> to preview the project's index.html.</div>
             </div>
           </div>
-          <div class="preview-frame hidden" id="previewFrame"></div>
+          <iframe class="preview-frame hidden" id="previewFrame" title="Preview"></iframe>
         </div>
       </div>
 
-      <div class="terminal">
+      <div class="terminal" id="terminal">
+        <div class="sash sash-h" data-sash="term"></div>
         <div class="term-head" id="termToggle">
-          <span>▸ Terminal</span><span style="text-transform:none;letter-spacing:0;font-weight:400">Not shared</span><span class="spacer"></span><span>⌃`</span>
+          <span id="termTitle">▸ Terminal</span><span id="termShare" style="text-transform:none;letter-spacing:0;font-weight:400">Not shared</span><span class="spacer"></span>
+          <button class="icon-btn" data-act="term.clear" title="Clear">⌫</button>
+          <button class="icon-btn" data-act="term.kill" title="Stop running command (Ctrl+C)">■</button>
+          <span>Ctrl+`</span>
         </div>
-        <div class="term-body hidden" id="termBody">
-          <div><span class="ps">PS C:\coffee-shop-landing&gt;</span> breeze serve</div>
-          <div>Live server listening on http://127.0.0.1:51327 (project folder only)</div>
-          <div><span class="ps">PS C:\coffee-shop-landing&gt;</span> <span class="cursor" style="background:var(--text-2)"></span></div>
+        <div class="term-body" id="termBody">
+          <div id="termOut"></div>
+          <div class="term-line"><span class="ps" id="termPs">&gt;</span><input id="termInput" spellcheck="false" autocomplete="off" aria-label="Terminal input"></div>
         </div>
       </div>
     </section>
 
-    <aside class="agents">
-      <div class="side-head">Agents <span class="pill blue" style="text-transform:none;letter-spacing:0">Gemini · approve plan</span></div>
+    <aside class="agents" id="agents">
+      <div class="sash sash-v sash-left" data-sash="agents"></div>
+      <div class="side-head"><span>Agents</span><span class="row" style="gap:6px"><span class="pill blue" id="agentPill" style="text-transform:none;letter-spacing:0">No agent</span><button class="icon-btn flip" data-act="view.toggleAgents" title="Hide Agents"><svg width="14" height="14"><use href="#i-chev"/></svg></button></span></div>
       <div class="agent-cards" id="agentCards"></div>
       <div class="chat" id="chat"></div>
       <div class="composer">
@@ -193,12 +239,14 @@
 
   <footer class="statusbar">
     <button class="sb" data-view-jump="git">⎇ main</button>
-    <span class="sb"><span class="dot-ok"></span> Git ready · Node ready</span>
+    <span class="sb" id="sbTools"><span class="dot-ok"></span> Checking tools…</span>
     <span class="sb" id="sbShare">Not sharing</span>
     <span class="spacer"></span>
     <button class="sb" id="vibeArm" title="Vibe Mode: shows a Short while agents work">◌ Vibe Mode off</button>
     <button class="sb" id="discord" title="Discord presence">Discord: off</button>
-    <span class="sb">HTML · UTF-8</span>
+    <button class="sb" id="sbPos" data-act="go.line">Ln 1, Col 1</button>
+    <span class="sb" id="sbLang">Plain Text</span>
+    <span class="sb" id="sbEol">UTF-8</span>
     <span class="sb" id="userChip">—</span>
   </footer>
 </div>
@@ -210,6 +258,7 @@
   <div class="vibe-ready hidden" id="vibeReady"><span>Your code is ready</span><button class="btn btn-sm" style="background:#fff;color:#000;border:none" id="vibeBack">Show me</button></div>
 </div>
 
+<div id="menuRoot"></div>
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
