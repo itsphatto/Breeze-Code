@@ -107,19 +107,39 @@ function toolEnv(baseEnv, binDirs, platform, pathValue) {
   return env;
 }
 
+// What to tell the user when a tool isn't installed. `cmd` is the single command to run, if there is one.
 const MISSING = {
   c: {
-    win32: 'No C/C++ compiler found. Install one with: winget install BrechtSanders.WinLibs.POSIX.UCRT',
-    darwin: 'No C/C++ compiler found. Install one with: xcode-select --install',
-    other: 'No C/C++ compiler found. Install gcc with your package manager (e.g. sudo apt install build-essential)',
+    win32: { lead: 'No C/C++ compiler found. Install one with:', cmd: 'winget install BrechtSanders.WinLibs.POSIX.UCRT' },
+    darwin: { lead: 'No C/C++ compiler found. Install one with:', cmd: 'xcode-select --install' },
+    other: { lead: 'No C/C++ compiler found. Install gcc with your package manager (e.g. sudo apt install build-essential)' },
   },
   py: {
-    win32: "Python wasn't found. Install it with: winget install Python.Python.3.13",
-    darwin: "Python wasn't found. Install it with: xcode-select --install",
-    other: "Python wasn't found. Install python3 with your package manager",
+    win32: { lead: "Python wasn't found. Install it with:", cmd: 'winget install Python.Python.3.13' },
+    darwin: { lead: "Python wasn't found. Install it with:", cmd: 'xcode-select --install' },
+    other: { lead: "Python wasn't found. Install python3 with your package manager" },
   },
 };
-const missing = (kind, platform) => MISSING[kind][platform] || MISSING[kind].other;
+const entry = (kind, platform) => MISSING[kind][platform] || MISSING[kind].other;
+const missing = (kind, platform) => { const m = entry(kind, platform); return m.cmd ? m.lead + '\n' + m.cmd : m.lead; };
+// Short install hint for the tools list: the command, or the plain advice where there is none.
+const installHint = (kind, platform) => { const m = entry(kind, platform); return m.cmd || m.lead; };
+
+// PATH entries: `fresh` first, then those of `inherited` that `fresh` lacks (case-insensitive on Windows, trailing separators ignored).
+function mergePath(fresh, inherited, platform) {
+  const win = platform === 'win32';
+  const delim = win ? ';' : ':';
+  const norm = (d) => { const c = d.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, ''); return win ? c.toLowerCase() : c; };
+  const seen = new Set();
+  const out = [];
+  for (const d of [...(fresh || '').split(delim), ...(inherited || '').split(delim)]) {
+    const k = norm(d);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(d.trim());
+  }
+  return out.join(delim);
+}
 
 function runPlan(absFile, tools, platform, stdioHeader) {
   const P = pathFor(platform);
@@ -132,7 +152,8 @@ function runPlan(absFile, tools, platform, stdioHeader) {
     if (!py) return { error: missing('py', platform) };
     const pre = py.name === 'py' ? ['-3'] : [];
     return {
-      steps: [{ display: `${py.name} ${[...pre, '-u'].join(' ')} "${base}"`, file: py.path, args: [...pre, '-u', absFile], cwd }],
+      // UTF-8 so print("café ✓") works when stdout is a pipe on a non-UTF-8 Windows code page
+      steps: [{ display: `${py.name} ${[...pre, '-u'].join(' ')} "${base}"`, file: py.path, args: [...pre, '-u', absFile], cwd, env: { PYTHONUTF8: '1' } }],
     };
   }
 
@@ -183,7 +204,7 @@ function runSteps(steps, { spawn, env, onStart, onData, onChild, onDone }) {
       else if (code !== 0 || i === steps.length - 1) finish(code);
       else next(i + 1);
     };
-    child = spawn(step.file, step.args, { cwd: step.cwd, env, windowsHide: true });
+    child = spawn(step.file, step.args, { cwd: step.cwd, env: step.env ? { ...env, ...step.env } : env, windowsHide: true });
     onChild(child);
     // one decoder per stream so a multi-byte character split across chunks stays whole
     const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8')];
@@ -217,4 +238,4 @@ function ensureBuildIgnored(rootDir) {
   fs.appendFileSync(file, (text === '' || text.endsWith('\n') ? '' : '\n') + 'build/\n');
 }
 
-module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored };
+module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint };

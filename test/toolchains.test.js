@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored } = require('../toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint } = require('../toolchains');
 
 const H = 'C:\\app\\runtime\\breeze_stdio.h';
 const T = (p, name, version = '1.0') => ({ path: p, name, version });
@@ -72,7 +72,7 @@ test('runPlan rejects other files', () => {
   assert.deepEqual(runPlan('C:\\p\\a.js', tools, 'win32', H), { error: 'Breeze can run .c, .cpp and .py files' });
 });
 
-const WIN_C = 'No C/C++ compiler found. Install one with: winget install BrechtSanders.WinLibs.POSIX.UCRT';
+const WIN_C = 'No C/C++ compiler found. Install one with:\nwinget install BrechtSanders.WinLibs.POSIX.UCRT';
 
 test('runPlan missing C on Windows gives the winget command', () =>
   assert.equal(runPlan('C:\\p\\a.c', { cc: null, cxx: null, python: null, binDirs: [] }, 'win32', H).error, WIN_C));
@@ -80,10 +80,10 @@ test('runPlan missing C on Windows gives the winget command', () =>
 test('runPlan with no tools says how to get them', () => {
   const none = { cc: null, cxx: null, python: null, binDirs: [] };
   assert.equal(runPlan('C:\\p\\a.cpp', none, 'win32', H).error, WIN_C);
-  assert.equal(runPlan('/p/a.c', none, 'darwin', H).error, 'No C/C++ compiler found. Install one with: xcode-select --install');
+  assert.equal(runPlan('/p/a.c', none, 'darwin', H).error, 'No C/C++ compiler found. Install one with:\nxcode-select --install');
   assert.equal(runPlan('/p/a.c', none, 'linux', H).error, 'No C/C++ compiler found. Install gcc with your package manager (e.g. sudo apt install build-essential)');
-  assert.equal(runPlan('C:\\p\\a.py', none, 'win32', H).error, "Python wasn't found. Install it with: winget install Python.Python.3.13");
-  assert.equal(runPlan('/p/a.py', none, 'darwin', H).error, "Python wasn't found. Install it with: xcode-select --install");
+  assert.equal(runPlan('C:\\p\\a.py', none, 'win32', H).error, "Python wasn't found. Install it with:\nwinget install Python.Python.3.13");
+  assert.equal(runPlan('/p/a.py', none, 'darwin', H).error, "Python wasn't found. Install it with:\nxcode-select --install");
   assert.equal(runPlan('/p/a.py', none, 'linux', H).error, "Python wasn't found. Install python3 with your package manager");
 });
 
@@ -300,4 +300,31 @@ test('ensureBuildIgnored appends once and never creates', () => {
   ensureBuildIgnored(d);
   assert.equal(fs.readFileSync(path.join(d, '.gitignore'), 'utf8'), '/build/\n');
   fs.rmSync(d, { recursive: true });
+});
+
+test('runPlan Python step sets PYTHONUTF8', () => {
+  assert.equal(runPlan('C:\\p\\a.py', tools, 'win32', H).steps[0].env.PYTHONUTF8, '1');
+  assert.equal(runPlan('C:\\p\\a.c', tools, 'win32', H).steps[0].env, undefined);
+});
+
+test('runSteps merges step.env over env when spawning', async () => {
+  const { spawn, calls } = fakeSpawn([0, 0]);
+  await done((res) => runSteps([{ ...steps[0], env: { X: '2', PYTHONUTF8: '1' } }, steps[1]], { spawn, env: { X: '1', Y: '1' }, onStart() {}, onData() {}, onChild() {}, onDone: res }));
+  assert.deepEqual(calls[0].opts.env, { X: '2', Y: '1', PYTHONUTF8: '1' });
+  assert.deepEqual(calls[1].opts.env, { X: '1', Y: '1' });
+});
+
+test('installHint gives the bare command, or the advice where there is none', () => {
+  assert.equal(installHint('c', 'win32'), 'winget install BrechtSanders.WinLibs.POSIX.UCRT');
+  assert.equal(installHint('py', 'win32'), 'winget install Python.Python.3.13');
+  assert.equal(installHint('c', 'darwin'), 'xcode-select --install');
+  assert.match(installHint('py', 'linux'), /^Python wasn't found. Install python3/);
+});
+
+test('mergePath keeps fresh first, then inherited entries it lacks', () => {
+  assert.equal(
+    mergePath('C:\\Windows;C:\\Tools\\', 'c:\\windows\\;C:\\venv\\Scripts;C:\\tools;;C:\\nm\\.bin', 'win32'),
+    'C:\\Windows;C:\\Tools\\;C:\\venv\\Scripts;C:\\nm\\.bin');
+  assert.equal(mergePath('/usr/bin:/bin', '/opt/x:/usr/bin/:/Bin', 'linux'), '/usr/bin:/bin:/opt/x:/Bin');
+  assert.equal(mergePath('', undefined, 'linux'), '');
 });

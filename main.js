@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored } = require('./toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint } = require('./toolchains');
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'out', '.cache', '__pycache__', '.venv']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -77,6 +77,9 @@ function createWindow() {
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('file://')) e.preventDefault();
   });
+  // A reload or crash drops the renderer's terminal state, so nothing may keep running for it.
+  win.webContents.on('did-start-navigation', (_e, _url, _inPlace, isMainFrame) => { if (isMainFrame) killAllTerms(); });
+  win.webContents.on('render-process-gone', killAllTerms);
   win.on('closed', () => { win = null; vibeView = null; stopWatching(); killAllTerms(); });
 }
 
@@ -391,8 +394,7 @@ ipcMain.handle('term:run', async (_e, command) => {
   const send = chunk => win?.webContents.send('term:data', id, chunk.toString());
   child.stdout.on('data', send);
   child.stderr.on('data', send);
-  child.on('error', err => send(`${err.message}
-`));
+  child.on('error', err => send(`${err.message}\n`));
   child.on('close', code => { terms.delete(id); win?.webContents.send('term:exit', id, code); });
   return { id };
 });
@@ -422,11 +424,13 @@ function glob(pattern) {
 let toolsPromise = null;
 function getTools(force = false) {
   if (!toolsPromise || force) {
-    toolsPromise = (async () => {
-      const pathValue = await freshPath(process.platform, probe);
+    const p = toolsPromise = (async () => {
+      const inheritedKey = Object.keys(process.env).find(k => k.toLowerCase() === 'path');
+      const pathValue = mergePath(await freshPath(process.platform, probe), inheritedKey ? process.env[inheritedKey] : '', process.platform);
       const tools = await findTools({ platform: process.platform, pathValue, env: process.env, exists, glob, run: probe });
       return { tools, pathValue };
     })();
+    p.catch(() => { if (toolsPromise === p) toolsPromise = null; }); // don't keep a failed lookup
   }
   return toolsPromise;
 }
@@ -438,7 +442,7 @@ ipcMain.handle('run:file', async (_e, rel) => {
   if (activeRun) return { error: 'A program is still running — press Ctrl+C to stop it' };
   if (!root) return { error: 'Open a folder first' };
   const claim = activeRun = { id: 0, cancel() { /* still starting */ } };
-  const fail = error => { activeRun = null; return { error }; };
+  const fail = error => { if (activeRun === claim) activeRun = null; return { error }; };
   try {
     const abs = resolveIn(rel);
     const stdioHeader = path.join(__dirname, 'runtime', 'breeze_stdio.h');
@@ -450,32 +454,31 @@ ipcMain.handle('run:file', async (_e, rel) => {
     }
     if (plan.error) return fail(plan.error);
     if (plan.steps.length > 1) fs.mkdirSync(path.join(plan.steps[0].cwd, 'build'), { recursive: true }); // gcc won't create it
-    ensureBuildIgnored(root);
+    if (plan.steps.length > 1) { try { ensureBuildIgnored(root); } catch { /* .gitignore is a nicety */ } }
+    if (activeRun !== claim) return { error: 'Cancelled' }; // the window reloaded while this was starting
     const id = claim.id = nextTermId++;
     const send = text => win?.webContents.send('term:data', id, text);
     // Start after the reply is sent, so the renderer knows the id before the first output arrives.
     setImmediate(() => {
+      if (activeRun !== claim) return; // cancelled (window reloaded) before it started
       try {
         const { cancel } = runSteps(plan.steps, {
           spawn,
           env: toolEnv(process.env, tools.binDirs, process.platform, pathValue),
-          onStart: step => send(`${step.cwd}> ${step.display}
-`),
+          onStart: step => send(`${step.cwd}> ${step.display}\n`),
           onData: send,
           onChild: child => { terms.set(id, child); child.stdin.on('error', ignoreEpipe); },
           onDone: (code, ms) => {
             terms.delete(id);
-            activeRun = null;
-            send(`${code === null ? 'stopped' : `exited with code ${code}`} · ${(ms / 1000).toFixed(1)}s
-`);
+            if (activeRun === claim) activeRun = null;
+            send(`${code === null ? 'stopped' : `exited with code ${code}`} · ${(ms / 1000).toFixed(1)}s\n`);
             win?.webContents.send('term:exit', id, code);
           },
         });
         claim.cancel = cancel;
       } catch (err) {
-        activeRun = null;
-        send(err.message + '
-');
+        if (activeRun === claim) activeRun = null;
+        send(err.message + '\n');
         win?.webContents.send('term:exit', id, 1);
       }
     });
@@ -491,9 +494,9 @@ function killTree(child) {
   else child.kill('SIGTERM');
 }
 ipcMain.handle('term:kill', (_e, id) => {
-  if (activeRun?.id === id) activeRun.cancel();
   const c = terms.get(id);
-  if (c) killTree(c);
+  if (c) killTree(c); // the whole tree first, then stop the run from starting its next step
+  if (activeRun?.id === id) activeRun.cancel();
 });
 // Completes the last word of a terminal line to a file or folder in the terminal's folder.
 ipcMain.handle('term:complete', async (_e, word) => {
@@ -512,6 +515,7 @@ ipcMain.handle('term:complete', async (_e, word) => {
 function killAllTerms() {
   for (const c of terms.values()) killTree(c);
   terms.clear();
+  if (activeRun) { activeRun.cancel(); activeRun = null; }
 }
 
 /* ================= Tool & agent detection ================= */
@@ -606,8 +610,8 @@ ipcMain.handle('sys:detect', async () => {
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
   }));
   const found = (await getTools(true)).tools;
-  for (const [id, name, t] of [['cc', 'C/C++', found.cc], ['python', 'Python', found.python]]) {
-    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true });
+  for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py']]) {
+    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform) });
   }
   return { agents, tools, platform: process.platform };
 });

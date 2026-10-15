@@ -34,7 +34,7 @@ interface SearchHit { path: string; line: number; col: number; text: string; }
 interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
 interface Accounts { accounts: User[]; active: string | null; }
 interface Completion { text: string; dir: boolean; }
-interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; }
+interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 interface Rect { x: number; y: number; width: number; height: number; }
 
@@ -812,6 +812,7 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
 
 const TOOL_DOWNLOADS: Record<string, string> = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
 function toolHtml(t: DetectedTool): string {
+  if (!t.found && t.optional) return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}`;
   if (!t.found) return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ↗</button>`;
   const version = t.version ? ' ' + esc(t.version) : '';
   return `<span class="pill ok">${t.name}${version} ready</span>`;
@@ -2827,6 +2828,12 @@ async function runFile(): Promise<void> {
   const b = activeBuf();
   if (!active || b?.kind !== 'text') { toast('Save the file first'); return; }
   if (term.proc != null && term.runId == null) { toast('A command is still running — press Ctrl+C to stop it'); return; }
+  if (term.runId != null) { // a run is going: main refuses and says so; leave the running program's output and the file alone
+    const busy = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
+    if (busy.error) termWrite(busy.error + '\n', 'err');
+    else if (busy.id != null) { term.proc = term.runId = busy.id; $('#termPs').classList.add('busy'); } // it had just finished
+    return;
+  }
   if (isDirty(b) && !(await saveFile(active))) return;
   layout.termOpen = true; applyLayout();
   clearRunDiags();

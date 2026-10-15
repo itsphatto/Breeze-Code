@@ -773,6 +773,8 @@ function bindAgentOptions(root, onChange) {
 }
 const TOOL_DOWNLOADS = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
 function toolHtml(t) {
+    if (!t.found && t.optional)
+        return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}`;
     if (!t.found)
         return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ↗</button>`;
     const version = t.version ? ' ' + esc(t.version) : '';
@@ -3273,6 +3275,16 @@ async function runFile() {
     }
     if (term.proc != null && term.runId == null) {
         toast('A command is still running — press Ctrl+C to stop it');
+        return;
+    }
+    if (term.runId != null) { // a run is going: main refuses and says so; leave the running program's output and the file alone
+        const busy = await api.run.file(active).catch((err) => ({ error: errMsg(err) }));
+        if (busy.error)
+            termWrite(busy.error + '\n', 'err');
+        else if (busy.id != null) {
+            term.proc = term.runId = busy.id;
+            $('#termPs').classList.add('busy');
+        } // it had just finished
         return;
     }
     if (isDirty(b) && !(await saveFile(active)))

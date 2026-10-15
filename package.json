@@ -6,7 +6,7 @@
     "start": "tsc && electron .",
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --check main.js && node --check preload.js && node --test \"test/**/*.test.js\""
   },
   "devDependencies": {
     "electron": "^44.7.2",
