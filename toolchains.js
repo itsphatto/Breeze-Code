@@ -3,43 +3,119 @@ const path = require('node:path');
 
 const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
 
-const toolchainRoot = ({ isPackaged, resourcesPath, appDir }) =>
-  isPackaged ? path.join(resourcesPath, 'toolchains') : path.join(appDir, 'vendor');
+const WIN_EXTRA = [
+  'C:\\msys64\\ucrt64\\bin',
+  'C:\\msys64\\mingw64\\bin',
+  'C:\\msys64\\clang64\\bin',
+  'C:\\MinGW\\bin',
+  'C:\\mingw64\\bin',
+  'C:\\ProgramData\\mingw64\\mingw64\\bin',
+];
+const WINLIBS = '%LOCALAPPDATA%\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs*\\mingw64\\bin';
 
-async function toolPaths({ platform, root, exists, which }) {
-  if (platform !== 'win32') {
-    return { gcc: await which('cc'), gxx: await which('c++'), python: await which('python3'), binDirs: [] };
+// Compilers in lookup order: [C compiler, its C++ partner]
+const COMPILERS = (platform) => [
+  ['gcc', 'g++'],
+  ['clang', 'clang++'],
+  ...(platform === 'win32' ? [] : [['cc', 'c++']]),
+];
+
+async function findTools(o) {
+  const { platform, pathValue, env, exists, glob, run } = o;
+  const win = platform === 'win32';
+  const P = pathFor(platform);
+  const clean = (d) => d.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, '');
+  const same = (a, b) => (win ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+  const pathDirs = (pathValue || '').split(win ? ';' : ':').map(clean).filter(Boolean);
+  const dirs = [...pathDirs];
+  if (win) {
+    const extra = [...WIN_EXTRA];
+    if (env.LOCALAPPDATA) extra.push(...glob(WINLIBS.replace('%LOCALAPPDATA%', env.LOCALAPPDATA)).map(clean));
+    for (const d of extra) if (!dirs.some((x) => same(x, d))) dirs.push(d);
   }
-  const P = path.win32;
-  const gccBin = P.join(root, 'w64devkit', 'bin');
-  const pyDir = P.join(root, 'python');
-  const pick = (p) => (exists(p) ? p : null);
-  return {
-    gcc: pick(P.join(gccBin, 'gcc.exe')),
-    gxx: pick(P.join(gccBin, 'g++.exe')),
-    python: pick(P.join(pyDir, 'python.exe')),
-    binDirs: [gccBin, pyDir, P.join(pyDir, 'Scripts')].filter(exists),
+
+  const file = (dir, name) => P.join(dir, win ? name + '.exe' : name);
+  // First candidate that exists and passes `--version` (the Store python shortcut exits non-zero).
+  const probe = async (candDirs, name, pre = []) => {
+    for (const dir of candDirs) {
+      const p = file(dir, name);
+      if (!exists(p)) continue;
+      const r = await run(p, [...pre, '--version']).catch(() => null);
+      if (r && r.code === 0) return { dir, path: p, name, version: String(r.stdout || '').split(/\r?\n/)[0].trim() };
+    }
+    return null;
   };
+  const tool = (f) => f && { path: f.path, name: f.name, version: f.version };
+
+  let cc = null, cxx = null, ccDir = null;
+  for (const [c, cpp] of COMPILERS(platform)) {
+    const f = await probe(dirs, c);
+    if (!f) continue;
+    cc = tool(f);
+    ccDir = f.dir;
+    cxx = tool(await probe([f.dir], cpp));
+    break;
+  }
+
+  let python = null;
+  if (win) {
+    const f = await probe(pathDirs, 'py', ['-3']);
+    if (f) python = tool(f);
+  }
+  if (!python) {
+    const f = await probe(pathDirs, win ? 'python' : 'python3');
+    if (f) {
+      const r = await run(f.path, ['-c', 'import sys; print(sys.executable)']).catch(() => null);
+      const exe = r && r.code === 0 ? String(r.stdout || '').trim() : '';
+      python = tool({ ...f, path: exe || f.path });
+    }
+  }
+
+  const binDirs = [];
+  for (const t of [cc, cxx, python]) {
+    if (!t) continue;
+    const d = P.dirname(t.path);
+    if (!pathDirs.some((x) => same(x, d)) && !binDirs.some((x) => same(x, d))) binDirs.push(d);
+  }
+  return { cc, cxx, python, binDirs };
 }
 
-function toolEnv(baseEnv, binDirs, platform) {
+async function freshPath(platform, run) {
+  const fallback = () => {
+    const key = Object.keys(process.env).find((k) => k.toLowerCase() === 'path');
+    return (key && process.env[key]) || '';
+  };
+  if (platform !== 'win32') return process.env.PATH || '';
+  try {
+    const r = await run('powershell.exe', ['-NoProfile', '-Command',
+      "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"]);
+    const out = r && r.code === 0 ? String(r.stdout || '').trim() : '';
+    return out || fallback();
+  } catch {
+    return fallback();
+  }
+}
+
+function toolEnv(baseEnv, binDirs, platform, pathValue) {
   const env = { ...baseEnv };
   const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
   const delim = platform === 'win32' ? ';' : ':';
-  env[key] = [...binDirs, ...(env[key] ? [env[key]] : [])].join(delim);
+  const base = pathValue != null ? pathValue : env[key];
+  env[key] = [...binDirs, ...(base ? [base] : [])].join(delim);
   return env;
 }
 
 const MISSING = {
   c: {
-    win32: "Compilers aren't downloaded yet — run npm run fetch-toolchains",
-    darwin: 'Install a C compiler (xcode-select --install)',
-    other: 'Install a C compiler with your package manager',
+    win32: 'No C/C++ compiler found. Install one with: winget install BrechtSanders.WinLibs.POSIX.UCRT',
+    darwin: 'No C/C++ compiler found. Install one with: xcode-select --install',
+    other: 'No C/C++ compiler found. Install gcc with your package manager (e.g. sudo apt install build-essential)',
   },
   py: {
-    win32: "Python isn't downloaded yet — run npm run fetch-toolchains",
-    darwin: 'Install Python 3 (xcode-select --install)',
-    other: 'Install Python 3 with your package manager',
+    win32: "Python wasn't found. Install it with: winget install Python.Python.3.13",
+    darwin: "Python wasn't found. Install it with: xcode-select --install",
+    other: "Python wasn't found. Install python3 with your package manager",
   },
 };
 const missing = (kind, platform) => MISSING[kind][platform] || MISSING[kind].other;
@@ -51,13 +127,17 @@ function runPlan(absFile, tools, platform, stdioHeader) {
   const e = ext.toLowerCase();
 
   if (e === '.py') {
-    if (!tools.python) return { error: missing('py', platform) };
-    return { steps: [{ display: `python -u "${base}"`, file: tools.python, args: ['-u', absFile], cwd }] };
+    const py = tools.python;
+    if (!py) return { error: missing('py', platform) };
+    const pre = py.name === 'py' ? ['-3'] : [];
+    return {
+      steps: [{ display: `${py.name} ${[...pre, '-u'].join(' ')} "${base}"`, file: py.path, args: [...pre, '-u', absFile], cwd }],
+    };
   }
 
   const cpp = ['.cpp', '.cc', '.cxx'].includes(e);
   if (e !== '.c' && !cpp) return { error: 'Breeze can run .c, .cpp and .py files' };
-  const compiler = cpp ? tools.gxx : tools.gcc;
+  const compiler = cpp ? tools.cxx : tools.cc;
   if (!compiler) return { error: missing('c', platform) };
 
   const out = P.join('build', name + (platform === 'win32' ? '.exe' : ''));
@@ -66,8 +146,8 @@ function runPlan(absFile, tools, platform, stdioHeader) {
   return {
     steps: [
       {
-        display: `${cpp ? 'g++' : 'gcc'} "${base}" -o "${out}" ${flags.join(' ')}`,
-        file: compiler,
+        display: `${compiler.name} "${base}" -o "${out}" ${flags.join(' ')}`,
+        file: compiler.path,
         args: [absFile, '-o', out, ...flags, '-include', stdioHeader],
         cwd,
       },
@@ -134,4 +214,4 @@ function ensureBuildIgnored(rootDir) {
   fs.appendFileSync(file, (text === '' || text.endsWith('\n') ? '' : '\n') + 'build/\n');
 }
 
-module.exports = { toolchainRoot, toolPaths, toolEnv, runPlan, runSteps, ensureBuildIgnored };
+module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored };
