@@ -1,15 +1,47 @@
 {
-  "name": "breeze-ide-frontend",
+  "name": "breeze-ide",
   "private": true,
+  "version": "0.2.0",
+  "description": "Breeze IDE",
+  "author": "itsphatto",
   "main": "main.js",
   "scripts": {
     "start": "tsc && electron .",
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "node --check main.js && node --check preload.js && node --test \"test/**/*.test.js\""
+    "test": "node --check main.js && node --check preload.js && node --test \"test/**/*.test.js\"",
+    "dist": "tsc && electron-builder --win",
+    "predist": "node scripts/write-config.js"
   },
   "devDependencies": {
     "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "com.breeze.ide",
+    "productName": "Breeze IDE",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "toolchains.js",
+      "discord.js",
+      "breezescript.js",
+      "breeze.html",
+      "breeze.css",
+      "runtime/**",
+      "*.png",
+      "package.json",
+      "breeze.config.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "Icon.png"
+    }
   }
 }
