@@ -60,6 +60,8 @@ async function fetchTool(name, entry, vendor, deps = {}) {
     fs.mkdirSync(vendor, { recursive: true });
     fs.rmSync(target, { recursive: true, force: true });
     fs.cpSync(path.join(unpacked, entry.inner), target, { recursive: true });
+    // Optional step run in the tool folder with its python.exe. For python it reinstalls the bundled pip wheel offline so Scripts/pip.exe exists (ensurepip skips when pip is already present).
+    if (entry.postInstall) execFileSync(path.join(target, 'python.exe'), entry.postInstall, { cwd: target, stdio: 'inherit' });
 
     const versions = readVersions(vendor);
     versions[name] = entry.version;

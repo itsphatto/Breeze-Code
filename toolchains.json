@@ -13,6 +13,7 @@
     "sha256": "e1f9233e780fbe951e531b0eb207d794e1c3fb39d523a6f481f4fc01ef2b6ca5",
     "archive": "tar.gz",
     "inner": "python",
-    "dest": "python"
+    "dest": "python",
+    "postInstall": ["-m", "pip", "install", "--force-reinstall", "--no-index", "--no-warn-script-location", "--find-links", "Lib/ensurepip/_bundled", "pip"]
   }
 }
