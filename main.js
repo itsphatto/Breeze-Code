@@ -950,6 +950,8 @@ ipcMain.handle('git:sync', async (_e, op) => {
 
 /* ================= Sign in with GitHub / Google ================= */
 // Client ids come from breeze.config.json next to this file, or from environment variables.
+// A .env next to this file fills in environment variables; ones already set in the shell win.
+try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
 function authConfig() {
   let file = {};
   try { file = JSON.parse(fs.readFileSync(path.join(__dirname, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
