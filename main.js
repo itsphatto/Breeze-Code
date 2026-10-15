@@ -1017,9 +1017,11 @@ async function githubSignIn({ clientId }, signal) {
   };
   const token = await poll((dc.interval || 5) * 1000);
   setSecret('githubToken', token);
-  const u = await (await fetch('https://api.github.com/user', {
+  const ur = await fetch('https://api.github.com/user', {
     signal, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'Breeze-IDE' },
-  })).json();
+  });
+  if (!ur.ok) throw new Error('GitHub signed you in but did not share your profile. Try again.');
+  const u = await ur.json();
   return { provider: 'GitHub', name: u.name || u.login, login: u.login, email: u.email || null, avatar: u.avatar_url || null };
 }
 
@@ -1069,7 +1071,9 @@ async function googleSignIn({ clientId, clientSecret }, signal) {
   const tok = await tr.json();
   if (!tr.ok) throw new Error(tok.error_description || tok.error || 'Google did not accept the sign-in');
   if (tok.refresh_token) setSecret('googleToken', tok.refresh_token);
-  const u = await (await fetch('https://openidconnect.googleapis.com/v1/userinfo', { signal, headers: { Authorization: `Bearer ${tok.access_token}` } })).json();
+  const ur = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { signal, headers: { Authorization: `Bearer ${tok.access_token}` } });
+  if (!ur.ok) throw new Error('Google signed you in but did not share your profile. Try again.');
+  const u = await ur.json();
   return { provider: 'Google', name: u.name || u.email, login: u.email, email: u.email || null, avatar: u.picture || null };
 }
 

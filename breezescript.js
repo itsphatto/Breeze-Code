@@ -422,7 +422,7 @@ async function startSignIn(provider) {
     $('#signinMsg').textContent = `Opening ${provider} in your browser…`;
     const r = await api.auth.start(provider).catch(e => ({ error: errMsg(e) }));
     if (r.error === 'not-configured') {
-        signinError(`Looks like ${provider} login isn't hooked up yet! Grab a Client ID, add it to breeze.config.json (there's an example config to help), and give Breeze a restart. Or, skip it for now and jump right in.`);
+        signinError(`Looks like ${provider} login isn't hooked up yet! Grab a Client ID, add it to .env (or breeze.config.json — there's an example config to help), and give Breeze a restart. Or, skip it for now and jump right in.`);
     }
     else if (r.error)
         signinError(r.error);
