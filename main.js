@@ -1010,9 +1010,19 @@ async function runLocal(runId, run, { mode, prompt, session, base }) {
   const cfg = await llmConfig(false);
   if (!cfg?.model) throw new Error('Connect a local LLM server first (Settings → Run Setup Again).');
   const sid = session && llmSessions.has(session) ? session : crypto.randomUUID();
+  // Reliability rules adapted from the Gravitas skill (MIT, github.com/udaysharmadev/Gravitas), trimmed to the tools this agent has.
   const messages = llmSessions.get(sid) || [{
     role: 'system',
-    content: `You are Breeze, a coding agent working inside the user's folder "${path.basename(base)}". Use the tools to look at the files before answering. Keep replies short and friendly.`,
+    content: `You are Breeze, a coding agent working inside the user's folder "${path.basename(base)}". Use the tools to look at the files before answering. Keep replies short and friendly.
+
+Rules:
+1. Read before you write. Open the file, and any code that uses it, before you change anything.
+2. Stay in the project. Only write files inside this folder, and only what the user asked for.
+3. Only say something is done, fixed, or working if a tool result showed it. If you did not check, say you did not check.
+4. Do not repeat a failed step unchanged. Try a different approach, or explain what is blocking you.
+5. Say what you could not verify, and mark uncertain claims as uncertain.
+
+When you change files, reply with three short parts: What changed (the file names), Evidence (what you read or saw), and Why.`,
   }];
   llmSessions.set(sid, messages);
   emit(runId, { t: 'session', id: sid, model: cfg.model });
