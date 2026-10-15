@@ -2720,7 +2720,7 @@ function parseErrorRefs(text: string, cwd: string, root: string): ErrorRef[] {
     const path = projectPath(m[2], cwd, root);
     if (path == null) continue;
     const start = m.index + m[0].indexOf(m[1]);
-    refs.push({ path, line: Number(m[3]) - 1, col: 0, msg: 'Python error (see the terminal)', error: true, start, end: start + m[1].length });
+    refs.push({ path, line: Number(m[3]) - 1, col: 0, msg: 'Python error (see the terminal)', error: false, start, end: start + m[1].length });
   }
   return refs.sort((a, b) => a.start - b.start);
 }
@@ -2829,6 +2829,7 @@ async function runFile(): Promise<void> {
   if (term.proc != null && term.runId == null) { toast('A command is still running — press Ctrl+C to stop it'); return; }
   if (isDirty(b) && !(await saveFile(active))) return;
   layout.termOpen = true; applyLayout();
+  clearRunDiags();
   term.runCwd = joinPath(rootInfo?.root ?? '', dirName(active)); term.refs = []; term.pending = null;
   const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
   if (r.error) termWrite(r.error + '\n', 'err');
@@ -2856,6 +2857,10 @@ api.term.onExit((id, code) => {
   const runId = term.runId;
   term.proc = null; term.runId = null; $('#termPs').classList.remove('busy');
   if (code && id !== runId) termWrite(`exited with code ${code}\n`, 'err');
+  if (id !== runId) return;
+  if (term.pending) { const rest = term.pending.text; term.pending.el.remove(); term.pending = null; termLinked(rest); }
+  clearRunDiags();
+  if (code) showRunErrors(term.refs);
 });
 $('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString()) termInput.focus(); });
 $('#termToggle').addEventListener('click', e => { if (!(e.target as HTMLElement).closest('button')) run('term.toggle'); });

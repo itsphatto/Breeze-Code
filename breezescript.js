@@ -3126,7 +3126,7 @@ function parseErrorRefs(text, cwd, root) {
         if (path == null)
             continue;
         const start = m.index + m[0].indexOf(m[1]);
-        refs.push({ path, line: Number(m[3]) - 1, col: 0, msg: 'Python error (see the terminal)', error: true, start, end: start + m[1].length });
+        refs.push({ path, line: Number(m[3]) - 1, col: 0, msg: 'Python error (see the terminal)', error: false, start, end: start + m[1].length });
     }
     return refs.sort((a, b) => a.start - b.start);
 }
@@ -3279,6 +3279,7 @@ async function runFile() {
         return;
     layout.termOpen = true;
     applyLayout();
+    clearRunDiags();
     term.runCwd = joinPath(rootInfo?.root ?? '', dirName(active));
     term.refs = [];
     term.pending = null;
@@ -3326,6 +3327,17 @@ api.term.onExit((id, code) => {
     $('#termPs').classList.remove('busy');
     if (code && id !== runId)
         termWrite(`exited with code ${code}\n`, 'err');
+    if (id !== runId)
+        return;
+    if (term.pending) {
+        const rest = term.pending.text;
+        term.pending.el.remove();
+        term.pending = null;
+        termLinked(rest);
+    }
+    clearRunDiags();
+    if (code)
+        showRunErrors(term.refs);
 });
 $('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString())
     termInput.focus(); });
