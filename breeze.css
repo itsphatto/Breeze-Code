@@ -486,7 +486,19 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 @keyframes blink { 50% { opacity: 0; } }
 @keyframes pulse { 50% { opacity: .35; } }
 @keyframes swirl { 0% { transform: rotate(0) scale(.6); opacity: 0; } 60% { transform: rotate(300deg) scale(1.15); opacity: 1; } 100% { transform: rotate(360deg) scale(1); } }
+/* Opening animation, every launch (3.5s): the blue glow slowly comes up, the logo fades up through it, then the splash clears. */
+.splash { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: var(--bg); pointer-events: none;
+  animation: splashOut .6s ease 2.9s forwards; }
+.splash::before { content: ""; position: absolute; inset: 0;
+  background: radial-gradient(900px 520px at 50% 58%, rgba(0,94,255,.38), rgba(0,94,255,.1) 45%, transparent 72%);
+  opacity: 0; animation: splashGlow 1.8s ease-out forwards; }
+.splash-logo { position: relative; width: 120px; height: 120px; object-fit: contain; opacity: 0; transform: translateY(18px);
+  filter: drop-shadow(0 10px 40px rgba(0,94,255,.45)); animation: splashLogo 1.3s cubic-bezier(.2,.8,.2,1) .7s forwards; }
+@keyframes splashGlow { to { opacity: 1; } }
+@keyframes splashLogo { to { opacity: 1; transform: none; } }
+@keyframes splashOut { to { opacity: 0; visibility: hidden; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .splash { display: none; } }
 
 
 /* ================= Interaction feedback (applies everywhere) ================= */

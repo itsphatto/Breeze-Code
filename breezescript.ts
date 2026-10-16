@@ -5024,4 +5024,6 @@ async function boot(): Promise<void> {
   // Refresh the tool and agent status in the background; the cached result shows meanwhile.
   if (appState.onboarded) detectTools().catch(() => { /* shown in the setup card */ });
 }
+// The opening animation clears itself with CSS; drop it from the page once it has.
+$('#splash').addEventListener('animationend', e => { if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).remove(); });
 background(boot());
