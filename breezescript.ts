@@ -487,6 +487,99 @@ const SOCIAL_SITES: SocialSite[] = [
   { id: 'x', name: 'X', mark: '𝕏', url: 'https://x.com/home' },
 ];
 
+// Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
+const BRAND_ICONS: Record<string, string> = {
+  claude: 'claude.png', codex: 'codex.png', antigravity: 'antigravity.png',
+  youtube: 'youtube.png', tiktok: 'tiktok.webp', instagram: 'instagram.webp', facebook: 'facebook.png', x: 'x.webp',
+  local: 'ollama.svg',
+};
+// Logos that are a shape rather than a square tile; they show whole instead of clipped to the tile's corners.
+const BARE_ICONS = new Set(['youtube', 'facebook']);
+function brandMark(cls: string, id: string, fallback: string): string {
+  const file = BRAND_ICONS[id];
+  const inner = file ? `<img class="brand-img" src="assets/icons/${file}" alt="" draggable="false">` : esc(fallback);
+  return `<span class="${cls} tint-${id}${file ? ' has-img' : ''}${file && BARE_ICONS.has(id) ? ' bare' : ''}">${inner}</span>`;
+}
+
+/* ----- Line icons: 24×24 grid in Lucide's IconNode format, so morphicons can morph one into another ----- */
+type IconNode = ReadonlyArray<readonly [string, Record<string, string | number>]>;
+const SPEAKER = 'M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z';
+const LINE_ICONS: Record<string, IconNode> = {
+  plus: [['path', { d: 'M5 12h14' }], ['path', { d: 'M12 5v14' }]],
+  minus: [['path', { d: 'M5 12h14' }]],
+  x: [['path', { d: 'M18 6 6 18' }], ['path', { d: 'm6 6 12 12' }]],
+  check: [['path', { d: 'M20 6 9 17l-5-5' }]],
+  external: [['path', { d: 'M7 7h10v10' }], ['path', { d: 'M7 17 17 7' }]],
+  undo: [['path', { d: 'M9 14 4 9l5-5' }], ['path', { d: 'M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11' }]],
+  stop: [['rect', { x: 6, y: 6, width: 12, height: 12, rx: 2, fill: 'currentColor' }]],
+  play: [['path', { d: 'M6 3l14 9-14 9z', fill: 'currentColor' }]],
+  send: [['path', { d: 'M3.714 3.048a.498.498 0 0 0-.683.627l2.843 7.627a2 2 0 0 1 0 1.396l-2.842 7.627a.498.498 0 0 0 .682.627l18-8.5a.5.5 0 0 0 0-.904z' }], ['path', { d: 'M6 12h16' }]],
+  more: [['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }], ['circle', { cx: 5, cy: 12, r: 1 }]],
+  up: [['path', { d: 'm5 12 7-7 7 7' }], ['path', { d: 'M12 19V5' }]],
+  down: [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]],
+  chevronRight: [['path', { d: 'm9 18 6-6-6-6' }]],
+  chevronDown: [['path', { d: 'm6 9 6 6 6-6' }]],
+  backspace: [['path', { d: 'M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }], ['path', { d: 'm12 9 6 6' }], ['path', { d: 'm18 9-6 6' }]],
+  volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
+  volumeOff: [['path', { d: SPEAKER }], ['path', { d: 'm22 9-6 6' }], ['path', { d: 'm16 9 6 6' }]],
+  eye: [['path', { d: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
+  pencil: [['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }], ['path', { d: 'm15 5 4 4' }]],
+  terminal: [['path', { d: 'M4 17l6-6-6-6' }], ['path', { d: 'M12 19h8' }]],
+  search: [['circle', { cx: 11, cy: 11, r: 8 }], ['path', { d: 'm21 21-4.3-4.3' }]],
+  globe: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20' }], ['path', { d: 'M2 12h20' }]],
+  todo: [['path', { d: 'm3 17 2 2 4-4' }], ['path', { d: 'm3 7 2 2 4-4' }], ['path', { d: 'M13 6h8' }], ['path', { d: 'M13 12h8' }], ['path', { d: 'M13 18h8' }]],
+  diamond: [['path', { d: 'M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41l-7.59-7.59a2.41 2.41 0 0 0-3.41 0Z' }]],
+  dot: [['circle', { cx: 12, cy: 12, r: 2 }]],
+  info: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'M12 16v-4' }], ['path', { d: 'M12 8h.01' }]],
+  alert: [['path', { d: 'm21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3' }], ['path', { d: 'M12 9v4' }], ['path', { d: 'M12 17h.01' }]],
+  circleX: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'm15 9-6 6' }], ['path', { d: 'm9 9 6 6' }]],
+  gitBranch: [['path', { d: 'M6 3v12' }], ['circle', { cx: 18, cy: 6, r: 3 }], ['circle', { cx: 6, cy: 18, r: 3 }], ['path', { d: 'M18 9a9 9 0 0 1-9 9' }]],
+  circle: [['circle', { cx: 12, cy: 12, r: 9 }]],
+  copy: [['rect', { x: 8, y: 8, width: 14, height: 14, rx: 2 }], ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]],
+  download: [['path', { d: 'M12 15V3' }], ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['path', { d: 'm7 10 5 5 5-5' }]],
+  circleDot: [['circle', { cx: 12, cy: 12, r: 9 }], ['circle', { cx: 12, cy: 12, r: 3, fill: 'currentColor' }]],
+};
+const iconBody = (name: string): string =>
+  (LINE_ICONS[name] ?? LINE_ICONS.dot).map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`).join('');
+function svgIcon(name: string, size = 16): string {
+  return `<svg class="ico-svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-icon="${name}" aria-hidden="true">${iconBody(name)}</svg>`;
+}
+// Fills the empty <svg data-i="name"> placeholders written in breeze.html.
+function paintIcons(root: ParentNode = document): void {
+  root.querySelectorAll<SVGSVGElement>('svg[data-i]').forEach(s => {
+    const name = s.dataset.i ?? 'dot';
+    const size = s.dataset.size ?? '16';
+    s.classList.add('ico-svg');
+    for (const [k, v] of Object.entries({ width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) s.setAttribute(k, v);
+    s.dataset.icon = name;
+    s.innerHTML = iconBody(name);
+    s.removeAttribute('data-i');
+  });
+}
+// A control that changes state morphs its icon; without the library (or offline) the icon just swaps.
+interface MorphHandle { morphTo(icon: IconNode): void; }
+interface MorphLib { createMorph(el: Element, icon: IconNode, options?: { strokeWidth?: number }): MorphHandle; }
+const MORPH_URL = './node_modules/morphicons/dist/dom.js';
+let morphLib: Promise<MorphLib | null> | null = null;
+const loadMorph = (): Promise<MorphLib | null> => (morphLib ??= import(MORPH_URL).catch(() => null));
+const morphs = new WeakMap<Element, MorphHandle>();
+paintIcons();
+async function setIcon(host: Element, name: string): Promise<void> {
+  const svg = host.querySelector<SVGSVGElement>('svg.ico-svg');
+  if (!svg || svg.dataset.icon === name || !LINE_ICONS[name]) return;
+  const from = svg.dataset.icon ?? name;
+  svg.dataset.icon = name;
+  const lib = await loadMorph();
+  if (!lib) { svg.innerHTML = iconBody(name); return; }
+  let m = morphs.get(svg);
+  if (!m) {
+    svg.innerHTML = '<path/>';
+    m = lib.createMorph(svg.firstElementChild as Element, LINE_ICONS[from] ?? LINE_ICONS[name], { strokeWidth: 2 });
+    morphs.set(svg, m);
+  }
+  m.morphTo(LINE_ICONS[name]);
+}
+
 const isDesktop = !!window.breeze;
 const api: BreezeApi = window.breeze ?? demoApi();
 
@@ -582,7 +675,7 @@ const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
   </div>
   <div class="waiting hidden" data-si="wait">
     <div class="spinner"></div><div data-si="msg">Waiting for your browser…</div>
-    <div class="device-code hidden" data-si="code"><span data-si="codeText"></span><button class="btn btn-sm" data-si="copy">Copy</button><button class="btn btn-sm" data-si="openPage">Open page ↗</button></div>
+    <div class="device-code hidden" data-si="code"><span data-si="codeText"></span><button class="btn btn-sm" data-si="copy">Copy</button><button class="btn btn-sm" data-si="openPage">Open page ${svgIcon('external', 12)}</button></div>
     <button class="btn btn-sm" data-si="cancel">Cancel</button>
   </div>`;
 const onboardSignin = $('#obSignin');
@@ -651,8 +744,8 @@ function feedCardHtml(s: SocialSite): string {
   let sub = 'Not connected';
   if (connected) sub = signedIn[s.id] ? 'Signed in' : 'Connected · not signed in';
   return `<div class="${cls}" data-site="${s.id}" role="button" tabindex="0">
-    <span class="mark tint-${s.id}">${s.mark}</span><span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
-    <button class="btn btn-sm" data-connect="${s.id}">${connected ? 'Disconnect' : 'Connect ↗'}</button></div>`;
+    ${brandMark('mark', s.id, s.mark)}<span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
+    <button class="btn btn-sm" data-connect="${s.id}">${connected ? 'Disconnect' : `Connect ${svgIcon('external', 12)}`}</button></div>`;
 }
 async function renderFeedChoices(root: HTMLElement): Promise<void> {
   signedIn = await api.vibe.status().catch(() => ({}));
@@ -732,7 +825,7 @@ function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
   const name = `<span class="nm">${esc(a.name)} <small>API</small></span>`;
   if (!a.found) {
     return `<div class="agent-opt api missing">${mark}${name}
-      <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ↗</button>
+      <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ${svgIcon('external', 12)}</button>
       <span class="sub">Finds Ollama or LM Studio running on this computer</span>
       <div class="key-row"><input class="input" type="password" data-llm-key aria-label="API key" placeholder="API key" autocomplete="off" spellcheck="false"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
       <div class="key-err hidden"></div></div>`;
@@ -751,7 +844,7 @@ function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean
   const label = on ? 'Selected' : 'Detected';
   const side = a.found
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`
-    : `<button class="get side" data-get="${escAttr(a.url)}">Get it ↗</button>`;
+    : `<button class="get side" data-get="${escAttr(a.url)}">Get it ${svgIcon('external', 12)}</button>`;
   const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
   return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
     ${mark}<span class="nm">${esc(a.name)}</span>${side}
@@ -761,7 +854,7 @@ function agentOptionsHtml(d: Detection): string {
   return d.agents.map(a => {
     const st = AGENT_STYLE[a.id] ?? { letter: a.name[0], tint: 'default' };
     const on = a.found && a.id === appState.agent;
-    const mark = `<span class="mark tint-${st.tint}">${st.letter}</span>`;
+    const mark = brandMark('mark', st.tint, st.letter);
     return a.api ? localAgentHtml(a, on, mark) : cliAgentHtml(a, on, mark, !!d.demo);
   }).join('');
 }
@@ -817,7 +910,7 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
 const TOOL_DOWNLOADS: Record<string, string> = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
 function toolHtml(t: DetectedTool): string {
   if (!t.found && t.optional) return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}`;
-  if (!t.found) return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ↗</button>`;
+  if (!t.found) return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ${svgIcon('external', 12)}</button>`;
   const version = t.version ? ' ' + esc(t.version) : '';
   return `<span class="pill ok">${t.name}${version} ready</span>`;
 }
@@ -857,7 +950,7 @@ function renderAgentPill(): void {
   const a = selectedAgent();
   $('#agentPill').textContent = a ? a.name : 'Choose an agent';
   const model = a?.api && a.version ? ' · ' + a.version : '';
-  $('#boxModel').textContent = a ? `${a.name}${model} ▾` : 'Choose an agent ▾';
+  $('#boxModel').innerHTML = `${esc(a ? `${a.name}${model}` : 'Choose an agent')}${svgIcon('chevronDown', 12)}`;
   for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
 }
@@ -899,7 +992,6 @@ async function chooseProject(create: boolean): Promise<void> {
 }
 $('#pickFolder').onclick = () => background(chooseProject(false));
 $('#createFolder').onclick = () => background(chooseProject(true));
-$('#feedsLink').onclick = () => openFeedPicker();
 $('#startBuilding').onclick = () => {
   appState.onboarded = true; saveApp();
   enterMode(appState.mode);
@@ -1798,7 +1890,7 @@ async function renderRecent(): Promise<void> {
   const recent = await api.fs.recent().catch(() => []);
   const el = document.getElementById('recentList');
   if (!el || !recent.length) return;
-  const rows = recent.map(r => `<div class="tree-item" data-recent="${escAttr(r.path)}" title="${escAttr(r.path)}"><span class="ico">▸</span><span class="nm">${esc(r.name)}</span></div>`);
+  const rows = recent.map(r => `<div class="tree-item" data-recent="${escAttr(r.path)}" title="${escAttr(r.path)}"><span class="ico">${svgIcon('chevronRight', 14)}</span><span class="nm">${esc(r.name)}</span></div>`);
   el.innerHTML = '<div class="side-head pl-8">Recent</div>' + rows.join('');
 }
 $('#tree').addEventListener('click', e => {
@@ -1990,13 +2082,36 @@ function tabHtml(n: string): string {
   const cls = ['tab', n === active ? 'on' : '', isDirty(b) ? 'dirty' : '', b?.diags?.length ? 'has-err' : '', seenTabs.has(n) ? '' : 'enter'].filter(Boolean).join(' ');
   seenTabs.add(n);
   const dot = lock ? `<span class="dot tint-${lock}"></span>` : '';
-  return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)"><span>✕</span></span></div>`;
+  return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)">${svgIcon('x', 12)}</span></div>`;
 }
 function renderTabs(): void {
   // Re-rendering mid-drag would drop the tab being dragged; catch up when it lands.
   if (tabDrag?.moved) { tabDrag.stale = true; return; }
-  $('#tabs').innerHTML = openTabs.map(tabHtml).join('') + (runnable(active) ? '<button class="tab-run" data-run-file="1" title="Run File (F5)">▶ Run</button>' : '');
+  $('#tabs').innerHTML = openTabs.map(tabHtml).join('') + (runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '');
+  placeTabInk();
 }
+// The blue line under the open tab is one element that glides from the last tab to the new one.
+// Tabs are re-rendered, so the line restarts from where it was drawn last and then moves.
+let inkAt: { x: number; y: number; w: number } | null = null;
+function placeTabInk(): void {
+  const tabs = $('#tabs');
+  const on = tabs.querySelector<HTMLElement>('.tab.on');
+  const old = tabs.querySelector<HTMLElement>('.tab-ink');
+  if (!on) { old?.remove(); inkAt = null; return; }
+  const ink = old ?? tabs.appendChild(Object.assign(document.createElement('span'), { className: 'tab-ink' }));
+  const next = { x: on.offsetLeft + 10, y: on.offsetTop + on.offsetHeight - 1, w: Math.max(0, on.offsetWidth - 20) };
+  const draw = (p: { x: number; y: number; w: number }) => { ink.style.transform = `translate(${p.x}px, ${p.y}px)`; ink.style.width = `${p.w}px`; };
+  if (inkAt) {
+    ink.style.transition = 'none';
+    draw(inkAt);
+    void ink.offsetWidth; // commit the old spot so the move animates
+    ink.style.transition = '';
+  }
+  draw(next);
+  inkAt = next;
+}
+// A new tab grows in; the line follows its final width once it has.
+$('#tabs').addEventListener('animationend', e => { if ((e.target as HTMLElement).classList.contains('tab')) placeTabInk(); });
 $('#tabs').addEventListener('click', e => {
   if ((e.target as HTMLElement).closest('[data-run-file]')) { run('run.file'); return; }
   const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
@@ -2269,7 +2384,7 @@ function welcomeHtml(): string {
   const keys = rootInfo
     ? k('Ctrl+P', 'Go to file') + k('Ctrl+N', 'New file') + k('Ctrl+Shift+F', 'Search files') + k('Ctrl+`', 'Terminal')
     : k('Ctrl+O', 'Open folder') + k('Ctrl+B', 'Toggle side bar') + k('Ctrl+Alt+B', 'Toggle agents');
-  return `<div><img src="Agent.png" alt=""><h4>${rootInfo ? 'No file open' : 'Open a folder to start'}</h4><div class="keys">${keys}</div></div>`;
+  return `<div><img src="Agent.png" alt="" draggable="false"><h4>${rootInfo ? 'No file open' : 'Open a folder to start'}</h4><div class="keys">${keys}</div></div>`;
 }
 function queueRender(): void {
   if (renderQueued) return;
@@ -2371,7 +2486,7 @@ function updateStatus(): void {
   $('#sbEol').textContent = b?.kind === 'text' ? `${eol} · UTF-8` : '';
   $('#sbEol').classList.toggle('hidden', b?.kind !== 'text');
   const problems = tb?.diags?.length ?? 0;
-  $('#sbProblems').textContent = `⊗ ${plural(problems, 'problem')}`;
+  $('#sbProblems').innerHTML = `${svgIcon('circleX', 12)}<span>${plural(problems, 'problem')}</span>`;
   $('#sbProblems').classList.toggle('hidden', !problems);
   if (!tb) return;
   const { selectionStart: s, selectionEnd: e } = tb.ta;
@@ -3164,7 +3279,7 @@ function applyLayout(): void {
   work.classList.toggle('no-preview', !layout.previewOpen);
   t.style.setProperty('--term-h', `${clamp(layout.term, 80, Math.max(80, innerHeight - 220))}px`);
   t.classList.toggle('open', layout.termOpen);
-  $('#termTitle').textContent = `${layout.termOpen ? '▾' : '▸'} Terminal`;
+  void setIcon($('#termTitle'), layout.termOpen ? 'chevronDown' : 'chevronRight');
   const icon = (id: string, sym: string, on: boolean) => $(`#${id} use`).setAttribute('href', `#i-${sym}${on ? '-on' : ''}`);
   icon('tglSide', 'left', layout.sideOpen); icon('tglTerm', 'bottom', layout.termOpen); icon('tglAgents', 'right', layout.agentsOpen);
   store.set('breeze.layout', layout);
@@ -3413,7 +3528,6 @@ const MENUS: Menu[] = [
     { label: 'Stop Running Command', act: 'term.kill', enabled: () => term.proc != null },
   ] },
   { name: 'Help', items: [
-    { label: 'Welcome', act: 'help.welcome' },
     { label: 'Keyboard Shortcuts', act: 'help.keys' },
     { label: 'Run Setup Again', act: 'help.setup' },
     { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
@@ -3423,8 +3537,6 @@ const MENUS: Menu[] = [
     { sep: true },
     { label: 'Add Account…', act: 'account.signIn' },
     { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
-    { sep: true },
-    { label: 'About Breeze IDE', act: 'help.about' },
   ] },
 ];
 // Go, Run and Help stay out of the menu bar; their shortcuts still work and Help lives under the gear button.
@@ -3561,7 +3673,15 @@ function closeMenu(): void {
   cancelMenuClose();
   if (openMenuIdx === -1) return;
   openMenuIdx = -1; kbIdx = -1; menuPinned = false;
-  $('#menuRoot').innerHTML = '';
+  // Menus fade out before they are removed; opening another menu clears the root straight away.
+  const root = $('#menuRoot');
+  const leaving = $$('.menu', root);
+  if (!leaving.length) root.innerHTML = '';
+  for (const m of leaving) {
+    m.classList.add('closing');
+    m.addEventListener('animationend', () => m.remove(), { once: true });
+    setTimeout(() => m.remove(), 250);
+  }
   $$('[data-menu]').forEach(b => b.classList.remove('open'));
   const cb = menuOnClose; menuOnClose = null; cb?.();
 }
@@ -3660,10 +3780,10 @@ function renderAgents(): void {
   cards.innerHTML = team.map(k => {
     const a = agentsDef[k];
     return `<div class="agent ${a.status}${shown.has(k) ? '' : ' enter'}" data-agent-card="${k}">
-      <div class="ava tint-${a.tint}">${a.letter}</div>
+      ${brandMark('ava', a.tint, a.letter)}
       <div><span class="name">${a.name}</span> <span class="fs-11 text-3">${esc(a.model)}</span></div>
       <div class="row gap-4"><span class="status ${a.status}">${statusLabel[a.status]}</span>
-        ${a.status === 'working' ? '<button class="icon-btn" title="Stop" data-act="agent.stop">■</button>' : ''}</div>
+        ${a.status === 'working' ? `<button class="icon-btn" title="Stop" data-act="agent.stop">${svgIcon('stop')}</button>` : ''}</div>
       <div class="task">${esc(a.task)}</div>
       <div class="meter" title="${a.used} tool calls"><i class="tint-${a.tint}" data-used="${a.used}"></i></div>
     </div>`;
@@ -3734,7 +3854,7 @@ function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: 
 }
 function agentMsg(k: AgentKey, html: string): HTMLElement {
   const { name, letter, tint } = speaker(k);
-  return addMsg(`<div class="msg"><div class="meta"><span class="avatar mini tint-${tint}">${letter}</span><b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
+  return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
 }
 function userMsg(text: string): void {
   addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${esc(text)}</div></div>`);
@@ -3757,9 +3877,7 @@ function showThinking(label: string, k: AgentKey = agentRun?.phase ?? 'assistant
     scrollChat(s);
   }
   const { letter, tint } = speaker(k, s);
-  const ava = $('.avatar', el);
-  ava.className = `avatar mini tint-${tint}`;
-  ava.textContent = letter;
+  $('.avatar', el).outerHTML = brandMark('avatar mini', tint, letter);
   $('.lbl', el).textContent = label;
 }
 function hideThinking(): void {
@@ -3774,15 +3892,62 @@ function emptyChat(s: Surface = SURFACES.ide): void {
   }
   s.chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
 }
-// A small, safe subset of Markdown for agent replies: code blocks, inline code, bold and line breaks.
+// A small, safe subset of Markdown for agent replies: inline code, bold and line breaks. Fenced code blocks
+// become artifacts: a card with the file name, Copy and Download. A fence may name its file: ```html index.html
+const inlineMd = (s: string) => esc(s).replaceAll(/`([^`\n]+)`/g, '<code>$1</code>').replaceAll(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replaceAll('\n', '<br>');
 function md(text: string): string {
-  return text.split(/```[\w-]*\n?/).map((part, i) => (i % 2
-    ? `<pre>${esc(part.replace(/\n$/, ''))}</pre>`
-    : esc(part).replaceAll(/`([^`\n]+)`/g, '<code>$1</code>').replaceAll(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replaceAll('\n', '<br>'))).join('');
+  const out: string[] = [];
+  let last = 0;
+  // An unclosed fence (the reply was cut off) still shows its code.
+  for (const m of text.matchAll(/```([^\n`]*)\n?([\s\S]*?)(?:```|$)/g)) {
+    out.push(inlineMd(text.slice(last, m.index)));
+    out.push(artifactHtml(m[1].trim(), m[2].replace(/\n$/, '')));
+    last = m.index + m[0].length;
+  }
+  out.push(inlineMd(text.slice(last)));
+  return out.join('');
 }
-const TOOL_ICON: Record<string, string> = { read: '◔', edit: '✎', run: '❯', search: '⌕', web: '◍', todo: '☑', agent: '◇', tool: '•', note: 'ℹ' };
+const LANG_EXT: Record<string, string> = {
+  javascript: 'js', js: 'js', jsx: 'jsx', typescript: 'ts', ts: 'ts', tsx: 'tsx', python: 'py', py: 'py', html: 'html', css: 'css',
+  json: 'json', markdown: 'md', md: 'md', bash: 'sh', sh: 'sh', shell: 'sh', powershell: 'ps1', ps1: 'ps1', c: 'c', cpp: 'cpp', 'c++': 'cpp',
+  java: 'java', go: 'go', rust: 'rs', rs: 'rs', sql: 'sql', yaml: 'yml', yml: 'yml', xml: 'xml', svg: 'svg', csharp: 'cs', cs: 'cs', php: 'php', ruby: 'rb',
+};
+// "html index.html", "index.html" or "python": the file name to show and to save as.
+function artifactName(info: string): string {
+  const [first = '', second = ''] = info.split(/\s+/);
+  const named = [second, first].find(t => /^[\w.-]+\.[\w]+$/.test(t) && !/^\.+$/.test(t));
+  if (named) return named;
+  return `snippet.${LANG_EXT[first.toLowerCase()] ?? 'txt'}`;
+}
+function artifactHtml(info: string, code: string): string {
+  const name = artifactName(info);
+  const lines = code ? code.split('\n').length : 0;
+  return `<div class="artifact"><div class="artifact-head"><span class="ico">${fileIcon(name)}</span><span class="artifact-name">${esc(name)}</span><span class="artifact-meta">${plural(lines, 'line')}</span>`
+    + `<button class="icon-btn" data-artifact="copy" title="Copy">${svgIcon('copy')}</button><button class="icon-btn" data-artifact="download" title="Download ${escAttr(name)}">${svgIcon('download')}</button></div>`
+    + `<pre>${esc(code)}</pre></div>`;
+}
+// Works for replies restored from a saved chat too: the code is read back from the card itself.
+document.addEventListener('click', e => {
+  const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-artifact]');
+  const card = btn?.closest<HTMLElement>('.artifact');
+  if (!btn || !card) return;
+  const code = $('pre', card).textContent ?? '';
+  const name = $('.artifact-name', card).textContent ?? 'snippet.txt';
+  if (btn.dataset.artifact === 'copy') {
+    navigator.clipboard.writeText(code).then(() => {
+      void setIcon(btn, 'check');
+      setTimeout(() => void setIcon(btn, 'copy'), 1400);
+    }, () => toast('Couldn’t copy to the clipboard'));
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([code], { type: 'text/plain' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+});
+const TOOL_ICON: Record<string, string> = { read: 'eye', edit: 'pencil', run: 'terminal', search: 'search', web: 'globe', todo: 'todo', agent: 'diamond', tool: 'dot', note: 'info' };
 function toolLine(kind: string, label: string): void {
-  addMsg(`<div class="tool-line ${kind}"><span class="ti">${TOOL_ICON[kind] ?? '•'}</span><span class="tl">${esc(label)}</span></div>`);
+  addMsg(`<div class="tool-line ${kind}"><span class="ti">${svgIcon(TOOL_ICON[kind] ?? 'dot', 14)}</span><span class="tl">${esc(label)}</span></div>`);
 }
 
 // The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
@@ -3893,7 +4058,8 @@ commands['agent.stop'] = () => stopAgent();
 function setBusy(on: boolean): void {
   for (const { send, prompt } of Object.values(SURFACES)) {
     send.classList.toggle('stop', on);
-    send.textContent = on ? '■ Stop' : 'Send ↵';
+    void setIcon(send, on ? 'stop' : 'send');
+    $('span', send).textContent = on ? 'Stop' : 'Send';
     send.title = on ? 'Stop the agent' : 'Send (Enter)';
     prompt.closest('.composer-box')?.classList.toggle('busy', on);
   }
@@ -3945,7 +4111,7 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
 function errorCard(text: string, hint?: string, action?: string): void {
   const hintHtml = hint ? `<p>${esc(hint)}</p>` : '';
   const actionHtml = action === 'openApp' ? '<div class="row" data-live><button class="btn btn-sm btn-primary" data-openapp>Open project in Antigravity</button></div>' : '';
-  const el = addMsg(`<div class="card error"><h5>⚠ The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}${actionHtml}</div>`);
+  const el = addMsg(`<div class="card error"><h5>${svgIcon('alert', 14)} The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}${actionHtml}</div>`);
   el.querySelector<HTMLElement>('[data-openapp]')?.addEventListener('click', () => background(api.agent.openApp(agentRun?.agent ?? appState.agent ?? '')));
 }
 
@@ -4001,7 +4167,7 @@ function showPlan(r: Run): void {
   const plan = (r.plan || r.lastText).trim();
   if (!plan) { setAgent('planner', 'done', 'Answered', r.tools); return; }
   setAgent('planner', 'waiting', 'Waiting for plan approval', r.tools);
-  const el = addMsg(`<div class="card plan"><h5>📋 Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`);
+  const el = addMsg(`<div class="card plan"><h5>${svgIcon('todo', 14)} Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`);
   $$('[data-plan]', el).forEach(b => b.onclick = () => {
     const ok = b.dataset.plan === 'ok';
     $('[data-live]', el).outerHTML = `<div class="resolved">${ok ? '✓ Approved' : '✎ Asked for changes'}</div>`;
@@ -4117,7 +4283,7 @@ function renderBranch(): void {
   const s = gitState;
   const ahead = s.ahead ? ` ↑${s.ahead}` : '';
   const behind = s.behind ? ` ↓${s.behind}` : '';
-  $('#sbBranch').textContent = s.repo ? `⎇ ${s.branch || 'main'}${ahead}${behind}` : '⎇ no repository';
+  $('#sbBranch').innerHTML = `${svgIcon('gitBranch', 14)}<span>${s.repo ? esc(`${s.branch || 'main'}${ahead}${behind}`) : 'no repository'}</span>`;
   const n = s.files?.length ?? 0;
   const badge = $('.act-btn[data-view=git] .badge');
   badge.textContent = n > 99 ? '99+' : String(n || '');
@@ -4155,13 +4321,13 @@ function syncLabel(s: GitStatus): string {
 function scmRowHtml(f: GitFile, inStaged: boolean): string {
   const st = statusOf(f, inStaged);
   const enter = seenScm.has(f.path + inStaged) ? '' : ' enter';
-  const discard = inStaged ? '' : '<button class="icon-btn" data-scm="discard" title="Discard Changes">↺</button>';
+  const discard = inStaged ? '' : `<button class="icon-btn" data-scm="discard" title="Discard Changes">${svgIcon('undo')}</button>`;
   const toggle = inStaged
-    ? '<button class="icon-btn" data-scm="unstage" title="Unstage Changes">−</button>'
-    : '<button class="icon-btn" data-scm="stage" title="Stage Changes">+</button>';
+    ? `<button class="icon-btn" data-scm="unstage" title="Unstage Changes">${svgIcon('minus')}</button>`
+    : `<button class="icon-btn" data-scm="stage" title="Stage Changes">${svgIcon('plus')}</button>`;
   return `<div class="scm-row ${st.cls}${enter}" data-file="${escAttr(f.path)}" data-staged="${inStaged ? 1 : ''}" title="${escAttr(f.path)} · ${st.title}">
     <span class="ico">${fileIcon(baseName(f.path))}</span><span class="nm">${esc(baseName(f.path))}</span><span class="dir">${esc(dirName(f.path))}</span>
-    <span class="acts"><button class="icon-btn" data-scm="open" title="Open File">↗</button>${discard}${toggle}</span><span class="st">${st.letter}</span></div>`;
+    <span class="acts"><button class="icon-btn" data-scm="open" title="Open File">${svgIcon('external')}</button>${discard}${toggle}</span><span class="st">${st.letter}</span></div>`;
 }
 function scmSectionHtml(key: string, title: string, list: GitFile[], inStaged: boolean, acts: string): string {
   if (!list.length) return '';
@@ -4190,8 +4356,8 @@ function renderScm(): void {
       <button class="btn btn-primary btn-sm commit-btn" data-act="git.commit" ${files.length ? '' : 'disabled'}>✓ ${commitLabel}</button>
       ${syncBtn}
     </div>
-    ${scmSectionHtml('staged', 'Staged Changes', staged, true, '<button class="icon-btn" data-scm-all="unstage" title="Unstage All">−</button>')}
-    ${scmSectionHtml('changes', 'Changes', changes, false, '<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">↺</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">+</button>')}
+    ${scmSectionHtml('staged', 'Staged Changes', staged, true, `<button class="icon-btn" data-scm-all="unstage" title="Unstage All">${svgIcon('minus')}</button>`)}
+    ${scmSectionHtml('changes', 'Changes', changes, false, `<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">${svgIcon('undo')}</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">${svgIcon('plus')}</button>`)}
     ${empty}
     <div class="scm-sec graph ${scmCollapsed.has('graph') ? 'closed' : ''}" data-sec="graph">
       <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">Checkpoints</span><span class="count">${gitLog.commits.length}</span></div>
@@ -4449,7 +4615,7 @@ function branchListHtml(branches: string[], q: string): string {
   const create = q && !branches.includes(q) ? `<div class="qo-item" data-new="1"><span>＋ Create branch “${esc(q)}”</span></div>` : '';
   const rows = branches.filter(b => b.toLowerCase().includes(q.toLowerCase())).map(b => {
     const current = b === gitState.branch;
-    return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>⎇ ${esc(b)}</span>${current ? '<small>current</small>' : ''}</div>`;
+    return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>${svgIcon('gitBranch', 14)} ${esc(b)}</span>${current ? '<small>current</small>' : ''}</div>`;
   });
   return create + rows.join('');
 }
@@ -4590,7 +4756,10 @@ const agentWorking = () => Object.values(agentsDef).some(a => a.status === 'work
 function setVibeArmed(on: boolean): void {
   appState.vibeArmed = on;
   saveApp();
-  $('#vibeArm').textContent = on ? '◉ Vibe Mode on' : '◌ Vibe Mode off';
+  const arm = $('#vibeArm');
+  if (!arm.querySelector('svg')) arm.innerHTML = `${svgIcon(on ? 'circleDot' : 'circle', 14)}<span></span>`;
+  void setIcon(arm, on ? 'circleDot' : 'circle');
+  $('span', arm).textContent = `Vibe Mode ${on ? 'on' : 'off'}`;
   $('#vibeArm').classList.toggle('armed', on);
 }
 $('#vibeArm').onclick = () => {
@@ -4612,7 +4781,7 @@ function frameRect(): Rect {
 }
 function renderVibeSites(): void {
   $('#vibeSites').innerHTML = connectedSites().map(s =>
-    `<button class="${s.id === vibeSiteShown ? 'on' : ''}" data-vibe-site="${s.id}"><span class="mark tint-${s.id}">${s.mark}</span>${esc(s.name)}</button>`).join('');
+    `<button class="${s.id === vibeSiteShown ? 'on' : ''}" data-vibe-site="${s.id}">${brandMark('mark', s.id, s.mark)}${esc(s.name)}</button>`).join('');
   $$('[data-vibe-site]').forEach(b => b.onclick = () => { appState.vibeSite = b.dataset.vibeSite ?? null; saveApp(); showFeed(); });
 }
 function showFeed(): void {
@@ -4622,7 +4791,7 @@ function showFeed(): void {
   const placeholder = $('#vibePlaceholder');
   placeholder.classList.toggle('hidden', isDesktop && !!site);
   placeholder.innerHTML = site
-    ? `<div><span class="mark tint-${site.id} big-mark">${site.mark}</span><h4>${esc(site.name)}</h4><div>Your feed plays here in the Breeze desktop app.</div></div>`
+    ? `<div>${brandMark('mark big-mark', site.id, site.mark)}<h4>${esc(site.name)}</h4><div>Your feed plays here in the Breeze desktop app.</div></div>`
     : '<div><h4>No feed connected</h4><div>Open Settings → Vibe Mode Feeds to connect one.</div></div>';
   if (site && isDesktop) background(api.vibe.show(site.id, frameRect()));
 }
@@ -4684,6 +4853,22 @@ function vibeDone(ok: boolean, plan = false): void {
   if (ok && plan) text = '📋 The plan is ready for you';
   $('#vibeReadyText').textContent = text;
   $('#vibeBack').textContent = ok ? (plan ? 'Review plan' : 'Show me') : 'Back to code';
+  // The feed keeps playing; leaving Vibe Mode stays the user's call. The card pops and the system says so.
+  const card = $('#vibeReady');
+  card.classList.remove('ping');
+  void card.offsetWidth;
+  card.classList.add('ping');
+  notifyVibe(text.replace(/^\W+\s*/, ''), ok ? 'Head back to Breeze when you’re ready. Your feed keeps playing.' : 'Head back to Breeze to see what happened.');
+}
+// A system notification, so it is noticed over the feed or from another window. Clicking it brings Breeze up.
+function notifyVibe(title: string, body: string): void {
+  if (typeof Notification === 'undefined') return;
+  const show = () => {
+    const n = new Notification(title, { body, icon: 'Icon.png', tag: 'breeze-vibe' });
+    n.onclick = () => { window.focus(); n.close(); };
+  };
+  if (Notification.permission === 'granted') show();
+  else if (Notification.permission !== 'denied') void Notification.requestPermission().then(p => { if (p === 'granted') show(); });
 }
 $('#vibeClose').onclick = exitVibe;
 $('#vibeBack').onclick = () => {
@@ -4693,7 +4878,7 @@ $('#vibeBack').onclick = () => {
 };
 $('#vibeMute').onclick = () => {
   vibeMuted = !vibeMuted;
-  $('#vibeMute use').setAttribute('href', vibeMuted ? '#i-mute' : '#i-sound');
+  void setIcon($('#vibeMute'), vibeMuted ? 'volumeOff' : 'volume');
   $('#vibeMute').title = vibeMuted ? 'Unmute' : 'Mute';
   if (isDesktop) background(api.vibe.mute(vibeMuted));
 };

@@ -73,6 +73,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tint-x { --tint: #e4e4e7; }
 .tint-default { --tint: #a1a1aa; }
 [class*="tint-"].avatar, [class*="tint-"].ava, [class*="tint-"].mark, [class*="tint-"].dot, [class*="tint-"].lock, .meter i[class*="tint-"] { background: var(--tint); }
+/* Line icons (24-grid, drawn by svgIcon / paintIcons and morphed by morphicons). */
+.ico-svg { flex-shrink: 0; vertical-align: -3px; overflow: visible; }
+.icon-btn .ico-svg { vertical-align: 0; }
+.btn .ico-svg, .pill-btn .ico-svg { vertical-align: -2px; margin-inline: 1px; }
+.sb .ico-svg { vertical-align: -2px; margin-right: 4px; }
+.tab .x .ico-svg { width: 12px; height: 12px; }
+.tab-run .ico-svg { vertical-align: -2px; margin-right: 5px; }
+.tool-line .ti { display: grid; place-items: center; height: 18px; }
+.tool-line .ti .ico-svg { width: 14px; height: 14px; }
+.card h5 .ico-svg { vertical-align: -2px; margin-right: 2px; }
+.tree-item .ico .ico-svg { width: 14px; height: 14px; vertical-align: -2px; }
+#termTitle { display: inline-flex; align-items: center; gap: 6px; }
+/* Brand artwork replaces the tinted letter; the image carries its own background. */
+.has-img { background: transparent !important; overflow: hidden; }
+.avatar.has-img { border-radius: 4px; }
+.brand-img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; -webkit-user-drag: none; }
 
 /* ---------- buttons ---------- */
 .btn { border: 1px solid var(--line); background: var(--bg-3); border-radius: 8px; padding: 8px 14px; font-weight: 500; transition: background .15s, border-color .15s; }
@@ -284,6 +300,9 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .ta::selection { background: rgba(0,94,255,.4); color: transparent; }
 .editor-empty { position: absolute; inset: 0; z-index: 2; background: var(--bg); font: 13px/1.5 var(--font-ui); }
 .editor-empty img { width: 64px; height: 64px; opacity: .14; }
+/* The blank state is decoration: its logo and text can't be dragged or selected (image previews stay interactive). */
+.editor-empty:not(.img-mode) { user-select: none; cursor: default; }
+.editor-empty:not(.img-mode) img { pointer-events: none; -webkit-user-drag: none; }
 .editor-empty .keys { display: grid; grid-template-columns: auto auto; gap: 8px 18px; margin-top: 18px; text-align: left; font-size: 12px; }
 .editor-empty.img-mode { display: flex; flex-direction: column; place-items: stretch; padding: 0; text-align: left; }
 .img-stage { position: relative; flex: 1; min-height: 0; overflow: auto; display: grid; padding: 24px;
@@ -546,7 +565,8 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .scm-row .dir { color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .scm-row .acts { display: none; gap: 1px; }
 .scm-row:hover .acts { display: flex; }
-.scm-row .acts .icon-btn { min-width: 20px; height: 20px; font-size: 13px; }
+.scm-row .acts .icon-btn { min-width: 24px; height: 24px; padding: 0; }
+.scm-row .acts .icon-btn .ico-svg { width: 16px; height: 16px; }
 .scm-row .st { width: 12px; text-align: center; font: 600 11px var(--font-code); }
 .scm-row.git-m .st, .scm-row.git-m .nm { color: #e2c08d; }
 .scm-row.git-u .st, .scm-row.git-a .st, .scm-row.git-u .nm, .scm-row.git-a .nm { color: #73c991; }
@@ -627,7 +647,10 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .box-art { grid-template-rows: 1fr 18px; padding: 8px 22%; }
 .box-art i:first-child { background: repeating-linear-gradient(180deg, var(--bg-3) 0 9px, transparent 9px 15px); }
 .box-art i:last-child { background: rgba(0,94,255,.35); border-radius: 6px; }
-.project-card { text-align: left; margin-bottom: 18px; }
+.project-card { text-align: left; margin-bottom: 18px; transition: border-color .15s, background-color .15s, box-shadow .2s; }
+.project-card:hover, .project-card:focus-within { border-color: #3a3a42; background: #1a1a1f; box-shadow: 0 0 0 3px rgba(255,255,255,.04); }
+.project-card .seg button { transition: border-color .15s, background-color .15s, color .15s; }
+.project-card .seg button:hover { border-color: var(--blue); background: var(--blue-soft); }
 .project-card .seg button { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; color: var(--text); }
 .project-card .folder-path { max-width: 60%; text-align: right; }
 .mode-actions { gap: 12px; }
@@ -726,6 +749,11 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .menu.dd-menu { min-width: 150px; }
 .menu.up { transform-origin: bottom left; animation-name: menuUp; }
 @keyframes menuUp { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+/* Closing: the menu fades and lifts back toward its button, then closeMenu() removes it. */
+.menu.closing { animation: menuOut .12s cubic-bezier(.4,0,1,1) forwards; pointer-events: none; }
+.menu.up.closing { animation-name: menuOutUp; }
+@keyframes menuOut { to { opacity: 0; transform: translateY(-4px) scale(.98); } }
+@keyframes menuOutUp { to { opacity: 0; transform: translateY(4px) scale(.98); } }
 
 /* ================= Chat history ================= */
 .menu.history-menu { width: 300px; max-height: min(420px, 70vh); overflow: auto; }
@@ -744,3 +772,49 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 /* ================= Discord ================= */
 .check-row { display: flex; align-items: center; gap: 8px; color: var(--text-2); cursor: pointer; user-select: none; }
 .check-row input { accent-color: var(--blue); width: 15px; height: 15px; }
+
+/* ================= Rounded panels ================= */
+/* Explorer, editor, preview, terminal and agents sit as separate rounded cards with a small gap between them.
+   Collapsed panels drop their margin so no gap is left behind. Sashes move inside the card edge, which clips. */
+.main { --gap: 6px; padding: var(--gap) var(--gap) var(--gap) 0; background: var(--bg); }
+.activity { background: var(--bg); border-right: none; }
+.sidebar, .work > .pane, .terminal, .agents { border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.sidebar { margin-right: var(--gap); }
+.agents { margin-left: var(--gap); }
+.work > .pane.preview { margin-left: var(--gap); }
+.terminal { margin-top: var(--gap); }
+.main.no-side .sidebar, .main.no-agents .agents, .work.no-preview .pane.preview { margin: 0; border-width: 0; }
+.sidebar > .sash-v { right: 0; }
+.sash-v.sash-left { left: 0; }
+.terminal > .sash-h { top: 0; }
+.statusbar { border-top-color: transparent; }
+
+/* ================= Profile, tabs, feeds, artifacts, Vibe ready ================= */
+/* The account button's first avatar has no stacking overlap, so its hover pill is centred on it. */
+.avatars > .avatar:first-child { margin-left: 0; }
+.avatars { display: inline-grid; place-items: center; padding: 3px; }
+/* One sliding line under the open tab (see placeTabInk); the per-tab line is off. */
+.tabs { position: relative; }
+.tab.on::after, .tab::after { content: none; }
+.tab-ink { position: absolute; left: 0; top: 0; height: 2px; border-radius: 2px; background: var(--blue); pointer-events: none; z-index: 1;
+  transition: transform .32s cubic-bezier(.2,.8,.2,1), width .32s cubic-bezier(.2,.8,.2,1); }
+@media (prefers-reduced-motion: reduce) { .tab-ink { transition: none; } }
+/* Feed picker: one row per feed, logo · name and status · button. */
+.social-grid { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.social-card { grid-template-columns: 36px minmax(0, 1fr) auto; gap: 1px 12px; padding: 10px 10px 10px 12px; }
+.social-card .mark { width: 36px; height: 36px; border-radius: 10px; }
+.social-card .nm { align-self: end; }
+.social-card .sub { align-self: start; grid-column: 2; }
+.social-card .btn { grid-column: 3; grid-row: 1 / span 2; margin-top: 0; white-space: nowrap; }
+/* Logos that are a shape, not a tile, show whole. */
+.has-img.bare { border-radius: 0; overflow: visible; padding: 2px; }
+/* Artifacts: code from the agent as a card that can be copied or downloaded. */
+.artifact { margin: 8px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); overflow: hidden; }
+.artifact-head { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 10px; background: var(--bg-2); border-bottom: 1px solid var(--line); font-size: 12px; }
+.artifact-head .ico { width: 16px; height: 16px; display: grid; place-items: center; flex-shrink: 0; }
+.artifact-name { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-meta { color: var(--text-3); margin-right: auto; white-space: nowrap; }
+.artifact pre { margin: 0; padding: 10px 12px; max-height: 360px; overflow: auto; border: 0; border-radius: 0; background: none; font: 12px/1.55 var(--font-code); }
+/* Vibe Mode: the ready card pops when the agent finishes. */
+.vibe-ready.ping { animation: readyPing .6s cubic-bezier(.2,.8,.2,1); }
+@keyframes readyPing { 0% { transform: translateY(10px) scale(.96); opacity: 0; } 60% { transform: translateY(-2px) scale(1.02); opacity: 1; } 100% { transform: none; } }

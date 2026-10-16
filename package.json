@@ -29,11 +29,13 @@
       "preload.js",
       "toolchains.js",
       "discord.js",
+      "agentbrain.js",
       "breezescript.js",
       "breeze.html",
       "breeze.css",
       "runtime/**",
       "*.png",
+      "assets/**",
       "package.json",
       "breeze.config.json"
     ],
@@ -43,5 +45,8 @@
       ],
       "icon": "Icon.png"
     }
+  },
+  "dependencies": {
+    "morphicons": "^2.0.0"
   }
 }

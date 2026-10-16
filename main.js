@@ -87,6 +87,8 @@ app.whenReady().then(() => {
   // The menu bar is drawn in HTML; the native one would only duplicate it.
   Menu.setApplicationMenu(null);
   if (process.platform === 'darwin') app.dock?.setIcon(APP_ICON);
+  // Windows only shows notifications (Vibe Mode's "your code is ready") for an app with a user model id.
+  if (isWin) app.setAppUserModelId(app.isPackaged ? 'com.breeze.ide' : process.execPath);
   createWindow();
   getTools().catch(logError('toolchains'));
   app.on('activate', () => {
@@ -928,46 +930,89 @@ function codexEvent(runId, d, ctx, mode) {
 }
 
 /* ----- Local LLM agent loop (OpenAI-style function calling over the project folder) ----- */
-const llmSessions = new Map(); // session id -> chat messages
+// Keeping token use down: the first message carries a map of the project (so the model doesn't explore it
+// call by call), files are read as windows of numbered lines, edits send only the changed snippet, and every
+// request is fitted to the model's context by agentbrain.compactHistory. Repeated calls and endless loops stop early.
+const brain = require('./agentbrain');
+const llmSessions = new Map(); // session id -> chat messages (earlier turns already settled)
 const LLM_TOOLS = [
-  { name: 'list_files', description: 'List the files and folders in a project folder. Folders end with "/".', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Folder relative to the project root; "." for the root' } } } },
-  { name: 'read_file', description: 'Read a text file from the project.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
-  { name: 'search_files', description: 'Find lines containing some text across the project.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
-  { name: 'write_file', description: 'Create or overwrite a file with its complete new contents.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
+  { name: 'list_files', description: 'List the files and folders under a folder, two levels deep. Folders end with "/".', parameters: { type: 'object', properties: { path: { type: 'string', description: 'Folder relative to the project root; "." for the root' } } } },
+  { name: 'read_file', description: `Read numbered lines of a text file (${brain.READ_LINES} lines unless end_line says otherwise). Read only the part you need.`, parameters: { type: 'object', properties: { path: { type: 'string' }, start_line: { type: 'integer', description: 'First line to read, from 1' }, end_line: { type: 'integer', description: 'Last line to read' } }, required: ['path'] } },
+  { name: 'search_files', description: 'Find lines containing some text (plain text, not a regex) across the project. Use it to find code before reading files.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+  { name: 'edit_file', description: 'Change a file by replacing one exact snippet. old_text must appear exactly once in the file: copy it from read_file, without the line numbers.', parameters: { type: 'object', properties: { path: { type: 'string' }, old_text: { type: 'string' }, new_text: { type: 'string' } }, required: ['path', 'old_text', 'new_text'] } },
+  { name: 'write_file', description: 'Create a new file, or replace a whole file, with its complete contents. For changes to an existing file use edit_file.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
 ].map(fn => ({ type: 'function', function: fn }));
+const WRITE_TOOLS = new Set(['edit_file', 'write_file']);
+const LIST_MAX = 200;
 
 // Each tool works inside ctx.base: the open project, or the Breeze Box folder.
 const LLM_TOOL_FNS = {
   async list_files(ctx, a) {
-    const entries = await fsp.readdir(resolveUnder(ctx.base, a.path || '.'), { withFileTypes: true });
+    const dir = resolveUnder(ctx.base, a.path || '.');
     emit(ctx.runId, { t: 'tool', kind: 'read', label: `Listed ${a.path && a.path !== '.' ? a.path : 'the project'}` });
-    return entries.slice(0, 500).map(d => d.name + (d.isDirectory() ? '/' : '')).join('\n');
+    const out = [];
+    const walk = async (d, indent, level) => {
+      let entries;
+      try { entries = await fsp.readdir(d, { withFileTypes: true }); } catch { return; }
+      entries.sort((x, y) => Number(y.isDirectory()) - Number(x.isDirectory()) || x.name.localeCompare(y.name));
+      for (const e of entries) {
+        if (out.length >= LIST_MAX) return;
+        if (e.isDirectory() && IGNORED_DIRS.has(e.name)) continue;
+        out.push(`${indent}${e.name}${e.isDirectory() ? '/' : ''}`);
+        if (e.isDirectory() && level < 1) await walk(path.join(d, e.name), `${indent}  `, level + 1);
+      }
+    };
+    await walk(dir, '', 0);
+    if (!out.length) return 'Empty folder.';
+    return out.join('\n') + (out.length >= LIST_MAX ? '\n… more entries; list a subfolder' : '');
   },
   async read_file(ctx, a) {
     const abs = resolveUnder(ctx.base, a.path);
-    const st = await fsp.stat(abs);
-    emit(ctx.runId, { t: 'tool', kind: 'read', label: `Read ${relTo(ctx.base, abs)}` });
-    if (st.size > 400 * 1024) return 'File is too large to read.';
-    return fsp.readFile(abs, 'utf8');
+    await fsp.stat(abs); // a missing file comes back as an error the model can read
+    const rel = relTo(ctx.base, abs);
+    const range = a.start_line > 1 || a.end_line ? ` (lines ${a.start_line || 1}–${a.end_line || ''})` : '';
+    emit(ctx.runId, { t: 'tool', kind: 'read', label: `Read ${rel}${range}` });
+    const text = await readSearchable(abs);
+    if (text == null) return 'Not a readable text file (binary, or larger than 1 MB).';
+    return brain.readRange(text, rel, a.start_line, a.end_line);
   },
   async search_files(ctx, a) {
     emit(ctx.runId, { t: 'tool', kind: 'search', label: `Searched for ${a.query}` });
-    const hits = await searchProject(String(a.query || ''), false, ctx.base);
-    return hits.slice(0, 100).map(h => `${h.path}:${h.line + 1}: ${h.text}`).join('\n') || 'No matches.';
+    return brain.formatHits(await searchProject(String(a.query || ''), false, ctx.base));
+  },
+  async edit_file(ctx, a) {
+    const abs = resolveUnder(ctx.base, a.path);
+    const rel = relTo(ctx.base, abs);
+    const { text, line } = brain.applyEdit(await fsp.readFile(abs, 'utf8'), a.old_text, a.new_text);
+    await fsp.writeFile(abs, text, 'utf8');
+    emit(ctx.runId, { t: 'tool', kind: 'edit', label: `Edited ${rel}` });
+    emit(ctx.runId, { t: 'file', path: relOut(abs) });
+    return `Edited ${rel} at line ${line}.`;
   },
   async write_file(ctx, a) {
     const abs = resolveUnder(ctx.base, a.path);
+    const content = String(a.content ?? '');
     await fsp.mkdir(path.dirname(abs), { recursive: true });
-    await fsp.writeFile(abs, String(a.content ?? ''), 'utf8');
+    await fsp.writeFile(abs, content, 'utf8');
     emit(ctx.runId, { t: 'tool', kind: 'edit', label: `Wrote ${relTo(ctx.base, abs)}` });
     emit(ctx.runId, { t: 'file', path: relOut(abs) });
-    return 'Saved.';
+    return `Saved ${relTo(ctx.base, abs)} (${content.split('\n').length} lines).`;
   },
 };
 async function llmTool(ctx, call) {
-  const fn = LLM_TOOL_FNS[call.function?.name];
-  if (!fn) throw new Error(`Unknown tool ${call.function?.name}`);
-  return fn(ctx, JSON.parse(call.function.arguments || '{}'));
+  const name = call.function?.name;
+  const fn = LLM_TOOL_FNS[name];
+  if (!fn) throw new Error(`There is no tool called ${name}. Use one of: ${ctx.toolNames.join(', ')}.`);
+  if (WRITE_TOOLS.has(name) && ctx.mode !== 'build') throw new Error('This is read-only mode, so files can’t be changed. Describe the change instead.');
+  let args;
+  try { args = JSON.parse(call.function.arguments || '{}'); } catch { throw new Error('The arguments were not valid JSON. Call the tool again with a JSON object.'); }
+  if (WRITE_TOOLS.has(name)) ctx.seen.clear(); // files changed, so reading them again is fair
+  else {
+    const key = brain.callKey(name, args);
+    if (ctx.seen.has(key) && ctx.turn - ctx.seen.get(key) <= 2) return 'You just made this exact call and its result is above. Use it, or try something different.';
+    ctx.seen.set(key, ctx.turn);
+  }
+  return fn(ctx, args);
 }
 // Runs a reply's tool calls one after another (a later call may read what an earlier one wrote).
 function runToolCalls(ctx, calls) {
@@ -979,10 +1024,20 @@ function runToolCalls(ctx, calls) {
   }, Promise.resolve([]));
 }
 const LLM_MODE_NOTE = {
-  build: 'You may change files with write_file; always write the complete file.',
-  plan: 'Do not change any files. Reply with a short numbered plan of the changes you would make.',
-  ask: 'Do not change any files.',
+  build: 'Build mode: make the change with edit_file (write_file only for new files), then say what you changed.',
+  plan: 'Plan mode: read only. Look at the code you need, then reply with a short numbered plan of the changes.',
+  ask: 'Ask mode: read only. Answer the question directly.',
 };
+// Reliability rules adapted from the Gravitas skill (MIT, github.com/udaysharmadev/Gravitas), trimmed to the tools this agent has.
+const llmSystemPrompt = base => `You are Breeze, a coding agent working in the user's project "${path.basename(base)}".
+Work efficiently:
+- The first message has a map of the project. Use search_files to find code, then read_file only the lines you need.
+- Read code before you change it. Change files with edit_file; use write_file only for new files.
+- Never repeat a tool call with the same arguments. Stop calling tools as soon as you can answer.
+- Only say something works or is fixed if a tool result showed it. Say what you could not check.
+- Stay inside the project and do only what was asked.
+Reply short and plain. After changing files, list the files, what you checked, and why.
+When the user asks for code or a file to keep (and you are not writing it into the project), give it as one fenced block with the language and a file name, like \`\`\`html index.html, so it shows as a card they can copy or download.`;
 async function llmPost(cfg, body, signal) {
   const r = await fetch(`${cfg.url}/chat/completions`, {
     method: 'POST',
@@ -996,7 +1051,7 @@ async function llmPost(cfg, body, signal) {
 }
 // Some local models can't call tools; they still answer, just without looking at files.
 async function llmRequest(ctx, body, signal) {
-  if (ctx.noTools) return llmPost(ctx.cfg, { ...body, tools: undefined }, signal);
+  if (ctx.noTools || !body.tools) return llmPost(ctx.cfg, { ...body, tools: undefined }, signal);
   try {
     return await llmPost(ctx.cfg, body, signal);
   } catch (err) {
@@ -1006,52 +1061,64 @@ async function llmRequest(ctx, body, signal) {
     return llmPost(ctx.cfg, { ...body, tools: undefined }, signal);
   }
 }
+const LLM_MAX_TURNS = 24;
+const LLM_REPLY_RESERVE = 1500; // tokens left free for the model's own reply
+// Ollama runs models with a small context unless it was raised on the server; other servers usually allow more.
+// `llmContext` in the saved state overrides the guess.
+function llmBudget(cfg) {
+  const window = Number(loadState().llmContext) || (/:11434\b/.test(cfg.url) ? 4096 : 8192);
+  return Math.max(1500, window - LLM_REPLY_RESERVE - brain.tokensOf(JSON.stringify(LLM_TOOLS)));
+}
+// Reasoning models (Qwen 3, DeepSeek R1…) put their thinking in <think> tags: it is neither shown nor kept.
+const withoutThinking = s => String(s ?? '').replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim();
 async function runLocal(runId, run, { mode, prompt, session, base }) {
   const cfg = await llmConfig(false);
   if (!cfg?.model) throw new Error('Connect a local LLM server first (Settings → Run Setup Again).');
   const sid = session && llmSessions.has(session) ? session : crypto.randomUUID();
-  // Reliability rules adapted from the Gravitas skill (MIT, github.com/udaysharmadev/Gravitas), trimmed to the tools this agent has.
-  const messages = llmSessions.get(sid) || [{
-    role: 'system',
-    content: `You are Breeze, a coding agent working inside the user's folder "${path.basename(base)}". Use the tools to look at the files before answering. Keep replies short and friendly.
-
-Rules:
-1. Read before you write. Open the file, and any code that uses it, before you change anything.
-2. Stay in the project. Only write files inside this folder, and only what the user asked for.
-3. Only say something is done, fixed, or working if a tool result showed it. If you did not check, say you did not check.
-4. Do not repeat a failed step unchanged. Try a different approach, or explain what is blocking you.
-5. Say what you could not verify, and mark uncertain claims as uncertain.
-
-When you change files, reply with three short parts: What changed (the file names), Evidence (what you read or saw), and Why.`,
-  }];
+  const fresh = !llmSessions.has(sid);
+  const messages = llmSessions.get(sid) || [{ role: 'system', content: llmSystemPrompt(base) }];
   llmSessions.set(sid, messages);
   emit(runId, { t: 'session', id: sid, model: cfg.model });
-  messages.push({ role: 'user', content: `${prompt}\n\n(${LLM_MODE_NOTE[mode] ?? LLM_MODE_NOTE.ask})` });
-  const tools = LLM_TOOLS.filter(t => mode === 'build' || t.function.name !== 'write_file');
-  const ctx = { runId, base, cfg, noTools: false };
+  const budget = llmBudget(cfg);
+  const map = fresh ? `Project map:\n${brain.projectMap((await listFiles(base)).map(f => relTo(base, f)), Math.min(2400, Math.floor(budget * 0.8)))}\n\n` : '';
+  messages.push({ role: 'user', content: `${map}${prompt}\n\n(${LLM_MODE_NOTE[mode] ?? LLM_MODE_NOTE.ask})` });
+  const tools = LLM_TOOLS.filter(t => mode === 'build' || !WRITE_TOOLS.has(t.function.name));
+  const ctx = { runId, base, cfg, mode, noTools: false, seen: new Map(), turn: 0, toolNames: tools.map(t => t.function.name) };
   run.abort = new AbortController();
   const started = Date.now();
   let tokens = 0, lastText = '';
-  // One model turn; it continues while the model keeps calling tools (up to 30 turns).
-  const turn = async n => {
-    if (n >= 30 || run.stopped) return;
-    let j;
-    try {
-      j = await llmRequest(ctx, { model: cfg.model, messages, tools, stream: false }, run.abort.signal);
-    } catch (err) {
-      if (run.stopped) return; // stopping aborts the request
-      throw err;
-    }
+  // One request; only the assistant's text and tool calls are kept (servers add extra fields).
+  const ask = async withTools => {
+    const body = { model: cfg.model, messages: brain.compactHistory(messages, budget), temperature: 0.2, stream: false };
+    if (withTools) body.tools = tools;
+    const j = await llmRequest(ctx, body, run.abort.signal);
     tokens += j.usage?.total_tokens || 0;
     const msg = j.choices?.[0]?.message;
     if (!msg) throw new Error('The model returned no answer');
-    messages.push(msg);
-    if (msg.content?.trim()) { lastText = msg.content; emit(runId, { t: 'text', text: msg.content }); }
-    if (!msg.tool_calls?.length) return;
-    messages.push(...await runToolCalls(ctx, msg.tool_calls));
-    await turn(n + 1);
+    const text = withoutThinking(msg.content);
+    const calls = msg.tool_calls?.length ? msg.tool_calls : null;
+    messages.push({ role: 'assistant', content: text, ...(calls ? { tool_calls: calls } : {}) });
+    if (text) { lastText = text; emit(runId, { t: 'text', text }); }
+    return calls;
   };
-  await turn(0);
+  try {
+    for (let n = 0; n < LLM_MAX_TURNS && !run.stopped; n++) {
+      ctx.turn = n;
+      const calls = await ask(true);
+      if (!calls) break;
+      messages.push(...await runToolCalls(ctx, calls));
+      if (n === LLM_MAX_TURNS - 1 && !run.stopped) {
+        emit(runId, { t: 'note', text: `${cfg.model} used ${LLM_MAX_TURNS} steps, so Breeze asked it to answer with what it found.` });
+        messages.push({ role: 'user', content: 'You have used many steps. Stop using tools and answer now with what you found.' });
+        await ask(false);
+      }
+    }
+  } catch (err) {
+    if (!run.stopped) throw err; // stopping aborts the request
+  } finally {
+    // Later turns keep the conversation, not this turn's raw tool output.
+    messages.splice(0, messages.length, ...brain.settle(messages));
+  }
   runs.delete(runId);
   if (run.stopped) { emit(runId, { t: 'done', ok: false, stopped: true }); return; }
   if (mode === 'plan' && lastText) emit(runId, { t: 'plan', text: lastText });
@@ -1290,31 +1357,54 @@ const PAGE_ICON = {
   ok: '<path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
   fail: '<path d="M12 7.5v5.5M12 16.5v.01" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>',
 };
+// The Breeze IDE wordmark is inlined so the one-shot server needs no asset route.
+let wordmarkUri = null;
+function wordmarkSrc() {
+  if (wordmarkUri === null) {
+    try { wordmarkUri = `data:image/png;base64,${fs.readFileSync(path.join(__dirname, 'BreezeIDE.png')).toString('base64')}`; } catch { wordmarkUri = ''; }
+  }
+  return wordmarkUri;
+}
 function googleRedirectPage(ok) {
   const title = ok ? 'You’re signed in' : 'Sign-in didn’t finish';
   const text = ok ? 'Breeze has your account now. You can close this tab and head back to Breeze.' : 'Nothing was changed. Close this tab and try again from Breeze.';
+  // The badge starts on the brand blue and eases to green once the sign-in lands; a failure stays amber.
+  const tone = ok
+    ? { from: '#005EFF', to: '#57C478', shadowFrom: 'rgba(0,94,255,.45)', shadowTo: 'rgba(87,196,120,.45)', glowFrom: 'rgba(0,94,255,.32)', glowTo: 'rgba(87,196,120,.3)' }
+    : { from: '#d97706', to: '#d97706', shadowFrom: 'rgba(217,119,6,.4)', shadowTo: 'rgba(217,119,6,.4)', glowFrom: 'rgba(0,94,255,.32)', glowTo: 'rgba(217,119,6,.26)' };
+  const logo = wordmarkSrc();
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Breeze</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  @property --glow { syntax: '<color>'; inherits: false; initial-value: ${tone.glowFrom}; }
+  @property --gx { syntax: '<percentage>'; inherits: false; initial-value: 50%; }
+  @property --gy { syntax: '<percentage>'; inherits: false; initial-value: -10%; }
   * { box-sizing: border-box; }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; color: #f5f5f7; font: 15px/1.6 Inter, system-ui, sans-serif;
-    background: radial-gradient(900px 460px at 50% -10%, rgba(0,94,255,.32), transparent 70%), #000; }
+    background: radial-gradient(900px 460px at var(--gx, 50%) var(--gy, -10%), var(--glow, ${tone.glowFrom}), transparent 70%), #000;
+    animation: glowTone 1.2s .5s cubic-bezier(.4,0,.2,1) both, sway 11s ease-in-out infinite alternate; }
   .card { width: min(440px, 100%); text-align: center; padding: 40px 36px 34px; border-radius: 24px; border: 1px solid rgba(255,255,255,.1);
     background: rgba(28,28,34,.55); backdrop-filter: blur(22px) saturate(160%); box-shadow: 0 30px 90px rgba(0,0,0,.55); animation: rise .5s cubic-bezier(.2,.8,.2,1); }
-  .badge { width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 20px; display: grid; place-items: center;
-    background: ${ok ? '#005EFF' : '#d97706'}; box-shadow: 0 10px 30px ${ok ? 'rgba(0,94,255,.45)' : 'rgba(217,119,6,.4)'}; }
+  .badge { width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 50%; display: grid; place-items: center;
+    background: ${tone.from}; box-shadow: 0 10px 30px ${tone.shadowFrom}; animation: badgeTone 1s .55s cubic-bezier(.4,0,.2,1) both; }
+  .badge path { stroke-dasharray: 20; stroke-dashoffset: 20; animation: draw .45s .3s ease-out forwards; }
   h1 { margin: 0 0 10px; font: 700 26px/1.2 Unbounded, Inter, sans-serif; letter-spacing: -.01em; }
   p { margin: 0; color: #a1a1aa; }
-  .brand { margin-top: 26px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #6b6b75; font: 600 12px Unbounded, Inter, sans-serif; }
-  .brand svg { color: #005EFF; }
+  .brand { margin-top: 26px; display: flex; align-items: center; justify-content: center; color: #6b6b75; font: 600 12px Unbounded, Inter, sans-serif; }
+  .brand img { display: block; height: 20px; width: auto; opacity: .75; }
   @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+  @keyframes badgeTone { from { background: ${tone.from}; box-shadow: 0 10px 30px ${tone.shadowFrom}; } to { background: ${tone.to}; box-shadow: 0 10px 30px ${tone.shadowTo}; } }
+  @keyframes glowTone { from { --glow: ${tone.glowFrom}; } to { --glow: ${tone.glowTo}; } }
+  @keyframes sway { from { --gx: 34%; --gy: -14%; } to { --gx: 66%; --gy: 2%; } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) { body, .badge, .badge path { animation: none; } .badge path { stroke-dashoffset: 0; } .badge { background: ${tone.to}; } }
 </style></head><body>
 <main class="card">
   <div class="badge"><svg width="30" height="30" viewBox="0 0 24 24">${ok ? PAGE_ICON.ok : PAGE_ICON.fail}</svg></div>
   <h1>${title}</h1>
   <p>${text}</p>
-  <div class="brand"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M3 8h11a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7a2.5 2.5 0 1 1-2.5 2.5"/></svg>Breeze</div>
+  <div class="brand">${logo ? `<img src="${logo}" alt="Breeze IDE">` : 'Breeze'}</div>
 </main></body></html>`;
 }
 function waitForGoogleCode({ clientId, challenge, state }, signal) {

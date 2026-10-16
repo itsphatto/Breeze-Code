@@ -168,10 +168,8 @@ function demoApi() {
     const under = (p, rel) => (rel ? p.startsWith(rel + '/') : true);
     const exists = (p) => files.has(p) || dirs.has(p);
     const inside = (k, rel) => k === rel || k.startsWith(rel + '/');
-    const needOpen = () => {
-        if (!store.get('breeze.demoOpen', false))
-            throw new Error('No folder is open');
-    };
+    const needOpen = () => { if (!store.get('breeze.demoOpen', false))
+        throw new Error('No folder is open'); };
     const feeds = () => store.get('breeze.demoVibe', {});
     return {
         fs: {
@@ -318,20 +316,16 @@ function demoApi() {
         },
         git: {
             async status() {
-                return {
-                    repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
-                    files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }]
-                };
+                return { repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
+                    files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }] };
             },
             async log() {
-                return {
-                    head: 'd4f0b19aa', commits: [
+                return { head: 'd4f0b19aa', commits: [
                         { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
                         { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
                         { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
                         { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
-                    ]
-                };
+                    ] };
             },
             async show(hash) { return { hash, author: 'You', email: 'you@example.com', when: 'a few minutes ago', message: 'Demo checkpoint', files: [{ path: 'styles.css', added: 11, removed: 2 }] }; },
             async diff() { return '@@ -1,3 +1,3 @@\n /* Cozy, warm palette */\n-:root {\n+:root { /* demo change */\n   --bean: #2b1d12;'; },
@@ -407,6 +401,96 @@ const SOCIAL_SITES = [
     { id: 'facebook', name: 'Facebook Reels', mark: 'f', url: 'https://www.facebook.com/reel/' },
     { id: 'x', name: 'X', mark: '𝕏', url: 'https://x.com/home' },
 ];
+// Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
+const BRAND_ICONS = {
+    claude: 'claude.png', codex: 'codex.png', antigravity: 'antigravity.png',
+    youtube: 'youtube.webp', tiktok: 'tiktok.webp', instagram: 'instagram.webp', facebook: 'facebook.png', x: 'x.webp',
+    local: 'ollama.svg',
+};
+// Logos that are a shape rather than a square tile; they show whole instead of clipped to the tile's corners.
+const BARE_ICONS = new Set(['youtube', 'facebook']);
+function brandMark(cls, id, fallback) {
+    const file = BRAND_ICONS[id];
+    const inner = file ? `<img class="brand-img" src="assets/icons/${file}" alt="" draggable="false">` : esc(fallback);
+    return `<span class="${cls} tint-${id}${file ? ' has-img' : ''}${file && BARE_ICONS.has(id) ? ' bare' : ''}">${inner}</span>`;
+}
+const SPEAKER = 'M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z';
+const LINE_ICONS = {
+    plus: [['path', { d: 'M5 12h14' }], ['path', { d: 'M12 5v14' }]],
+    minus: [['path', { d: 'M5 12h14' }]],
+    x: [['path', { d: 'M18 6 6 18' }], ['path', { d: 'm6 6 12 12' }]],
+    check: [['path', { d: 'M20 6 9 17l-5-5' }]],
+    external: [['path', { d: 'M7 7h10v10' }], ['path', { d: 'M7 17 17 7' }]],
+    undo: [['path', { d: 'M9 14 4 9l5-5' }], ['path', { d: 'M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11' }]],
+    stop: [['rect', { x: 6, y: 6, width: 12, height: 12, rx: 2, fill: 'currentColor' }]],
+    play: [['path', { d: 'M6 3l14 9-14 9z', fill: 'currentColor' }]],
+    send: [['path', { d: 'M3.714 3.048a.498.498 0 0 0-.683.627l2.843 7.627a2 2 0 0 1 0 1.396l-2.842 7.627a.498.498 0 0 0 .682.627l18-8.5a.5.5 0 0 0 0-.904z' }], ['path', { d: 'M6 12h16' }]],
+    more: [['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }], ['circle', { cx: 5, cy: 12, r: 1 }]],
+    up: [['path', { d: 'm5 12 7-7 7 7' }], ['path', { d: 'M12 19V5' }]],
+    down: [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]],
+    chevronRight: [['path', { d: 'm9 18 6-6-6-6' }]],
+    chevronDown: [['path', { d: 'm6 9 6 6 6-6' }]],
+    backspace: [['path', { d: 'M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }], ['path', { d: 'm12 9 6 6' }], ['path', { d: 'm18 9-6 6' }]],
+    volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
+    volumeOff: [['path', { d: SPEAKER }], ['path', { d: 'm22 9-6 6' }], ['path', { d: 'm16 9 6 6' }]],
+    eye: [['path', { d: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
+    pencil: [['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }], ['path', { d: 'm15 5 4 4' }]],
+    terminal: [['path', { d: 'M4 17l6-6-6-6' }], ['path', { d: 'M12 19h8' }]],
+    search: [['circle', { cx: 11, cy: 11, r: 8 }], ['path', { d: 'm21 21-4.3-4.3' }]],
+    globe: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20' }], ['path', { d: 'M2 12h20' }]],
+    todo: [['path', { d: 'm3 17 2 2 4-4' }], ['path', { d: 'm3 7 2 2 4-4' }], ['path', { d: 'M13 6h8' }], ['path', { d: 'M13 12h8' }], ['path', { d: 'M13 18h8' }]],
+    diamond: [['path', { d: 'M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41l-7.59-7.59a2.41 2.41 0 0 0-3.41 0Z' }]],
+    dot: [['circle', { cx: 12, cy: 12, r: 2 }]],
+    info: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'M12 16v-4' }], ['path', { d: 'M12 8h.01' }]],
+    alert: [['path', { d: 'm21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3' }], ['path', { d: 'M12 9v4' }], ['path', { d: 'M12 17h.01' }]],
+    circleX: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'm15 9-6 6' }], ['path', { d: 'm9 9 6 6' }]],
+    gitBranch: [['path', { d: 'M6 3v12' }], ['circle', { cx: 18, cy: 6, r: 3 }], ['circle', { cx: 6, cy: 18, r: 3 }], ['path', { d: 'M18 9a9 9 0 0 1-9 9' }]],
+    circle: [['circle', { cx: 12, cy: 12, r: 9 }]],
+    copy: [['rect', { x: 8, y: 8, width: 14, height: 14, rx: 2 }], ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]],
+    download: [['path', { d: 'M12 15V3' }], ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['path', { d: 'm7 10 5 5 5-5' }]],
+    circleDot: [['circle', { cx: 12, cy: 12, r: 9 }], ['circle', { cx: 12, cy: 12, r: 3, fill: 'currentColor' }]],
+};
+const iconBody = (name) => (LINE_ICONS[name] ?? LINE_ICONS.dot).map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`).join('');
+function svgIcon(name, size = 16) {
+    return `<svg class="ico-svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-icon="${name}" aria-hidden="true">${iconBody(name)}</svg>`;
+}
+// Fills the empty <svg data-i="name"> placeholders written in breeze.html.
+function paintIcons(root = document) {
+    root.querySelectorAll('svg[data-i]').forEach(s => {
+        const name = s.dataset.i ?? 'dot';
+        const size = s.dataset.size ?? '16';
+        s.classList.add('ico-svg');
+        for (const [k, v] of Object.entries({ width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }))
+            s.setAttribute(k, v);
+        s.dataset.icon = name;
+        s.innerHTML = iconBody(name);
+        s.removeAttribute('data-i');
+    });
+}
+const MORPH_URL = './node_modules/morphicons/dist/dom.js';
+let morphLib = null;
+const loadMorph = () => (morphLib ??= import(MORPH_URL).catch(() => null));
+const morphs = new WeakMap();
+paintIcons();
+async function setIcon(host, name) {
+    const svg = host.querySelector('svg.ico-svg');
+    if (!svg || svg.dataset.icon === name || !LINE_ICONS[name])
+        return;
+    const from = svg.dataset.icon ?? name;
+    svg.dataset.icon = name;
+    const lib = await loadMorph();
+    if (!lib) {
+        svg.innerHTML = iconBody(name);
+        return;
+    }
+    let m = morphs.get(svg);
+    if (!m) {
+        svg.innerHTML = '<path/>';
+        m = lib.createMorph(svg.firstElementChild, LINE_ICONS[from] ?? LINE_ICONS[name], { strokeWidth: 2 });
+        morphs.set(svg, m);
+    }
+    m.morphTo(LINE_ICONS[name]);
+}
 const isDesktop = !!window.breeze;
 const api = window.breeze ?? demoApi();
 const appState = {
@@ -502,7 +586,7 @@ const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
   </div>
   <div class="waiting hidden" data-si="wait">
     <div class="spinner"></div><div data-si="msg">Waiting for your browser…</div>
-    <div class="device-code hidden" data-si="code"><span data-si="codeText"></span><button class="btn btn-sm" data-si="copy">Copy</button><button class="btn btn-sm" data-si="openPage">Open page ↗</button></div>
+    <div class="device-code hidden" data-si="code"><span data-si="codeText"></span><button class="btn btn-sm" data-si="copy">Copy</button><button class="btn btn-sm" data-si="openPage">Open page ${svgIcon('external', 12)}</button></div>
     <button class="btn btn-sm" data-si="cancel">Cancel</button>
   </div>`;
 const onboardSignin = $('#obSignin');
@@ -585,8 +669,8 @@ function feedCardHtml(s) {
     if (connected)
         sub = signedIn[s.id] ? 'Signed in' : 'Connected · not signed in';
     return `<div class="${cls}" data-site="${s.id}" role="button" tabindex="0">
-    <span class="mark tint-${s.id}">${s.mark}</span><span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
-    <button class="btn btn-sm" data-connect="${s.id}">${connected ? 'Disconnect' : 'Connect ↗'}</button></div>`;
+    ${brandMark('mark', s.id, s.mark)}<span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
+    <button class="btn btn-sm" data-connect="${s.id}">${connected ? 'Disconnect' : `Connect ${svgIcon('external', 12)}`}</button></div>`;
 }
 async function renderFeedChoices(root) {
     signedIn = await api.vibe.status().catch(() => ({}));
@@ -605,12 +689,10 @@ async function renderFeedChoices(root) {
                 background(toggleFeed(id).then(draw));
             };
             card.onclick = e => pick(!!e.target.closest('[data-connect]'));
-            card.onkeydown = e => {
-                if ((e.key === 'Enter' || e.key === ' ') && e.target === card) {
-                    e.preventDefault();
-                    pick(false);
-                }
-            };
+            card.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === card) {
+                e.preventDefault();
+                pick(false);
+            } };
         });
     };
     draw();
@@ -681,7 +763,7 @@ function localAgentHtml(a, on, mark) {
     const name = `<span class="nm">${esc(a.name)} <small>API</small></span>`;
     if (!a.found) {
         return `<div class="agent-opt api missing">${mark}${name}
-      <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ↗</button>
+      <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ${svgIcon('external', 12)}</button>
       <span class="sub">Finds Ollama or LM Studio running on this computer</span>
       <div class="key-row"><input class="input" type="password" data-llm-key aria-label="API key" placeholder="API key" autocomplete="off" spellcheck="false"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
       <div class="key-err hidden"></div></div>`;
@@ -700,7 +782,7 @@ function cliAgentHtml(a, on, mark, demo) {
     const label = on ? 'Selected' : 'Detected';
     const side = a.found
         ? `<span class="pill ${pillClass(on)} side">${label}</span>`
-        : `<button class="get side" data-get="${escAttr(a.url)}">Get it ↗</button>`;
+        : `<button class="get side" data-get="${escAttr(a.url)}">Get it ${svgIcon('external', 12)}</button>`;
     const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
     return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
     ${mark}<span class="nm">${esc(a.name)}</span>${side}
@@ -710,7 +792,7 @@ function agentOptionsHtml(d) {
     return d.agents.map(a => {
         const st = AGENT_STYLE[a.id] ?? { letter: a.name[0], tint: 'default' };
         const on = a.found && a.id === appState.agent;
-        const mark = `<span class="mark tint-${st.tint}">${st.letter}</span>`;
+        const mark = brandMark('mark', st.tint, st.letter);
         return a.api ? localAgentHtml(a, on, mark) : cliAgentHtml(a, on, mark, !!d.demo);
     }).join('');
 }
@@ -742,10 +824,8 @@ function bindLocalLlm(root, onChange) {
             }
         };
         connect.onclick = () => void save();
-        key.onkeydown = e => {
-            if (e.key === 'Enter')
-                void save();
-        };
+        key.onkeydown = e => { if (e.key === 'Enter')
+            void save(); };
     }
     const model = root.querySelector('[data-llm-model]');
     if (model)
@@ -767,16 +847,12 @@ function bindLocalLlm(root, onChange) {
 function bindAgentOptions(root, onChange) {
     $$('[data-agent]', root).forEach(el => {
         const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onChange(); };
-        el.onclick = e => {
-            if (!e.target.closest('button, input, select'))
-                pick();
-        };
-        el.onkeydown = e => {
-            if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
-                e.preventDefault();
-                pick();
-            }
-        };
+        el.onclick = e => { if (!e.target.closest('button, input, select'))
+            pick(); };
+        el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) {
+            e.preventDefault();
+            pick();
+        } };
     });
     $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
     bindLocalLlm(root, onChange);
@@ -786,7 +862,7 @@ function toolHtml(t) {
     if (!t.found && t.optional)
         return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}`;
     if (!t.found)
-        return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ↗</button>`;
+        return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ${svgIcon('external', 12)}</button>`;
     const version = t.version ? ' ' + esc(t.version) : '';
     return `<span class="pill ok">${t.name}${version} ready</span>`;
 }
@@ -826,7 +902,7 @@ function renderAgentPill() {
     const a = selectedAgent();
     $('#agentPill').textContent = a ? a.name : 'Choose an agent';
     const model = a?.api && a.version ? ' · ' + a.version : '';
-    $('#boxModel').textContent = a ? `${a.name}${model} ▾` : 'Choose an agent ▾';
+    $('#boxModel').innerHTML = `${esc(a ? `${a.name}${model}` : 'Choose an agent')}${svgIcon('chevronDown', 12)}`;
     for (const k of Object.values(agentsDef))
         k.model = modelLabel(a);
     renderAgents();
@@ -872,7 +948,6 @@ async function chooseProject(create) {
 }
 $('#pickFolder').onclick = () => background(chooseProject(false));
 $('#createFolder').onclick = () => background(chooseProject(true));
-$('#feedsLink').onclick = () => openFeedPicker();
 $('#startBuilding').onclick = () => {
     appState.onboarded = true;
     saveApp();
@@ -942,7 +1017,7 @@ function langOf(path) {
 }
 const either = (...patterns) => new RegExp(patterns.map(p => p.source).join('|'));
 const lexer = (rules, flags = 'g') => new RegExp(rules.map(([kind, p]) => `(?<${kind}>${p.source})`).join('|'), flags);
-const keywords = (list) => new RegExp(String.raw`\b(?:${list.replaceAll(' ', '|')})\b`);
+const keywords = (list) => new RegExp(String.raw `\b(?:${list.replaceAll(' ', '|')})\b`);
 const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return super switch this throw try typeof var void while with yield async await static get set type interface enum implements private public protected readonly declare as true false null undefined';
 const PY_KW = 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self';
 const LINE_COMMENT = /\/\/[^\n]*/;
@@ -1254,7 +1329,7 @@ class JsonChecker {
             this.i++;
             return;
         }
-        for (; ;) {
+        for (;;) {
             item();
             this.ws();
             if (this.t[this.i] === close) {
@@ -1875,10 +1950,8 @@ function createTextarea(b) {
     });
     ta.addEventListener('blur', hideSuggest);
     ta.addEventListener('mousedown', hideSuggest);
-    ta.addEventListener('scroll', () => {
-        if (suggest?.owner === ta)
-            editorSuggest(b);
-    }); // follow the caret
+    ta.addEventListener('scroll', () => { if (suggest?.owner === ta)
+        editorSuggest(b); }); // follow the caret
     ta.addEventListener('scroll', syncScroll);
     ta.addEventListener('keydown', editorKeys);
     for (const ev of ['keyup', 'mouseup', 'select', 'selectionchange', 'focus'])
@@ -1975,7 +2048,7 @@ async function renderRecent() {
     const el = document.getElementById('recentList');
     if (!el || !recent.length)
         return;
-    const rows = recent.map(r => `<div class="tree-item" data-recent="${escAttr(r.path)}" title="${escAttr(r.path)}"><span class="ico">▸</span><span class="nm">${esc(r.name)}</span></div>`);
+    const rows = recent.map(r => `<div class="tree-item" data-recent="${escAttr(r.path)}" title="${escAttr(r.path)}"><span class="ico">${svgIcon('chevronRight', 14)}</span><span class="nm">${esc(r.name)}</span></div>`);
     el.innerHTML = '<div class="side-head pl-8">Recent</div>' + rows.join('');
 }
 $('#tree').addEventListener('click', e => {
@@ -2054,17 +2127,13 @@ function askName(title, initial, okLabel) {
             input.focus();
             const dot = initial.lastIndexOf('.');
             input.setSelectionRange(0, dot > 0 ? dot : initial.length);
-            const ok = () => {
-                const v = input.value.trim(); if (v) {
-                    finish(v);
-                    closeModal();
-                }
-            };
+            const ok = () => { const v = input.value.trim(); if (v) {
+                finish(v);
+                closeModal();
+            } };
             $('#nameOk', m).onclick = ok;
-            input.onkeydown = e => {
-                if (e.key === 'Enter')
-                    ok();
-            };
+            input.onkeydown = e => { if (e.key === 'Enter')
+                ok(); };
         }, () => finish(null));
     });
 }
@@ -2241,7 +2310,7 @@ function tabHtml(n) {
     const cls = ['tab', n === active ? 'on' : '', isDirty(b) ? 'dirty' : '', b?.diags?.length ? 'has-err' : '', seenTabs.has(n) ? '' : 'enter'].filter(Boolean).join(' ');
     seenTabs.add(n);
     const dot = lock ? `<span class="dot tint-${lock}"></span>` : '';
-    return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)"><span>✕</span></span></div>`;
+    return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)">${svgIcon('x', 12)}</span></div>`;
 }
 function renderTabs() {
     // Re-rendering mid-drag would drop the tab being dragged; catch up when it lands.
@@ -2249,8 +2318,36 @@ function renderTabs() {
         tabDrag.stale = true;
         return;
     }
-    $('#tabs').innerHTML = openTabs.map(tabHtml).join('') + (runnable(active) ? '<button class="tab-run" data-run-file="1" title="Run File (F5)">▶ Run</button>' : '');
+    $('#tabs').innerHTML = openTabs.map(tabHtml).join('') + (runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '');
+    placeTabInk();
 }
+// The blue line under the open tab is one element that glides from the last tab to the new one.
+// Tabs are re-rendered, so the line restarts from where it was drawn last and then moves.
+let inkAt = null;
+function placeTabInk() {
+    const tabs = $('#tabs');
+    const on = tabs.querySelector('.tab.on');
+    const old = tabs.querySelector('.tab-ink');
+    if (!on) {
+        old?.remove();
+        inkAt = null;
+        return;
+    }
+    const ink = old ?? tabs.appendChild(Object.assign(document.createElement('span'), { className: 'tab-ink' }));
+    const next = { x: on.offsetLeft + 10, y: on.offsetTop + on.offsetHeight - 1, w: Math.max(0, on.offsetWidth - 20) };
+    const draw = (p) => { ink.style.transform = `translate(${p.x}px, ${p.y}px)`; ink.style.width = `${p.w}px`; };
+    if (inkAt) {
+        ink.style.transition = 'none';
+        draw(inkAt);
+        void ink.offsetWidth; // commit the old spot so the move animates
+        ink.style.transition = '';
+    }
+    draw(next);
+    inkAt = next;
+}
+// A new tab grows in; the line follows its final width once it has.
+$('#tabs').addEventListener('animationend', e => { if (e.target.classList.contains('tab'))
+    placeTabInk(); });
 $('#tabs').addEventListener('click', e => {
     if (e.target.closest('[data-run-file]')) {
         run('run.file');
@@ -2297,10 +2394,8 @@ function closeTabs(paths) {
         $('#tabsDontSave', m).onclick = () => { closeModal(); finish(); };
         $('#tabsSave', m).onclick = () => {
             closeModal();
-            background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => {
-                if (saved.every(Boolean))
-                    finish();
-            }));
+            background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => { if (saved.every(Boolean))
+                finish(); }));
         };
     });
 }
@@ -2418,12 +2513,8 @@ function closeTab(path) {
     openModal(`<h3>Save changes to ${esc(baseName(path))}?</h3><p class="sub">Your changes will be lost if you don't save them.</p>
     <div class="row end"><button class="btn" data-close>Cancel</button><button class="btn" id="dontSave">Don't Save</button><button class="btn btn-primary" id="doSave">Save</button></div>`, m => {
         $('#dontSave', m).onclick = () => { closeModal(); finish(); };
-        $('#doSave', m).onclick = () => {
-            closeModal(); background(saveFile(path).then(ok => {
-                if (ok)
-                    finish();
-            }));
-        };
+        $('#doSave', m).onclick = () => { closeModal(); background(saveFile(path).then(ok => { if (ok)
+            finish(); })); };
     });
 }
 async function saveFile(path = active) {
@@ -2584,7 +2675,7 @@ function welcomeHtml() {
     const keys = rootInfo
         ? k('Ctrl+P', 'Go to file') + k('Ctrl+N', 'New file') + k('Ctrl+Shift+F', 'Search files') + k('Ctrl+`', 'Terminal')
         : k('Ctrl+O', 'Open folder') + k('Ctrl+B', 'Toggle side bar') + k('Ctrl+Alt+B', 'Toggle agents');
-    return `<div><img src="Agent.png" alt=""><h4>${rootInfo ? 'No file open' : 'Open a folder to start'}</h4><div class="keys">${keys}</div></div>`;
+    return `<div><img src="Agent.png" alt="" draggable="false"><h4>${rootInfo ? 'No file open' : 'Open a folder to start'}</h4><div class="keys">${keys}</div></div>`;
 }
 function queueRender() {
     if (renderQueued)
@@ -2694,7 +2785,7 @@ function updateStatus() {
     $('#sbEol').textContent = b?.kind === 'text' ? `${eol} · UTF-8` : '';
     $('#sbEol').classList.toggle('hidden', b?.kind !== 'text');
     const problems = tb?.diags?.length ?? 0;
-    $('#sbProblems').textContent = `⊗ ${plural(problems, 'problem')}`;
+    $('#sbProblems').innerHTML = `${svgIcon('circleX', 12)}<span>${plural(problems, 'problem')}</span>`;
     $('#sbProblems').classList.toggle('hidden', !problems);
     if (!tb)
         return;
@@ -3085,10 +3176,8 @@ async function quickOpen() {
 /* ================= Search across files ================= */
 let searchCase = false;
 $('#searchCase').onclick = () => { searchCase = !searchCase; $('#searchCase').classList.toggle('on', searchCase); void runSearch(); };
-$('#searchInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter')
-        void runSearch();
-});
+$('#searchInput').addEventListener('keydown', e => { if (e.key === 'Enter')
+    void runSearch(); });
 function hitLineHtml(h, i, qLen) {
     const start = Math.max(0, h.col - 30);
     const pre = h.text.slice(start, h.col).trimStart(), hit = h.text.slice(h.col, h.col + qLen), post = h.text.slice(h.col + qLen, h.col + qLen + 80);
@@ -3198,14 +3287,12 @@ const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
 // Windows paths (drive letter) compare without regard to case or slash direction.
 function projectPath(p, cwd, root) {
     const slash = (x) => x.replaceAll('\\', '/');
-    const parts = (x) => {
-        const out = []; for (const seg of slash(x).split('/')) {
-            if (seg === '..')
-                out.pop();
-            else if (seg && seg !== '.')
-                out.push(seg);
-        } return out;
-    };
+    const parts = (x) => { const out = []; for (const seg of slash(x).split('/')) {
+        if (seg === '..')
+            out.pop();
+        else if (seg && seg !== '.')
+            out.push(seg);
+    } return out; };
     const given = slash(p);
     const full = parts(/^(?:[A-Za-z]:)?\//.test(given) ? given : `${slash(cwd)}/${given}`);
     const base = parts(root);
@@ -3425,13 +3512,11 @@ termInput.addEventListener('keydown', e => {
     termGhost.innerHTML = '';
     void runCommand(cmd);
 });
-api.term.onData((id, chunk) => {
-    if (id !== term.proc)
-        return; if (id === term.runId)
-        runOutput(chunk);
-    else
-        termWrite(chunk);
-});
+api.term.onData((id, chunk) => { if (id !== term.proc)
+    return; if (id === term.runId)
+    runOutput(chunk);
+else
+    termWrite(chunk); });
 api.term.onExit((id, code) => {
     if (id !== term.proc)
         return;
@@ -3453,14 +3538,10 @@ api.term.onExit((id, code) => {
     if (code)
         showRunErrors(term.refs);
 });
-$('#termBody').addEventListener('mouseup', () => {
-    if (!getSelection()?.toString())
-        termInput.focus();
-});
-$('#termToggle').addEventListener('click', e => {
-    if (!e.target.closest('button'))
-        run('term.toggle');
-});
+$('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString())
+    termInput.focus(); });
+$('#termToggle').addEventListener('click', e => { if (!e.target.closest('button'))
+    run('term.toggle'); });
 let suggest = null;
 const suggestEl = document.createElement('div');
 suggestEl.className = 'suggest hidden';
@@ -3623,10 +3704,8 @@ async function loadNpmScripts() {
     }
 }
 background(loadNpmScripts());
-api.fs.onChange(paths => {
-    if (paths.includes('package.json'))
-        background(loadNpmScripts());
-});
+api.fs.onChange(paths => { if (paths.includes('package.json'))
+    background(loadNpmScripts()); });
 function subcommandsOf(cmd) {
     return cmd === 'npm' ? [...new Set([...SUBCOMMANDS.npm, ...npmScripts.filter(s => ['start', 'test'].includes(s))])] : SUBCOMMANDS[cmd] ?? [];
 }
@@ -3734,10 +3813,8 @@ function terminalAutofillKeys(e) {
     }
     return false;
 }
-termInput.addEventListener('input', () => {
-    updateGhost(); if (suggest?.owner === termInput)
-        hideSuggest();
-});
+termInput.addEventListener('input', () => { updateGhost(); if (suggest?.owner === termInput)
+    hideSuggest(); });
 termInput.addEventListener('blur', () => { termGhost.innerHTML = ''; hideSuggest(); });
 termInput.addEventListener('focus', updateGhost);
 const DEFAULT_LAYOUT = { side: 240, agents: 340, term: 200, preview: 460, sideOpen: true, agentsOpen: true, termOpen: false, previewOpen: true, view: 'files' };
@@ -3753,7 +3830,7 @@ function applyLayout() {
     work.classList.toggle('no-preview', !layout.previewOpen);
     t.style.setProperty('--term-h', `${clamp(layout.term, 80, Math.max(80, innerHeight - 220))}px`);
     t.classList.toggle('open', layout.termOpen);
-    $('#termTitle').textContent = `${layout.termOpen ? '▾' : '▸'} Terminal`;
+    void setIcon($('#termTitle'), layout.termOpen ? 'chevronDown' : 'chevronRight');
     const icon = (id, sym, on) => $(`#${id} use`).setAttribute('href', `#i-${sym}${on ? '-on' : ''}`);
     icon('tglSide', 'left', layout.sideOpen);
     icon('tglTerm', 'bottom', layout.termOpen);
@@ -3764,22 +3841,14 @@ function applyLayout() {
 window.addEventListener('resize', applyLayout);
 // Dragging below a threshold collapses the panel; dragging back out reopens it.
 const SASH_DRAG = {
-    side: (start, dx) => {
-        const w = start.side + dx; layout.sideOpen = w >= 120; if (layout.sideOpen)
-            layout.side = clamp(w, 170, 640);
-    },
-    agents: (start, dx) => {
-        const w = start.agents - dx; layout.agentsOpen = w >= 180; if (layout.agentsOpen)
-            layout.agents = clamp(w, 260, 720);
-    },
-    preview: (start, dx) => {
-        const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen)
-            layout.preview = clamp(w, 220, $('#work').clientWidth - 220);
-    },
-    term: (start, _dx, dy) => {
-        const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen)
-            layout.term = clamp(h, 80, innerHeight - 220);
-    },
+    side: (start, dx) => { const w = start.side + dx; layout.sideOpen = w >= 120; if (layout.sideOpen)
+        layout.side = clamp(w, 170, 640); },
+    agents: (start, dx) => { const w = start.agents - dx; layout.agentsOpen = w >= 180; if (layout.agentsOpen)
+        layout.agents = clamp(w, 260, 720); },
+    preview: (start, dx) => { const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen)
+        layout.preview = clamp(w, 220, $('#work').clientWidth - 220); },
+    term: (start, _dx, dy) => { const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen)
+        layout.term = clamp(h, 80, innerHeight - 220); },
 };
 function startSashDrag(sash, kind, e) {
     const sx = e.clientX, sy = e.clientY, start = { ...layout };
@@ -3836,10 +3905,8 @@ const commands = {
     'file.openRecent': openRecentPicker,
     'file.save': () => saveFile(),
     'file.saveAll': saveAll,
-    'file.closeEditor': () => {
-        if (active)
-            closeTab(active);
-    },
+    'file.closeEditor': () => { if (active)
+        closeTab(active); },
     'file.closeFolder': closeFolderCmd,
     'file.exit': () => api.win.quit(),
     'edit.undo': () => editRole('undo'),
@@ -3871,26 +3938,20 @@ const commands = {
     'run.file': runFile,
     'run.start': () => (runnable(active) ? run('run.file') : running ? reloadPreview() : startPreview()),
     'run.reload': reloadPreview,
-    'run.stop': () => {
-        if (term.runId != null)
-            killCommand();
-        else {
-            stopPreview();
-            toast('Preview stopped');
-        }
-    },
-    'term.toggle': () => {
-        layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
-            termInput.focus();
-    },
+    'run.stop': () => { if (term.runId != null)
+        killCommand();
+    else {
+        stopPreview();
+        toast('Preview stopped');
+    } },
+    'term.toggle': () => { layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen)
+        termInput.focus(); },
     'term.focus': () => { layout.termOpen = true; applyLayout(); termInput.focus(); },
     'term.clear': () => { termOut.innerHTML = ''; },
-    'term.kill': () => {
-        if (term.proc == null)
-            toast('Nothing is running');
-        else
-            killCommand();
-    },
+    'term.kill': () => { if (term.proc == null)
+        toast('Nothing is running');
+    else
+        killCommand(); },
     'explorer.refresh': refreshTree,
     'explorer.collapse': () => { expanded.clear(); renderTree(); saveSession(); },
     'help.welcome': () => setActive(null),
@@ -3988,8 +4049,7 @@ function confirmDiscard() {
     });
 }
 const MENUS = [
-    {
-        name: 'File', items: [
+    { name: 'File', items: [
             { label: 'New File…', act: 'file.newFile', key: 'Ctrl+N' },
             { label: 'New Folder…', act: 'file.newFolder' },
             { sep: true },
@@ -4003,10 +4063,8 @@ const MENUS = [
             { label: 'Close Folder', act: 'file.closeFolder', enabled: () => !!rootInfo },
             { sep: true },
             { label: 'Exit', act: 'file.exit' },
-        ]
-    },
-    {
-        name: 'Edit', items: [
+        ] },
+    { name: 'Edit', items: [
             { label: 'Undo', act: 'edit.undo', key: 'Ctrl+Z', native: true },
             { label: 'Redo', act: 'edit.redo', key: 'Ctrl+Y', native: true },
             { sep: true },
@@ -4018,20 +4076,16 @@ const MENUS = [
             { label: 'Find in Files', act: 'view.search', key: 'Ctrl+Shift+F' },
             { sep: true },
             { label: 'Toggle Line Comment', act: 'edit.comment', key: 'Ctrl+/', enabled: hasFile },
-        ]
-    },
-    {
-        name: 'Selection', items: [
+        ] },
+    { name: 'Selection', items: [
             { label: 'Select All', act: 'edit.selectAll', key: 'Ctrl+A', native: true },
             { label: 'Select Line', act: 'sel.line', key: 'Ctrl+L', enabled: hasFile },
             { sep: true },
             { label: 'Copy Line Down', act: 'sel.dup', key: 'Shift+Alt+Down', enabled: hasFile },
             { label: 'Move Line Up', act: 'sel.up', key: 'Alt+Up', enabled: hasFile },
             { label: 'Move Line Down', act: 'sel.down', key: 'Alt+Down', enabled: hasFile },
-        ]
-    },
-    {
-        name: 'View', items: [
+        ] },
+    { name: 'View', items: [
             { label: 'Explorer', act: 'view.files', key: 'Ctrl+Shift+E' },
             { label: 'Search', act: 'view.search', key: 'Ctrl+Shift+F' },
             { label: 'Checkpoints', act: 'view.git', key: 'Ctrl+Shift+G' },
@@ -4044,60 +4098,46 @@ const MENUS = [
             { sep: true },
             { label: 'Reload Window', act: 'win.reload', key: 'Ctrl+R' },
             { label: 'Toggle Developer Tools', act: 'win.devtools', key: 'Ctrl+Shift+I' },
-        ]
-    },
-    {
-        name: 'Go', items: [
+        ] },
+    { name: 'Go', items: [
             { label: 'Go to File…', act: 'go.file', key: 'Ctrl+P' },
             { label: 'Go to Line…', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
             { label: 'Next Problem', act: 'go.nextProblem', key: 'F8', enabled: hasFile },
             { sep: true },
             { label: 'Next Editor', act: 'go.nextEditor', key: 'Ctrl+Tab' },
             { label: 'Previous Editor', act: 'go.prevEditor', key: 'Ctrl+Shift+Tab' },
-        ]
-    },
-    {
-        name: 'Run', items: [
+        ] },
+    { name: 'Run', items: [
             { label: 'Run File', act: 'run.file', enabled: () => runnable(active) },
             { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
             { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
             { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
-        ]
-    },
-    {
-        name: 'Terminal', items: [
+        ] },
+    { name: 'Terminal', items: [
             { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
             { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
             { sep: true },
             { label: 'Clear Terminal', act: 'term.clear' },
             { label: 'Stop Running Command', act: 'term.kill', enabled: () => term.proc != null },
-        ]
-    },
-    {
-        name: 'Help', items: [
-            { label: 'Welcome', act: 'help.welcome' },
+        ] },
+    { name: 'Help', items: [
             { label: 'Keyboard Shortcuts', act: 'help.keys' },
             { label: 'Run Setup Again', act: 'help.setup' },
             { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
             { sep: true },
             { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
-            { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
+            { label: 'Breeze Box (chat only)', act: 'mode.box', checked: () => appState.mode === 'box' },
             { sep: true },
             { label: 'Add Account…', act: 'account.signIn' },
             { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
-            { sep: true },
-            { label: 'About Breeze IDE', act: 'help.about' },
-        ]
-    },
+        ] },
 ];
 // Go, Run and Help stay out of the menu bar; their shortcuts still work and Help lives under the gear button.
 const BAR_MENUS = MENUS.filter(m => !['Go', 'Run', 'Help'].includes(m.name));
 // Shortcuts handled by the editor itself or by keydown elsewhere, but listed for discoverability.
 const EXTRA_KEYS = [['F2', 'explorer.rename']];
-commands['explorer.rename'] = () => {
-    if (active)
-        return renameEntry(active);
-};
+commands['explorer.rename'] = () => { if (active)
+    return renameEntry(active); };
 const canonKey = (combo) => {
     const parts = combo.split('+');
     const key = parts.pop();
@@ -4135,10 +4175,8 @@ function cancelMenuClose() { clearTimeout(menuCloseTimer); }
 // A menu opened by hovering closes shortly after the pointer leaves both the bar and the menu.
 function scheduleMenuClose() {
     cancelMenuClose();
-    menuCloseTimer = setTimeout(() => {
-        if (openMenuIdx >= 0 && !menuPinned)
-            closeMenu();
-    }, 350);
+    menuCloseTimer = setTimeout(() => { if (openMenuIdx >= 0 && !menuPinned)
+        closeMenu(); }, 350);
 }
 function buildMenubar() {
     $('#menubar').innerHTML = BAR_MENUS.map((m, i) => `<button class="menu-top" data-menu="${i}" aria-haspopup="menu">${esc(m.name)}</button>`).join('');
@@ -4249,7 +4287,16 @@ function closeMenu() {
     openMenuIdx = -1;
     kbIdx = -1;
     menuPinned = false;
-    $('#menuRoot').innerHTML = '';
+    // Menus fade out before they are removed; opening another menu clears the root straight away.
+    const root = $('#menuRoot');
+    const leaving = $$('.menu', root);
+    if (!leaving.length)
+        root.innerHTML = '';
+    for (const m of leaving) {
+        m.classList.add('closing');
+        m.addEventListener('animationend', () => m.remove(), { once: true });
+        setTimeout(() => m.remove(), 250);
+    }
     $$('[data-menu]').forEach(b => b.classList.remove('open'));
     const cb = menuOnClose;
     menuOnClose = null;
@@ -4379,10 +4426,10 @@ function renderAgents() {
     cards.innerHTML = team.map(k => {
         const a = agentsDef[k];
         return `<div class="agent ${a.status}${shown.has(k) ? '' : ' enter'}" data-agent-card="${k}">
-      <div class="ava tint-${a.tint}">${a.letter}</div>
+      ${brandMark('ava', a.tint, a.letter)}
       <div><span class="name">${a.name}</span> <span class="fs-11 text-3">${esc(a.model)}</span></div>
       <div class="row gap-4"><span class="status ${a.status}">${statusLabel[a.status]}</span>
-        ${a.status === 'working' ? '<button class="icon-btn" title="Stop" data-act="agent.stop">■</button>' : ''}</div>
+        ${a.status === 'working' ? `<button class="icon-btn" title="Stop" data-act="agent.stop">${svgIcon('stop')}</button>` : ''}</div>
       <div class="task">${esc(a.task)}</div>
       <div class="meter" title="${a.used} tool calls"><i class="tint-${a.tint}" data-used="${a.used}"></i></div>
     </div>`;
@@ -4458,7 +4505,7 @@ function speaker(k, s = msgSurface) {
 }
 function agentMsg(k, html) {
     const { name, letter, tint } = speaker(k);
-    return addMsg(`<div class="msg"><div class="meta"><span class="avatar mini tint-${tint}">${letter}</span><b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
+    return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
 }
 function userMsg(text) {
     addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${esc(text)}</div></div>`);
@@ -4481,9 +4528,7 @@ function showThinking(label, k = agentRun?.phase ?? 'assistant') {
         scrollChat(s);
     }
     const { letter, tint } = speaker(k, s);
-    const ava = $('.avatar', el);
-    ava.className = `avatar mini tint-${tint}`;
-    ava.textContent = letter;
+    $('.avatar', el).outerHTML = brandMark('avatar mini', tint, letter);
     $('.lbl', el).textContent = label;
 }
 function hideThinking() {
@@ -4499,15 +4544,64 @@ function emptyChat(s = SURFACES.ide) {
     }
     s.chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
 }
-// A small, safe subset of Markdown for agent replies: code blocks, inline code, bold and line breaks.
+// A small, safe subset of Markdown for agent replies: inline code, bold and line breaks. Fenced code blocks
+// become artifacts: a card with the file name, Copy and Download. A fence may name its file: ```html index.html
+const inlineMd = (s) => esc(s).replaceAll(/`([^`\n]+)`/g, '<code>$1</code>').replaceAll(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replaceAll('\n', '<br>');
 function md(text) {
-    return text.split(/```[\w-]*\n?/).map((part, i) => (i % 2
-        ? `<pre>${esc(part.replace(/\n$/, ''))}</pre>`
-        : esc(part).replaceAll(/`([^`\n]+)`/g, '<code>$1</code>').replaceAll(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replaceAll('\n', '<br>'))).join('');
+    const out = [];
+    let last = 0;
+    // An unclosed fence (the reply was cut off) still shows its code.
+    for (const m of text.matchAll(/```([^\n`]*)\n?([\s\S]*?)(?:```|$)/g)) {
+        out.push(inlineMd(text.slice(last, m.index)));
+        out.push(artifactHtml(m[1].trim(), m[2].replace(/\n$/, '')));
+        last = m.index + m[0].length;
+    }
+    out.push(inlineMd(text.slice(last)));
+    return out.join('');
 }
-const TOOL_ICON = { read: '◔', edit: '✎', run: '❯', search: '⌕', web: '◍', todo: '☑', agent: '◇', tool: '•', note: 'ℹ' };
+const LANG_EXT = {
+    javascript: 'js', js: 'js', jsx: 'jsx', typescript: 'ts', ts: 'ts', tsx: 'tsx', python: 'py', py: 'py', html: 'html', css: 'css',
+    json: 'json', markdown: 'md', md: 'md', bash: 'sh', sh: 'sh', shell: 'sh', powershell: 'ps1', ps1: 'ps1', c: 'c', cpp: 'cpp', 'c++': 'cpp',
+    java: 'java', go: 'go', rust: 'rs', rs: 'rs', sql: 'sql', yaml: 'yml', yml: 'yml', xml: 'xml', svg: 'svg', csharp: 'cs', cs: 'cs', php: 'php', ruby: 'rb',
+};
+// "html index.html", "index.html" or "python": the file name to show and to save as.
+function artifactName(info) {
+    const [first = '', second = ''] = info.split(/\s+/);
+    const named = [second, first].find(t => /^[\w.-]+\.[\w]+$/.test(t) && !/^\.+$/.test(t));
+    if (named)
+        return named;
+    return `snippet.${LANG_EXT[first.toLowerCase()] ?? 'txt'}`;
+}
+function artifactHtml(info, code) {
+    const name = artifactName(info);
+    const lines = code ? code.split('\n').length : 0;
+    return `<div class="artifact"><div class="artifact-head"><span class="ico">${fileIcon(name)}</span><span class="artifact-name">${esc(name)}</span><span class="artifact-meta">${plural(lines, 'line')}</span>`
+        + `<button class="icon-btn" data-artifact="copy" title="Copy">${svgIcon('copy')}</button><button class="icon-btn" data-artifact="download" title="Download ${escAttr(name)}">${svgIcon('download')}</button></div>`
+        + `<pre>${esc(code)}</pre></div>`;
+}
+// Works for replies restored from a saved chat too: the code is read back from the card itself.
+document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-artifact]');
+    const card = btn?.closest('.artifact');
+    if (!btn || !card)
+        return;
+    const code = $('pre', card).textContent ?? '';
+    const name = $('.artifact-name', card).textContent ?? 'snippet.txt';
+    if (btn.dataset.artifact === 'copy') {
+        navigator.clipboard.writeText(code).then(() => {
+            void setIcon(btn, 'check');
+            setTimeout(() => void setIcon(btn, 'copy'), 1400);
+        }, () => toast('Couldn’t copy to the clipboard'));
+        return;
+    }
+    const url = URL.createObjectURL(new Blob([code], { type: 'text/plain' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+});
+const TOOL_ICON = { read: 'eye', edit: 'pencil', run: 'terminal', search: 'search', web: 'globe', todo: 'todo', agent: 'diamond', tool: 'dot', note: 'info' };
 function toolLine(kind, label) {
-    addMsg(`<div class="tool-line ${kind}"><span class="ti">${TOOL_ICON[kind] ?? '•'}</span><span class="tl">${esc(label)}</span></div>`);
+    addMsg(`<div class="tool-line ${kind}"><span class="ti">${svgIcon(TOOL_ICON[kind] ?? 'dot', 14)}</span><span class="tl">${esc(label)}</span></div>`);
 }
 // The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
 const chatScope = (s) => (s.name === 'box' ? 'box' : rootInfo?.root ?? '');
@@ -4618,12 +4712,10 @@ let agentRun = null;
 let lastRunFiles = [];
 for (const s of Object.values(SURFACES)) {
     s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
-    s.prompt.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            void sendPrompt();
-        }
-    });
+    s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        void sendPrompt();
+    } });
 }
 function newChat() {
     if (agentRun)
@@ -4642,7 +4734,8 @@ commands['agent.stop'] = () => stopAgent();
 function setBusy(on) {
     for (const { send, prompt } of Object.values(SURFACES)) {
         send.classList.toggle('stop', on);
-        send.textContent = on ? '■ Stop' : 'Send ↵';
+        void setIcon(send, on ? 'stop' : 'send');
+        $('span', send).textContent = on ? 'Stop' : 'Send';
         send.title = on ? 'Stop the agent' : 'Send (Enter)';
         prompt.closest('.composer-box')?.classList.toggle('busy', on);
     }
@@ -4705,7 +4798,7 @@ async function startAgentRun(agentId, mode, prompt, uiMode, announce = false) {
 function errorCard(text, hint, action) {
     const hintHtml = hint ? `<p>${esc(hint)}</p>` : '';
     const actionHtml = action === 'openApp' ? '<div class="row" data-live><button class="btn btn-sm btn-primary" data-openapp>Open project in Antigravity</button></div>' : '';
-    const el = addMsg(`<div class="card error"><h5>⚠ The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}${actionHtml}</div>`);
+    const el = addMsg(`<div class="card error"><h5>${svgIcon('alert', 14)} The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}${actionHtml}</div>`);
     el.querySelector('[data-openapp]')?.addEventListener('click', () => background(api.agent.openApp(agentRun?.agent ?? appState.agent ?? '')));
 }
 function onAgentFile(r, path) {
@@ -4731,26 +4824,18 @@ function onFirstReply(r) {
         addMsg(`<div class="team-line">${TEAM_LINE[r.uiMode] ?? TEAM_LINE[r.mode]}</div>`);
 }
 const AGENT_EVENTS = {
-    session: (_r, ev) => {
-        if (ev.id)
-            store.set(agentSessionKey(), ev.id);
-    },
-    text: (r, ev) => {
-        if (ev.text) {
-            r.lastText = ev.text;
-            r.lastMsg = agentMsg(r.phase, md(ev.text));
-        }
-    },
+    session: (_r, ev) => { if (ev.id)
+        store.set(agentSessionKey(), ev.id); },
+    text: (r, ev) => { if (ev.text) {
+        r.lastText = ev.text;
+        r.lastMsg = agentMsg(r.phase, md(ev.text));
+    } },
     tool: (r, ev) => { r.tools++; toolLine(ev.kind ?? 'tool', ev.label ?? ''); setAgent(r.phase, 'working', ev.label ?? 'Working', r.tools); },
-    file: (r, ev) => {
-        if (ev.path)
-            onAgentFile(r, ev.path);
-    },
+    file: (r, ev) => { if (ev.path)
+        onAgentFile(r, ev.path); },
     plan: (r, ev) => { r.plan = ev.text ?? ''; },
-    note: (_r, ev) => {
-        if (ev.text)
-            toolLine('note', ev.text);
-    },
+    note: (_r, ev) => { if (ev.text)
+        toolLine('note', ev.text); },
     error: onAgentError,
     done: finishRun,
 };
@@ -4785,7 +4870,7 @@ function showPlan(r) {
         return;
     }
     setAgent('planner', 'waiting', 'Waiting for plan approval', r.tools);
-    const el = addMsg(`<div class="card plan"><h5>📋 Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`);
+    const el = addMsg(`<div class="card plan"><h5>${svgIcon('todo', 14)} Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`);
     $$('[data-plan]', el).forEach(b => b.onclick = () => {
         const ok = b.dataset.plan === 'ok';
         $('[data-live]', el).outerHTML = `<div class="resolved">${ok ? '✓ Approved' : '✎ Asked for changes'}</div>`;
@@ -4912,10 +4997,8 @@ const commitDetails = new Map();
 const scmCollapsed = new Set(store.get('breeze.scmCollapsed', []));
 let gitTimer;
 function queueGitRefresh() { clearTimeout(gitTimer); gitTimer = setTimeout(() => void refreshGit(), 400); }
-window.addEventListener('focus', () => {
-    if (rootInfo)
-        queueGitRefresh();
-});
+window.addEventListener('focus', () => { if (rootInfo)
+    queueGitRefresh(); });
 async function refreshGit() {
     if (!rootInfo) {
         gitState = { repo: false };
@@ -4938,7 +5021,7 @@ function renderBranch() {
     const s = gitState;
     const ahead = s.ahead ? ` ↑${s.ahead}` : '';
     const behind = s.behind ? ` ↓${s.behind}` : '';
-    $('#sbBranch').textContent = s.repo ? `⎇ ${s.branch || 'main'}${ahead}${behind}` : '⎇ no repository';
+    $('#sbBranch').innerHTML = `${svgIcon('gitBranch', 14)}<span>${s.repo ? esc(`${s.branch || 'main'}${ahead}${behind}`) : 'no repository'}</span>`;
     const n = s.files?.length ?? 0;
     const badge = $('.act-btn[data-view=git] .badge');
     badge.textContent = n > 99 ? '99+' : String(n || '');
@@ -4981,13 +5064,13 @@ function syncLabel(s) {
 function scmRowHtml(f, inStaged) {
     const st = statusOf(f, inStaged);
     const enter = seenScm.has(f.path + inStaged) ? '' : ' enter';
-    const discard = inStaged ? '' : '<button class="icon-btn" data-scm="discard" title="Discard Changes">↺</button>';
+    const discard = inStaged ? '' : `<button class="icon-btn" data-scm="discard" title="Discard Changes">${svgIcon('undo')}</button>`;
     const toggle = inStaged
-        ? '<button class="icon-btn" data-scm="unstage" title="Unstage Changes">−</button>'
-        : '<button class="icon-btn" data-scm="stage" title="Stage Changes">+</button>';
+        ? `<button class="icon-btn" data-scm="unstage" title="Unstage Changes">${svgIcon('minus')}</button>`
+        : `<button class="icon-btn" data-scm="stage" title="Stage Changes">${svgIcon('plus')}</button>`;
     return `<div class="scm-row ${st.cls}${enter}" data-file="${escAttr(f.path)}" data-staged="${inStaged ? 1 : ''}" title="${escAttr(f.path)} · ${st.title}">
     <span class="ico">${fileIcon(baseName(f.path))}</span><span class="nm">${esc(baseName(f.path))}</span><span class="dir">${esc(dirName(f.path))}</span>
-    <span class="acts"><button class="icon-btn" data-scm="open" title="Open File">↗</button>${discard}${toggle}</span><span class="st">${st.letter}</span></div>`;
+    <span class="acts"><button class="icon-btn" data-scm="open" title="Open File">${svgIcon('external')}</button>${discard}${toggle}</span><span class="st">${st.letter}</span></div>`;
 }
 function scmSectionHtml(key, title, list, inStaged, acts) {
     if (!list.length)
@@ -5020,8 +5103,8 @@ function renderScm() {
       <button class="btn btn-primary btn-sm commit-btn" data-act="git.commit" ${files.length ? '' : 'disabled'}>✓ ${commitLabel}</button>
       ${syncBtn}
     </div>
-    ${scmSectionHtml('staged', 'Staged Changes', staged, true, '<button class="icon-btn" data-scm-all="unstage" title="Unstage All">−</button>')}
-    ${scmSectionHtml('changes', 'Changes', changes, false, '<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">↺</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">+</button>')}
+    ${scmSectionHtml('staged', 'Staged Changes', staged, true, `<button class="icon-btn" data-scm-all="unstage" title="Unstage All">${svgIcon('minus')}</button>`)}
+    ${scmSectionHtml('changes', 'Changes', changes, false, `<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">${svgIcon('undo')}</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">${svgIcon('plus')}</button>`)}
     ${empty}
     <div class="scm-sec graph ${scmCollapsed.has('graph') ? 'closed' : ''}" data-sec="graph">
       <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">Checkpoints</span><span class="count">${gitLog.commits.length}</span></div>
@@ -5035,12 +5118,10 @@ function renderScm() {
     const msg = $('#scmMsg', el);
     msg.value = scmDraft;
     msg.oninput = () => { scmDraft = msg.value; };
-    msg.onkeydown = e => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            run('git.commit');
-        }
-    };
+    msg.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        run('git.commit');
+    } };
 }
 let scmDraft = '';
 const seenScm = new Set();
@@ -5367,7 +5448,7 @@ function branchListHtml(branches, q) {
     const create = q && !branches.includes(q) ? `<div class="qo-item" data-new="1"><span>＋ Create branch “${esc(q)}”</span></div>` : '';
     const rows = branches.filter(b => b.toLowerCase().includes(q.toLowerCase())).map(b => {
         const current = b === gitState.branch;
-        return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>⎇ ${esc(b)}</span>${current ? '<small>current</small>' : ''}</div>`;
+        return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>${svgIcon('gitBranch', 14)} ${esc(b)}</span>${current ? '<small>current</small>' : ''}</div>`;
     });
     return create + rows.join('');
 }
@@ -5393,10 +5474,8 @@ async function pickBranch() {
             $('[data-new]', m)?.addEventListener('click', () => switchTo(q, true));
         };
         input.oninput = render;
-        input.onkeydown = e => {
-            if (e.key === 'Enter')
-                $('[data-new], [data-br]', m)?.click();
-        };
+        input.onkeydown = e => { if (e.key === 'Enter')
+            $('[data-new], [data-br]', m)?.click(); };
         render();
     }, undefined, 'top');
 }
@@ -5530,7 +5609,11 @@ const agentWorking = () => Object.values(agentsDef).some(a => a.status === 'work
 function setVibeArmed(on) {
     appState.vibeArmed = on;
     saveApp();
-    $('#vibeArm').textContent = on ? '◉ Vibe Mode on' : '◌ Vibe Mode off';
+    const arm = $('#vibeArm');
+    if (!arm.querySelector('svg'))
+        arm.innerHTML = `${svgIcon(on ? 'circleDot' : 'circle', 14)}<span></span>`;
+    void setIcon(arm, on ? 'circleDot' : 'circle');
+    $('span', arm).textContent = `Vibe Mode ${on ? 'on' : 'off'}`;
     $('#vibeArm').classList.toggle('armed', on);
 }
 $('#vibeArm').onclick = () => {
@@ -5548,10 +5631,8 @@ $('#vibeArm').onclick = () => {
 };
 function openFeedPicker() {
     openModal(`<h3>Vibe Mode feeds</h3><p class="sub">Pick what plays while your agents work. Connecting opens the site so you can sign in.</p>
-    <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`, m => void renderFeedChoices($('#feedPick', m)), () => {
-        if (connectedSites().length && !appState.vibeArmed)
-            setVibeArmed(true);
-    });
+    <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`, m => void renderFeedChoices($('#feedPick', m)), () => { if (connectedSites().length && !appState.vibeArmed)
+        setVibeArmed(true); });
 }
 commands['vibe.feeds'] = openFeedPicker;
 function frameRect() {
@@ -5559,7 +5640,7 @@ function frameRect() {
     return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
 }
 function renderVibeSites() {
-    $('#vibeSites').innerHTML = connectedSites().map(s => `<button class="${s.id === vibeSiteShown ? 'on' : ''}" data-vibe-site="${s.id}"><span class="mark tint-${s.id}">${s.mark}</span>${esc(s.name)}</button>`).join('');
+    $('#vibeSites').innerHTML = connectedSites().map(s => `<button class="${s.id === vibeSiteShown ? 'on' : ''}" data-vibe-site="${s.id}">${brandMark('mark', s.id, s.mark)}${esc(s.name)}</button>`).join('');
     $$('[data-vibe-site]').forEach(b => b.onclick = () => { appState.vibeSite = b.dataset.vibeSite ?? null; saveApp(); showFeed(); });
 }
 function showFeed() {
@@ -5569,7 +5650,7 @@ function showFeed() {
     const placeholder = $('#vibePlaceholder');
     placeholder.classList.toggle('hidden', isDesktop && !!site);
     placeholder.innerHTML = site
-        ? `<div><span class="mark tint-${site.id} big-mark">${site.mark}</span><h4>${esc(site.name)}</h4><div>Your feed plays here in the Breeze desktop app.</div></div>`
+        ? `<div>${brandMark('mark big-mark', site.id, site.mark)}<h4>${esc(site.name)}</h4><div>Your feed plays here in the Breeze desktop app.</div></div>`
         : '<div><h4>No feed connected</h4><div>Open Settings → Vibe Mode Feeds to connect one.</div></div>';
     if (site && isDesktop)
         background(api.vibe.show(site.id, frameRect()));
@@ -5594,10 +5675,8 @@ function enterVibe() {
     tickVibeClock();
     vibeClock = setInterval(tickVibeClock, 1000);
     // Wait for the stage to settle before laying the live feed over it.
-    setTimeout(() => {
-        if (vibeOn)
-            showFeed();
-    }, 450);
+    setTimeout(() => { if (vibeOn)
+        showFeed(); }, 450);
 }
 function exitVibe() {
     if (!vibeOn)
@@ -5646,6 +5725,26 @@ function vibeDone(ok, plan = false) {
         text = '📋 The plan is ready for you';
     $('#vibeReadyText').textContent = text;
     $('#vibeBack').textContent = ok ? (plan ? 'Review plan' : 'Show me') : 'Back to code';
+    // The feed keeps playing; leaving Vibe Mode stays the user's call. The card pops and the system says so.
+    const card = $('#vibeReady');
+    card.classList.remove('ping');
+    void card.offsetWidth;
+    card.classList.add('ping');
+    notifyVibe(text.replace(/^\W+\s*/, ''), ok ? 'Head back to Breeze when you’re ready. Your feed keeps playing.' : 'Head back to Breeze to see what happened.');
+}
+// A system notification, so it is noticed over the feed or from another window. Clicking it brings Breeze up.
+function notifyVibe(title, body) {
+    if (typeof Notification === 'undefined')
+        return;
+    const show = () => {
+        const n = new Notification(title, { body, icon: 'Icon.png', tag: 'breeze-vibe' });
+        n.onclick = () => { window.focus(); n.close(); };
+    };
+    if (Notification.permission === 'granted')
+        show();
+    else if (Notification.permission !== 'denied')
+        void Notification.requestPermission().then(p => { if (p === 'granted')
+            show(); });
 }
 $('#vibeClose').onclick = exitVibe;
 $('#vibeBack').onclick = () => {
@@ -5656,16 +5755,14 @@ $('#vibeBack').onclick = () => {
 };
 $('#vibeMute').onclick = () => {
     vibeMuted = !vibeMuted;
-    $('#vibeMute use').setAttribute('href', vibeMuted ? '#i-mute' : '#i-sound');
+    void setIcon($('#vibeMute'), vibeMuted ? 'volumeOff' : 'volume');
     $('#vibeMute').title = vibeMuted ? 'Unmute' : 'Mute';
     if (isDesktop)
         background(api.vibe.mute(vibeMuted));
 };
 // Keep the live feed glued to the frame when the window changes size.
-new ResizeObserver(() => {
-    if (vibeOn && vibeSiteShown && isDesktop)
-        background(api.vibe.bounds(frameRect()));
-}).observe(vibeFrame);
+new ResizeObserver(() => { if (vibeOn && vibeSiteShown && isDesktop)
+    background(api.vibe.bounds(frameRect())); }).observe(vibeFrame);
 /* ================= Discord ================= */
 // Rich Presence through the Discord app on this computer (main.js talks to it); updates are coalesced.
 const discordSince = Date.now();
@@ -5777,10 +5874,8 @@ function openModal(html, bind, onClose, place = 'center') {
     $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`);
     const m = $('#modalRoot .scrim:not(.closing) .modal');
     modalOnClose = onClose ?? null;
-    $('#modalRoot .scrim:not(.closing)').onmousedown = e => {
-        if (e.target.classList.contains('scrim'))
-            closeModal();
-    };
+    $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if (e.target.classList.contains('scrim'))
+        closeModal(); };
     $$('[data-close]', m).forEach(b => b.onclick = closeModal);
     bind?.(m);
 }
