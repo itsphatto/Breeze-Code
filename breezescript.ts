@@ -18,7 +18,7 @@ interface Agent {
 }
 interface User { name: string; provider: string; login?: string; email?: string | null; avatar?: string | null; }
 type AgentMode = 'plan' | 'build' | 'ask';
-interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; action?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; }
+interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; }
 interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
 interface GitFile { path: string; x: string; y: string; }
 interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; }
@@ -80,7 +80,6 @@ interface BreezeApi {
   agent: {
     run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null; box?: boolean }): Promise<number>;
     stop(runId: number): Promise<void>;
-    openApp(id: string): Promise<void>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
   };
   git: {
@@ -370,9 +369,7 @@ function demoApi(): BreezeApi {
         return {
           demo: true, platform: 'browser',
           agents: [
-            { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', url: 'https://claude.com/product/claude-code', found: true, path: null, version: null },
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
-            { id: 'antigravity', name: 'Antigravity', vendor: 'Google', url: 'https://antigravity.google', found: false, path: null, version: null },
             { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
@@ -398,7 +395,6 @@ function demoApi(): BreezeApi {
         return id;
       },
       async stop() { /* demo runs finish on their own */ },
-      async openApp() { /* no other apps in the browser */ },
       onEvent(cb) { agentListeners.push(cb); return () => {}; },
     },
     git: {
@@ -492,7 +488,7 @@ const SOCIAL_SITES: SocialSite[] = [
 
 // Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
 const BRAND_ICONS: Record<string, string> = {
-  claude: 'claude.png', codex: 'codex.png', antigravity: 'antigravity.png',
+  codex: 'codex.png',
   youtube: 'youtube.webp', tiktok: 'tiktok.webp', instagram: 'instagram.webp', facebook: 'facebook.png', x: 'x.webp',
   local: 'ollama.svg',
 };
@@ -607,11 +603,16 @@ let user: User | null = appState.user;
 function goStep(n: number): void {
   step = n; appState.step = n; saveApp();
   $$('.ob-step').forEach(s => s.classList.toggle('hidden', Number(s.dataset.step) !== n));
-  $$('.ob-dots span').forEach((d, i) => d.classList.toggle('on', i === n));
+  $$('.ob-dots span').forEach((d, i) => { d.classList.toggle('on', i === n); d.classList.toggle('back', i < n); });
   if (n === STEP.agent) detectTools().catch(() => { /* the agent card shows the error */ });
   if (n === STEP.mode) renderModeChoice();
 }
 $$('[data-next]').forEach(b => b.onclick = () => goStep(step + 1));
+// The dots before the current one take you back to that step.
+$$('.ob-dots span').forEach((d, i) => {
+  d.onclick = () => { if (i < step) goStep(i); };
+  d.setAttribute('aria-label', `Step ${i + 1}`);
+});
 
 /* ----- Accounts ----- */
 function setUser(u: User | null): void {
@@ -745,13 +746,20 @@ function feedCardHtml(s: SocialSite): string {
   const connected = appState.vibeSites.includes(s.id);
   const cls = ['social-card', connected ? 'connected' : '', s.id === appState.vibeSite ? 'on' : ''].filter(Boolean).join(' ');
   let sub = 'Not connected';
-  if (connected) sub = signedIn[s.id] ? 'Signed in' : 'Connected · not signed in';
+  if (connected) sub = 'Signed in';
   return `<div class="${cls}" data-site="${s.id}" role="button" tabindex="0">
     ${brandMark('mark', s.id, s.mark)}<span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
     <button class="btn btn-sm" data-connect="${s.id}">${connected ? 'Disconnect' : `Connect ${svgIcon('external', 12)}`}</button></div>`;
 }
 async function renderFeedChoices(root: HTMLElement): Promise<void> {
   signedIn = await api.vibe.status().catch(() => ({}));
+  // A feed whose sign-in has expired or been cleared is no longer connected.
+  const stale = appState.vibeSites.filter(id => id in signedIn && !signedIn[id]);
+  if (stale.length) {
+    appState.vibeSites = appState.vibeSites.filter(id => !stale.includes(id));
+    if (appState.vibeSite && stale.includes(appState.vibeSite)) appState.vibeSite = appState.vibeSites[0] ?? null;
+    saveApp();
+  }
   const draw = () => {
     root.innerHTML = SOCIAL_SITES.map(feedCardHtml).join('');
     $$('[data-site]', root).forEach(card => {
@@ -780,19 +788,19 @@ async function toggleFeed(id: string): Promise<void> {
     return;
   }
   toast(`Sign in to ${site.name} in the window that opened, then close it`);
-  signedIn[id] = await api.vibe.connect(id);
+  // A feed only counts as connected once the site really has a sign-in; closing the window unsigned adds nothing.
+  signedIn[id] = await api.vibe.connect(id).catch(() => false);
+  if (!signedIn[id]) { toast(`Couldn't confirm a ${site.name} sign-in, so it isn't connected. Try Connect again and sign in first.`); return; }
   appState.vibeSites = [...appState.vibeSites, id];
   appState.vibeSite = id;
   saveApp();
   setVibeArmed(true);
-  toast(signedIn[id] ? `${site.name} connected` : `${site.name} added — it plays without your account until you sign in`);
+  toast(`${site.name} connected`);
 }
 
 /* ----- AI agent detection ----- */
 const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
-  claude: { letter: 'C', tint: 'claude' },
   codex: { letter: 'Cx', tint: 'codex' },
-  antigravity: { letter: 'A', tint: 'antigravity' },
   local: { letter: 'L', tint: 'local' },
 };
 let detecting: Promise<Detection> | null = null;
@@ -2450,6 +2458,48 @@ function squiggles(b: Buffer, lineCount: number, cw: number): HTMLElement[] {
     return box('squig', ln * LINE_H + 15, x, Math.max(visualCol(lt, to) * cw - x, cw));
   });
 }
+/* ----- Matching tags: with the caret in an opening or closing tag, both halves light up ----- */
+const VOID_HTML = new Set('area base br col embed hr img input link meta param source track wbr'.split(' '));
+interface TagSpan { start: number; end: number; nameStart: number; nameEnd: number; }
+// Pairs every opening tag with its closing tag (void and self-closing tags have no partner; stray closers are ignored).
+function tagPairs(text: string, xml: boolean): [TagSpan, TagSpan][] {
+  const re = /<!--[\s\S]*?(?:-->|$)|<(\/?)([A-Za-z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+  const stack: { name: string; span: TagSpan }[] = [];
+  const pairs: [TagSpan, TagSpan][] = [];
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m[0].startsWith('<!--')) continue;
+    const name = xml ? m[2] : m[2].toLowerCase();
+    const nameStart = m.index + 1 + m[1].length;
+    const span = { start: m.index, end: m.index + m[0].length, nameStart, nameEnd: nameStart + m[2].length };
+    if (m[1]) {
+      const at = stack.map(s => s.name).lastIndexOf(name);
+      if (at === -1) continue;
+      pairs.push([stack[at].span, span]);
+      stack.length = at; // anything opened after it was left open
+    } else if (!m[3].endsWith('/') && (xml || !VOID_HTML.has(name))) stack.push({ name, span });
+  }
+  return pairs;
+}
+// The two tags around the caret as offset ranges to mark: exactly the tag names, so the boxes hug the letters.
+function tagMarks(b: Buffer): [number, number][] {
+  const lexer = langOf(b.path)[0], ext = b.path.split('.').pop()?.toLowerCase() ?? '';
+  if ((lexer !== 'html' && ext !== 'jsx' && ext !== 'tsx') || b.text.length > 200000) return [];
+  if (!b.ta) return [];
+  const caret = b.ta.selectionStart;
+  const hit = (t: TagSpan, strict: boolean) => (strict ? t.start < caret && caret < t.end : t.start <= caret && caret <= t.end);
+  const pairs = tagPairs(b.text, ext === 'xml' || ext === 'svg' || ext === 'jsx' || ext === 'tsx');
+  const pair = pairs.find(p => p.some(t => hit(t, true))) ?? pairs.find(p => p.some(t => hit(t, false)));
+  return pair ? pair.map(t => [t.nameStart, t.nameEnd] as [number, number]) : [];
+}
+function tagBoxes(b: Buffer, cw: number): HTMLElement[] {
+  return tagMarks(b).map(([from, to]) => {
+    const ln = lineAt(b.text, from), ls = lineStart(b.text, from);
+    const lt = b.text.slice(ls, lineEnd(b.text, ls));
+    const x = visualCol(lt, from - ls) * cw;
+    return box('tagpair', ln * LINE_H, x, Math.max(visualCol(lt, to - ls) * cw - x, 2));
+  });
+}
+let tagKey = '';
 function lineHtml(h: string, i: number, add: Set<number> | undefined, d: Diag | undefined): string {
   const cls = ['ln', add?.has(i) ? 'added' : '', d ? 'err' : '', i === curLine ? 'cur-line' : ''].filter(Boolean).join(' ');
   const msg = d ? `<span class="diag-msg">${esc(d.msg)}</span>` : '';
@@ -2469,7 +2519,8 @@ function renderCode(): void {
   const errAt = visibleDiags(b, lines.length);
   const add = added[b.path];
   hlInner.innerHTML = lines.map((h, i) => lineHtml(h, i, add, errAt.get(i))).join('');
-  hlInner.append(...findBoxes(b, cw), ...squiggles(b, lines.length, cw));
+  hlInner.append(...findBoxes(b, cw), ...squiggles(b, lines.length, cw), ...tagBoxes(b, cw));
+  tagKey = `${b.path}:${b.ta.selectionStart}:${b.text.length}`;
   $('#gutter').style.width = `${Math.max(3, String(lines.length).length) * 8 + 32}px`;
   gutInner.innerHTML = lines.map((_, i) => gutterHtml(i, errAt.get(i))).join('');
   syncScroll();
@@ -2491,6 +2542,13 @@ function updateCaret(): void {
     hlInner.children[i]?.classList.add('cur-line');
     gutInner.children[i]?.classList.add('cur');
     curLine = i;
+  }
+  // Clicking (or arrowing) into a tag marks it and its partner; the boxes are swapped without redrawing the code.
+  const key = `${b.path}:${b.ta.selectionStart}:${b.text.length}`;
+  if (key !== tagKey) {
+    tagKey = key;
+    $$('.tagpair', hlInner).forEach(x => x.remove());
+    hlInner.append(...tagBoxes(b, measureChar()));
   }
   updateStatus();
 }
@@ -3634,6 +3692,28 @@ function openMenu(i: number, viaKeyboard = false, pinned = viaKeyboard): void {
   m.onmouseenter = cancelMenuClose;
   m.onmouseleave = scheduleMenuClose;
 }
+/* ----- Popups grow out of the icon that opened them and shrink back into it ----- */
+let popTrigger: { el: HTMLElement; at: number } | null = null;
+let menuOwner: HTMLElement | null = null; // the button whose menu is (or was just) open, for modals its items open
+const noteTrigger = (e: Event) => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>('button, [role="button"]');
+  if (el) popTrigger = { el, at: Date.now() };
+};
+document.addEventListener('pointerdown', noteTrigger, true);
+document.addEventListener('click', noteTrigger, true);
+// The button that just opened a popup, if it carries an icon (a text-only button keeps the plain animation).
+function popOwner(): HTMLElement | null {
+  if (!popTrigger || Date.now() - popTrigger.at > 700) return null;
+  const el = popTrigger.el.closest('.menu') ? menuOwner : popTrigger.el;
+  return el?.isConnected && el.querySelector('svg') ? el : null;
+}
+// Sets the scale-from point of `pop` (placed at left/top, or wherever it sits) to the owner's icon.
+function growFrom(pop: HTMLElement, owner: HTMLElement, at?: { left: number; top: number }): void {
+  const icon = owner.querySelector('svg') as SVGElement, i = icon.getBoundingClientRect();
+  const p = at ?? pop.getBoundingClientRect();
+  pop.style.transformOrigin = `${i.left + i.width / 2 - p.left}px ${i.top + i.height / 2 - p.top}px`;
+  pop.classList.add('from-icon');
+}
 function popupMenu(x: number, y: number, items: MenuItem[], onClose?: () => void): void {
   showMenu(x, y, items, false);
   openMenuIdx = -2;
@@ -3689,7 +3769,11 @@ function showMenu(x: number, y: number, items: MenuItem[], viaKeyboard: boolean)
   menuItems = items;
   kbIdx = viaKeyboard ? items.findIndex(it => !it.sep && !it.header) : -1;
   $('#menuRoot').innerHTML = '';
-  renderMenu(x, y, items);
+  menuOwner = popOwner();
+  const m = renderMenu(x, y, items);
+  // Callers may still restyle the menu (width, flip above its button), so the origin is set once they are done.
+  const owner = menuOwner;
+  if (owner) queueMicrotask(() => { if (m.isConnected) growFrom(m, owner, { left: parseFloat(m.style.left), top: parseFloat(m.style.top) }); });
 }
 function activateMenuItem(it: MenuItem): void {
   if (it.enabled && !it.enabled()) return;
@@ -3869,7 +3953,7 @@ function addMsg(html: string): HTMLElement {
   return el;
 }
 const clockTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-// In the IDE replies come from the Planner or Builder; in Breeze Box from the agent itself (Claude Code, Codex…).
+// In the IDE replies come from the Planner or Builder; in Breeze Box from the agent itself (Codex…).
 function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: string; tint: string } {
   const chosen = selectedAgent();
   if (s.name === 'box' && chosen) {
@@ -4135,11 +4219,9 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
   }
 }
 
-function errorCard(text: string, hint?: string, action?: string): void {
+function errorCard(text: string, hint?: string): void {
   const hintHtml = hint ? `<p>${esc(hint)}</p>` : '';
-  const actionHtml = action === 'openApp' ? '<div class="row" data-live><button class="btn btn-sm btn-primary" data-openapp>Open project in Antigravity</button></div>' : '';
-  const el = addMsg(`<div class="card error"><h5>${svgIcon('alert', 14)} The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}${actionHtml}</div>`);
-  el.querySelector<HTMLElement>('[data-openapp]')?.addEventListener('click', () => background(api.agent.openApp(agentRun?.agent ?? appState.agent ?? '')));
+  addMsg(`<div class="card error"><h5>${svgIcon('alert', 14)} The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}</div>`);
 }
 
 function onAgentFile(r: Run, path: string): void {
@@ -4151,7 +4233,7 @@ function onAgentFile(r: Run, path: string): void {
 function onAgentError(r: Run, ev: AgentEvent): void {
   // Some CLIs print the error as a reply too; show it once, in the error card.
   if (r.lastMsg && ev.text?.trim() === r.lastText.trim()) r.lastMsg.remove();
-  errorCard(ev.text ?? 'Unknown error', ev.hint, ev.action);
+  errorCard(ev.text ?? 'Unknown error', ev.hint);
 }
 // The first sign of life from the agent: its card appears, and a new task says how many agents it needs.
 function onFirstReply(r: Run): void {
@@ -4808,8 +4890,15 @@ function frameRect(): Rect {
 }
 function renderVibeSites(): void {
   $('#vibeSites').innerHTML = connectedSites().map(s =>
-    `<button class="${s.id === vibeSiteShown ? 'on' : ''}" data-vibe-site="${s.id}">${brandMark('mark', s.id, s.mark)}${esc(s.name)}</button>`).join('');
-  $$('[data-vibe-site]').forEach(b => b.onclick = () => { appState.vibeSite = b.dataset.vibeSite ?? null; saveApp(); showFeed(); });
+    `<button class="${s.id === vibeSiteShown ? 'on' : ''}" data-vibe-site="${s.id}">${brandMark('mark', s.id, s.mark)}<span class="nm">${esc(s.name)}</span></button>`).join('');
+  $$('[data-vibe-site]').forEach(b => {
+    b.onclick = () => { appState.vibeSite = b.dataset.vibeSite ?? null; saveApp(); showFeed(); };
+    b.title = siteById(b.dataset.vibeSite ?? null)?.name ?? '';
+  });
+  // The card never grows to fit its tabs: when they don't fit, all but the watched one shrink to their icon.
+  const row = $('#vibeSites');
+  row.classList.remove('tight');
+  if (row.scrollWidth > row.clientWidth) row.classList.add('tight');
 }
 function showFeed(): void {
   const site = siteById(appState.vibeSite) ?? connectedSites()[0];
@@ -5007,6 +5096,8 @@ function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () =
   modalOnClose = onClose ?? null;
   $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) closeModal(); };
   $$('[data-close]', m).forEach(b => b.onclick = closeModal);
+  const owner = popOwner();
+  if (owner) growFrom(m, owner);
   bind?.(m);
 }
 function closeModal(): void {
@@ -5014,7 +5105,7 @@ function closeModal(): void {
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
-  setTimeout(() => scrim.remove(), 150);
+  setTimeout(() => scrim.remove(), 200);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {
@@ -5054,6 +5145,11 @@ function endSplash(): void {
   welcome.classList.remove('ob-await');
   if (getComputedStyle(splash).display === 'none') { splash.remove(); return; } // reduced motion: no splash at all
   if (!welcome.getClientRects().length) {
+    // Returning user: the app fades in underneath while the splash fades away over it.
+    $$('#ide:not(.hidden), #box:not(.hidden)').forEach(el => {
+      el.classList.add('app-in');
+      el.addEventListener('animationend', () => el.classList.remove('app-in'), { once: true });
+    });
     splash.addEventListener('animationend', () => splash.remove(), { once: true });
     splash.classList.add('out');
     return;
@@ -5068,7 +5164,12 @@ function endSplash(): void {
 }
 {
   const splash = $('#splash');
+  const starting = boot();
+  background(starting);
   if (getComputedStyle(splash).display === 'none') endSplash();
-  else splash.addEventListener('animationend', e => { if (e.animationName === 'splashLogo') setTimeout(endSplash, 800); });
+  else {
+    // The splash stays (its loading bar running) until the logo has settled AND Breeze has finished starting.
+    const settled = new Promise<void>(done => splash.addEventListener('animationend', e => { if (e.animationName === 'splashLogo') setTimeout(done, 800); }));
+    void Promise.all([settled, starting.catch(() => undefined)]).then(endSplash);
+  }
 }
-background(boot());

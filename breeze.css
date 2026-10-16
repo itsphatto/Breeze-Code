@@ -62,9 +62,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* Fixed colours for agents and people, as --tint (backgrounds use it directly). */
 .tint-planner { --tint: var(--c-planner); }
 .tint-builder { --tint: var(--c-builder); }
-.tint-claude { --tint: #d97757; }
 .tint-codex { --tint: #e4e4e7; }
-.tint-antigravity, .tint-host { --tint: #7aa9ff; }
+.tint-host { --tint: #7aa9ff; }
 .tint-gemini { --tint: #a78bfa; }
 .tint-youtube { --tint: #ff3b30; }
 .tint-tiktok { --tint: #25f4ee; }
@@ -130,11 +129,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .drag-strip { position: absolute; top: 0; left: 0; right: 0; height: 38px; -webkit-app-region: drag; }
 .ob-step { width: min(560px, calc(100vw - 32px)); text-align: center; animation: rise .35s cubic-bezier(.2,.8,.2,1); padding: 40px 0 56px; }
 .ob-step h1 { font-family: var(--font-display); font-size: 40px; margin: 22px 0 8px; letter-spacing: -.02em; }
-.ob-step h2 { font-family: var(--font-display); font-size: 24px; margin: 0 0 8px; }
+.ob-step h2 { font-family: var(--font-display); font-size: 34px; margin: 0 0 12px; letter-spacing: -.01em; }
 .ob-step p.lead { color: var(--text-2); font-size: 15px; margin: 0 0 28px; }
 .ob-dots { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; gap: 6px; justify-content: center; }
 .ob-dots span { width: 6px; height: 6px; border-radius: 3px; background: var(--line); transition: width .3s cubic-bezier(.2,.8,.2,1), background .3s; }
 .ob-dots span.on { width: 20px; background: var(--blue); }
+/* Earlier steps are clickable; an invisible larger hit area makes the small dots easy to hit. */
+.ob-dots span { position: relative; }
+.ob-dots span::before { content: ""; position: absolute; inset: -8px -4px; }
+.ob-dots span.back { cursor: pointer; }
+.ob-dots span.back:hover { background: var(--text-2); }
 .signin-btns { display: grid; gap: 10px; max-width: 320px; margin: 0 auto; }
 .signin-btns .btn { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; font-size: 14px; }
 .waiting { display: grid; gap: 12px; justify-items: center; color: var(--text-2); }
@@ -299,6 +303,7 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .gutter .err { color: var(--err); }
 .gutter .err.cur { color: #fca5a5; }
 .hit { position: absolute; height: 21px; background: rgba(245,158,11,.22); border-radius: 2px; }
+.tagpair { position: absolute; height: 19px; margin-top: 1px; border-radius: 3px; pointer-events: none; background: rgba(122,169,255,.22); box-shadow: inset 0 0 0 1px rgba(122,169,255,.55); animation: fade .15s ease; }
 .hit.cur { background: rgba(245,158,11,.5); box-shadow: 0 0 0 1px #f59e0b; }
 .ta { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; border: 0; outline: 0; background: transparent; color: transparent; caret-color: var(--text); overflow: auto; }
 .ta::selection { background: rgba(0,94,255,.4); color: transparent; }
@@ -445,15 +450,21 @@ body.resizing-h .term-body { transition: none; }
 .ide { transition: filter .6s ease, opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
 body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scale(.97); pointer-events: none; user-select: none; }
 .vibe-stage { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; animation: fade .5s ease; }
-.vibe-panel { display: grid; gap: 10px; padding: 12px; background: var(--glass); border: 1px solid var(--glass-line); border-radius: 22px; box-shadow: 0 30px 90px rgba(0,0,0,.6); backdrop-filter: var(--glass-blur); animation: modalIn .5s cubic-bezier(.2,.8,.2,1); }
-.vibe-top { display: flex; align-items: center; gap: 6px; }
+/* The card is exactly as wide as the 9:16 frame, whatever else it holds; the tab row gives way instead. */
+.vibe-stage { --vf-h: min(76vh, calc((100vw - 56px) * 16 / 9)); --vf-w: calc(var(--vf-h) * 9 / 16); }
+.vibe-panel { display: grid; grid-template-columns: var(--vf-w); gap: 10px; padding: 12px; box-sizing: content-box; background: var(--glass); border: 1px solid var(--glass-line); border-radius: 22px; box-shadow: 0 30px 90px rgba(0,0,0,.6); backdrop-filter: var(--glass-blur); animation: modalIn .5s cubic-bezier(.2,.8,.2,1); }
+.vibe-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vibe-top > .icon-btn, .vibe-top > .btn { flex: none; }
 .vibe-sites { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+/* Short on room: only the tab being watched keeps its name, the others shrink to their icon. */
+.vibe-sites.tight button:not(.on) .nm { display: none; }
+.vibe-sites.tight button:not(.on) { padding: 4px; }
 .vibe-sites button { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border: 1px solid transparent; border-radius: 999px; background: none; color: var(--text-2); font-size: 12px; white-space: nowrap; }
 .vibe-sites button:hover { background: rgba(255,255,255,.07); color: var(--text); }
 .vibe-sites button.on { background: rgba(255,255,255,.1); border-color: var(--glass-line); color: var(--text); }
 .vibe-sites .mark { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #000; }
 /* A phone-shaped 9:16 frame; in the desktop app the live feed is laid exactly over it. */
-.vibe-frame { position: relative; height: min(76vh, calc((100vw - 56px) * 16 / 9)); aspect-ratio: 9 / 16; border-radius: 16px; overflow: hidden; background: #000; }
+.vibe-frame { position: relative; width: var(--vf-w); height: var(--vf-h); border-radius: 16px; overflow: hidden; background: #000; }
 .vibe-placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--text-2); background: linear-gradient(160deg, #0a1a3a, #001b55 45%, #000); }
 .vibe-placeholder h4 { margin: 10px 0 4px; color: var(--text); font-size: 15px; }
 .vibe-placeholder .big-mark { display: inline-grid; place-items: center; width: 56px; height: 56px; border-radius: 16px; background: var(--tint); color: #000; font-size: 24px; font-weight: 700; }
@@ -490,12 +501,22 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
    logo glides into the welcome page's logo (first run) or the splash fades out over the app. The 6s fade is only a
    failsafe in case the script never hands off. */
 .splash { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: var(--bg); pointer-events: none;
-  animation: splashOut .6s ease 6s forwards; }
+  animation: splashOut .6s ease 20s forwards; }
 .splash::before { content: ""; position: absolute; inset: 0;
   background: radial-gradient(900px 520px at 50% 58%, rgba(0,94,255,.38), rgba(0,94,255,.1) 45%, transparent 72%);
   opacity: 0; animation: splashGlow 1.8s ease-out forwards; }
 .splash-logo { position: relative; width: 120px; height: 120px; object-fit: contain; opacity: 0; transform: translateY(18px);
   filter: drop-shadow(0 10px 40px rgba(0,94,255,.45)); animation: splashLogo 1.3s cubic-bezier(.2,.8,.2,1) .7s forwards; }
+/* A slim loading bar under the logo: it shows while Breeze is still getting ready and goes when the app fades in. */
+.splash-loader { position: absolute; left: 50%; top: calc(50% + 92px); width: 110px; height: 3px; margin-left: -55px; border-radius: 3px; overflow: hidden;
+  background: rgba(255,255,255,.08); opacity: 0; animation: splashLoaderIn .4s ease 1.7s forwards; }
+.splash-loader::after { content: ""; position: absolute; inset: 0; width: 40%; border-radius: 3px; background: var(--blue); animation: splashLoaderRun 1.1s cubic-bezier(.5,0,.5,1) infinite; }
+.splash.leaving .splash-loader, .splash.out .splash-loader { animation: none; opacity: 0; transition: opacity .25s ease; }
+@keyframes splashLoaderIn { to { opacity: 1; } }
+@keyframes splashLoaderRun { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+/* The main page eases in as the splash fades off it. */
+.app-in { animation: appIn .7s cubic-bezier(.2,.8,.2,1) backwards; }
+@keyframes appIn { from { opacity: 0; transform: scale(.985); } }
 @keyframes splashGlow { to { opacity: 1; } }
 @keyframes splashLogo { to { opacity: 1; transform: none; } }
 @keyframes splashOut { to { opacity: 0; visibility: hidden; } }
@@ -542,7 +563,7 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 
 /* ================= Onboarding: setup fits one screen ================= */
 .ob-step.setup { width: min(940px, calc(100vw - 48px)); padding: 12px 0 36px; }
-.ob-step.setup h2 { font-size: 22px; margin-bottom: 4px; }
+.ob-step.setup h2 { margin-bottom: 28px; }
 .ob-step.setup p.lead { font-size: 13px; margin-bottom: 16px; }
 .setup .setup-grid { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; margin-bottom: 0; }
 .setup-col { display: grid; gap: 12px; }
@@ -550,7 +571,7 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .setup-col #startBuilding { width: 100%; margin-top: 2px; }
 .setup .agent-opt { padding: 7px 10px; }
 @media (max-width: 860px) { .setup .setup-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-height: 640px) { .ob-step.setup p.lead { display: none; } .setup .setup-card .muted { margin-bottom: 6px; } }
+@media (max-height: 640px) { .ob-step h2 { font-size: 28px; } .ob-step.setup h2 { margin-bottom: 16px; } .ob-step.setup p.lead { display: none; } .setup .setup-card .muted { margin-bottom: 6px; } }
 .agent-opt.api .nm small { font: 600 9px var(--font-ui); letter-spacing: .06em; color: var(--text-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; vertical-align: 2px; }
 .agent-opt .key-row { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 8px; }
 .agent-opt .key-row .input { padding: 6px 9px; font-size: 12px; }
@@ -558,7 +579,11 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .agent-opt.missing.api { cursor: default; }
 .agent-opt.missing.api .mark { opacity: .6; }
 .signin-error { margin: 4px 0 0; padding: 10px 12px; border: 1px solid rgba(245,158,11,.4); background: rgba(245,158,11,.08); border-radius: 8px; color: #fcd34d; font-size: 12.5px; text-align: left; animation: rise .2s; }
-#signinSkip { justify-self: center; margin-top: 4px; }
+#signinSkip { justify-self: center; margin-top: 4px; position: relative; }
+/* Hover: no box, a line draws itself under the text from the left and retracts to the right. */
+#signinSkip:hover { background: transparent; }
+#signinSkip::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: calc(100% - 20px); height: 1px; margin-left: calc(-50% + 10px); background: currentColor; transform: scaleX(0); transform-origin: right center; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+#signinSkip:hover::after, #signinSkip:focus-visible::after { transform: scaleX(1); transform-origin: left center; }
 .device-code { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; animation: pop .3s cubic-bezier(.3,1.5,.5,1); }
 .device-code span { font: 600 22px var(--font-code); letter-spacing: .12em; color: var(--text); margin-right: 6px; }
 
@@ -783,6 +808,13 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .menu.closing { animation: menuOut .12s cubic-bezier(.4,0,1,1) forwards; pointer-events: none; }
 .menu.up.closing { animation-name: menuOutUp; }
 @keyframes menuOut { to { opacity: 0; transform: translateY(-4px) scale(.98); } }
+/* Popups fade and scale in from the icon that opened them (transform-origin is set in script). */
+.menu.from-icon { animation: iconIn .26s cubic-bezier(.2,.8,.2,1); }
+.menu.from-icon.closing { animation: iconOut .16s cubic-bezier(.4,0,1,1) forwards; }
+@keyframes iconIn { from { opacity: 0; transform: scale(.5); } }
+@keyframes iconOut { to { opacity: 0; transform: scale(.5); } }
+.modal.from-icon { animation: iconIn .28s cubic-bezier(.2,.8,.2,1); }
+.scrim.closing .modal.from-icon { animation: iconOut .18s cubic-bezier(.4,0,1,1) forwards; }
 @keyframes menuOutUp { to { opacity: 0; transform: translateY(4px) scale(.98); } }
 
 /* ================= Chat history ================= */
@@ -848,3 +880,4 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 /* Vibe Mode: the ready card pops when the agent finishes. */
 .vibe-ready.ping { animation: readyPing .6s cubic-bezier(.2,.8,.2,1); }
 @keyframes readyPing { 0% { transform: translateY(10px) scale(.96); opacity: 0; } 60% { transform: translateY(-2px) scale(1.02); opacity: 1; } 100% { transform: none; } }
+.some_padding_thingy { margin-bottom: 12px; }

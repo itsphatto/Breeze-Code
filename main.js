@@ -558,49 +558,15 @@ const APPDATA = process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming');
 const LOCALAPPDATA = process.env.LOCALAPPDATA || path.join(HOME, 'AppData', 'Local');
 const isWin = process.platform === 'win32';
 
-// The file inside the newest versioned sub-folder, directly or one level deeper,
-// e.g. Claude desktop's bundled Claude Code at claude-code/<version>/<hash>/claude.exe.
-function newestVersioned(dir, file) {
-  try {
-    const vers = fs.readdirSync(dir).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    for (const v of vers) {
-      const base = path.join(dir, v);
-      if (fs.existsSync(path.join(base, file))) return path.join(base, file);
-      const sub = fs.readdirSync(base).find(s => fs.existsSync(path.join(base, s, file)));
-      if (sub) return path.join(base, sub, file);
-    }
-  } catch { /* not installed */ }
-  return null;
-}
-
 const AGENTS = [
-  {
-    id: 'claude', name: 'Claude Code', vendor: 'Anthropic', commands: ['claude'],
-    url: 'https://claude.com/product/claude-code',
-    paths: () => isWin
-      ? [path.join(HOME, '.local', 'bin', 'claude.exe'), path.join(APPDATA, 'npm', 'claude.cmd'), newestVersioned(path.join(APPDATA, 'Claude', 'claude-code'), 'claude.exe')]
-      : [path.join(HOME, '.local', 'bin', 'claude'), path.join(HOME, '.claude', 'local', 'claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude'],
-  },
   {
     id: 'codex', name: 'Codex', vendor: 'OpenAI', commands: ['codex'],
     url: 'https://developers.openai.com/codex/cli',
     paths: () => isWin ? [path.join(APPDATA, 'npm', 'codex.cmd')] : ['/usr/local/bin/codex', '/opt/homebrew/bin/codex'],
   },
-  {
-    id: 'antigravity', name: 'Antigravity', vendor: 'Google', commands: ['antigravity', 'antigravity-ide'],
-    url: 'https://antigravity.google',
-    paths: () => isWin
-      ? [
-        path.join(LOCALAPPDATA, 'Programs', 'Antigravity', 'bin', 'antigravity.cmd'),
-        path.join(LOCALAPPDATA, 'Programs', 'Antigravity IDE', 'bin', 'antigravity-ide.cmd'),
-        path.join(LOCALAPPDATA, 'Programs', 'Antigravity', 'Antigravity.exe'),
-        path.join(LOCALAPPDATA, 'Programs', 'Antigravity IDE', 'Antigravity IDE.exe'),
-      ]
-      : ['/Applications/Antigravity.app', '/usr/local/bin/antigravity', '/usr/bin/antigravity'],
-  },
 ];
 const agentBins = new Map(); // agent id -> executable found by the last scan
-// Folders of the agents found off PATH (e.g. Claude desktop's bundled Claude Code), so the Terminal panel can run them by name.
+// Folders of the agents found off PATH, so the Terminal panel can run them by name.
 const agentDirs = () => [...new Set([...agentBins.values()].filter(b => !b.endsWith('.app')).map(b => path.dirname(b)))];
 
 function which(cmd) {
@@ -621,7 +587,7 @@ function versionIn(text) {
 }
 function versionOf(bin) {
   // Launching a GUI app's .exe would open its window, so only ask CLIs for a version.
-  if (bin.endsWith('.app') || (isWin && /\.exe$/i.test(bin) && !/(?:claude|codex|git|node)\.exe$/i.test(bin))) return Promise.resolve(null);
+  if (bin.endsWith('.app') || (isWin && /\.exe$/i.test(bin) && !/(?:codex|git|node)\.exe$/i.test(bin))) return Promise.resolve(null);
   return new Promise(res => {
     exec(`"${bin}" --version`, { windowsHide: true, timeout: 8000 }, (err, stdout) => res(err ? null : versionIn(stdout)));
   });
@@ -639,7 +605,9 @@ ipcMain.handle('sys:detect', async () => {
     return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version: bin ? await versionOf(bin) : null };
   }));
   // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
-  const llm = await llmConfig(true).catch(() => null);
+  let llm = await llmConfig(true).catch(() => null);
+  // A saved server may have been closed since: it only counts as found while it answers and still has the model.
+  if (llm) llm = await llmReachable(llm).then(() => llm, () => null);
   agents.push({ id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [] });
   const tools = await Promise.all([['git', 'Git'], ['node', 'Node.js']].map(async ([cmd, name]) => {
     const bin = await which(cmd);
@@ -714,6 +682,15 @@ async function llmConfig(probe) {
   return { url: hit.url, model: hit.models[0], models: hit.models, key: null };
 }
 
+// Checks that the saved server still answers and still has the chosen model (the user may have closed or unloaded it).
+async function llmReachable(cfg) {
+  let models;
+  try { models = await llmModels(cfg.url, cfg.key, 2500); }
+  catch { throw new Error('The local LLM server is not running. Start Ollama or LM Studio again, or choose another agent.'); }
+  if (cfg.model && !models.includes(cfg.model)) throw new Error(`${cfg.model} is no longer loaded on the local LLM server. Load it again or pick another model.`);
+  return models;
+}
+
 // With no address, the usual local addresses are tried with the key.
 async function llmFind(key) {
   const errors = [];
@@ -772,22 +749,9 @@ ipcMain.handle('agent:stop', (_e, runId) => {
   if (r.child) killTree(r.child);
   r.abort?.abort();
 });
-// Antigravity has no headless mode, so Breeze opens the project in its own window.
-ipcMain.handle('agent:openApp', (_e, id) => {
-  const bin = agentBins.get(id);
-  if (!bin) throw new Error('That agent was not found on this computer');
-  const child = spawn(`"${bin}" "${root || boxDir()}"`, { shell: true, detached: true, stdio: 'ignore', windowsHide: true });
-  child.unref();
-});
-
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
 function cliArgs(agent, mode, prompt, session) {
   const build = mode === 'build';
-  if (agent === 'claude') {
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', build ? 'acceptEdits' : 'plan'];
-    if (session) args.push('--resume', session);
-    return { args, prompt };
-  }
   const args = ['exec', '--json', '-s', build ? 'workspace-write' : 'read-only', '--skip-git-repo-check'];
   const model = loadState().codexModel;
   if (model && SAFE_MODEL.test(model)) args.push('-m', model);
@@ -824,12 +788,6 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
   if (agent === 'local') return runLocal(runId, run, { mode, prompt, session, base });
   const bin = agentBins.get(agent);
   if (!bin) throw new Error('That agent was not found on this computer. Rescan from Settings → Run Setup Again.');
-  if (agent === 'antigravity') {
-    emit(runId, { t: 'error', text: 'Antigravity runs its agents inside its own app window.', action: 'openApp' });
-    emit(runId, { t: 'done', ok: false });
-    runs.delete(runId);
-    return;
-  }
   const launch = () => {
     const cli = cliArgs(agent, mode, prompt, session);
     // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags,
@@ -837,8 +795,8 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
     const child = spawn(bin, cli.args, { cwd: base, shell: /\.(?:cmd|bat)$/i.test(bin), windowsHide: true, env: process.env });
     run.child = child;
     child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
-    child.stdin.end(cli.prompt);
-    streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode, retryModel);
+    child.stdin.end(cli.prompt ?? undefined);
+    streamCli(runId, run, child, codexEvent, mode, retryModel);
   };
   // Called once when Codex refuses its configured model.
   let retried = false;
@@ -878,47 +836,6 @@ function streamCli(runId, run, child, parse, mode, retryModel) {
     emit(runId, { t: 'error', text: ctx.lastError || ctx.stderr.trim().split('\n').slice(-6).join('\n') || `The agent exited with code ${code}` });
     emit(runId, { t: 'done', ok: false });
   });
-}
-
-const TOOL_LABELS = {
-  Read: ['read', 'Read'], Edit: ['edit', 'Edited'], MultiEdit: ['edit', 'Edited'], NotebookEdit: ['edit', 'Edited'], Write: ['edit', 'Wrote'],
-};
-function describeTool(name, input = {}) {
-  const file = relOut(input.file_path || input.path || input.notebook_path);
-  if (TOOL_LABELS[name]) return { kind: TOOL_LABELS[name][0], label: `${TOOL_LABELS[name][1]} ${file}` };
-  switch (name) {
-    case 'Bash': case 'PowerShell': return { kind: 'run', label: `$ ${input.command || ''}` };
-    case 'Glob': case 'Grep': return { kind: 'search', label: `Searched for ${input.pattern || ''}` };
-    case 'WebFetch': return { kind: 'web', label: `Fetched ${input.url || ''}` };
-    case 'WebSearch': return { kind: 'web', label: `Searched the web for ${input.query || ''}` };
-    case 'TodoWrite': return { kind: 'todo', label: 'Updated its to-do list' };
-    case 'Task': case 'Agent': return { kind: 'agent', label: `Started a helper: ${input.description || ''}` };
-    default: return { kind: 'tool', label: name };
-  }
-}
-
-const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
-function claudeContent(runId, c, ctx) {
-  if (c.type === 'text' && c.text.trim()) { ctx.lastText = c.text; emit(runId, { t: 'text', text: c.text }); return; }
-  if (c.type !== 'tool_use') return;
-  if (c.name === 'ExitPlanMode') { emit(runId, { t: 'plan', text: c.input?.plan || ctx.lastText }); return; }
-  emit(runId, { t: 'tool', ...describeTool(c.name, c.input) });
-  if (EDIT_TOOLS.has(c.name)) emit(runId, { t: 'file', path: relOut(c.input?.file_path || c.input?.notebook_path) });
-}
-function claudeResult(runId, d, ctx) {
-  ctx.done = true;
-  const ok = d.subtype === 'success' && !d.is_error;
-  if (!ok) {
-    const text = String(d.result || d.subtype || 'The agent stopped with an error');
-    const hint = /log ?in/i.test(text) ? 'Run "claude" in the Terminal panel once and sign in with /login, then try again.' : undefined;
-    emit(runId, { t: 'error', text, hint });
-  }
-  emit(runId, { t: 'done', ok, cost: d.total_cost_usd, ms: d.duration_ms });
-}
-function claudeEvent(runId, d, ctx) {
-  if (d.type === 'system' && d.subtype === 'init') emit(runId, { t: 'session', id: d.session_id, model: d.model });
-  else if (d.type === 'assistant') for (const c of d.message?.content || []) claudeContent(runId, c, ctx);
-  else if (d.type === 'result') claudeResult(runId, d, ctx);
 }
 
 function codexError(msg) {
@@ -1093,6 +1010,23 @@ async function llmRequest(ctx, body, signal) {
     return llmPost(ctx.cfg, { ...body, tools: undefined }, signal);
   }
 }
+// A reply that is only a tool call written as text ({"name": "read_file", "arguments": {...}}), possibly fenced,
+// becomes real tool calls. Anything else (prose, other JSON, unknown tool names) is left alone.
+function textToolCalls(text, toolNames) {
+  const body = String(text ?? '').trim().replace(/^```[\w-]*\s*\n?/, '').replace(/\n?```$/, '').trim();
+  if (!/^[[{]/.test(body)) return null;
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { return null; }
+  const list = Array.isArray(parsed) ? parsed : [parsed];
+  const calls = [];
+  for (const c of list) {
+    const fn = c?.function ?? c;
+    const args = fn?.arguments ?? fn?.parameters ?? {};
+    if (typeof fn?.name !== 'string' || !toolNames.includes(fn.name) || args === null || typeof args === 'number') return null;
+    calls.push({ id: `call_${crypto.randomUUID().slice(0, 8)}`, type: 'function', function: { name: fn.name, arguments: typeof args === 'string' ? args : JSON.stringify(args) } });
+  }
+  return calls.length ? calls : null;
+}
 const LLM_MAX_TURNS = 24;
 const LLM_REPLY_RESERVE = 1500; // tokens left free for the model's own reply
 // Ollama runs models with a small context unless it was raised on the server; other servers usually allow more.
@@ -1106,6 +1040,7 @@ const withoutThinking = s => String(s ?? '').replace(/<think>[\s\S]*?(?:<\/think
 async function runLocal(runId, run, { mode, prompt, session, base }) {
   const cfg = await llmConfig(false);
   if (!cfg?.model) throw new Error('Connect a local LLM server first (Settings → Run Setup Again).');
+  await llmReachable(cfg);
   const sid = session && llmSessions.has(session) ? session : crypto.randomUUID();
   const fresh = !llmSessions.has(sid);
   const messages = llmSessions.get(sid) || [{ role: 'system', content: llmSystemPrompt(base) }];
@@ -1127,8 +1062,13 @@ async function runLocal(runId, run, { mode, prompt, session, base }) {
     tokens += j.usage?.total_tokens || 0;
     const msg = j.choices?.[0]?.message;
     if (!msg) throw new Error('The model returned no answer');
-    const text = withoutThinking(msg.content);
-    const calls = msg.tool_calls?.length ? msg.tool_calls : null;
+    let text = withoutThinking(msg.content);
+    let calls = msg.tool_calls?.length ? msg.tool_calls : null;
+    // Small models often print the call as JSON text instead of using the tool API: run it rather than show it.
+    if (!calls && withTools) {
+      calls = textToolCalls(text, ctx.toolNames);
+      if (calls) text = '';
+    }
     messages.push({ role: 'assistant', content: text, ...(calls ? { tool_calls: calls } : {}) });
     if (text) { lastText = text; emit(runId, { t: 'text', text }); }
     return calls;

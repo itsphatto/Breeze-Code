@@ -22,7 +22,7 @@
 ## Why Breeze IDE
 
 - **Agents that show their work.** A Planner writes a plan, you approve it, and a Builder carries it out. Every file read, edit and command streams into the agents panel as it happens.
-- **Bring the agent you already use.** Breeze finds Claude Code, Codex and Antigravity on your computer, or connects to a local model through Ollama, LM Studio or any OpenAI-compatible server.
+- **Bring the agent you already use.** Breeze finds Codex on your computer, or connects to a local model through Ollama, LM Studio or any OpenAI-compatible server.
 - **Light and local.** Your files stay on your machine, API keys are encrypted with the OS keychain, and a local model runs without the cloud.
 - **Stay in the flow.** Vibe Mode plays a short-video feed while the agents work, then tells you when your code is ready.
 
