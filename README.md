@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Icon.png" width="88" alt="Breeze IDE icon">
+
 
 <img src="BreezeIDE.png" height="44" alt="Breeze IDE">
 
@@ -15,7 +15,7 @@
 
 <br>
 
-<img src="docs/screenshots/ide.jpg" alt="Breeze IDE: explorer, editor, live preview and the agents panel after a plan was approved and built" width="900">
+<img src="ide.jpg" alt="Breeze IDE: explorer, editor, live preview and the agents panel after a plan was approved and built" width="900">
 
 </div>
 
