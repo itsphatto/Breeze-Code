@@ -31,7 +31,7 @@ interface Diag { line: number; col: number; len: number; msg: string; }
 type SyntaxResult = { ok: true } | (Diag & { eof?: boolean }) | null;
 interface RootInfo { root: string; name: string; }
 interface SearchHit { path: string; line: number; col: number; text: string; }
-interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
+interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; mock?: boolean; models?: string[]; }
 interface Accounts { accounts: User[]; active: string | null; }
 interface Completion { text: string; dir: boolean; }
 interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; url?: string | null; }
@@ -370,6 +370,7 @@ function demoApi(): BreezeApi {
           demo: true, platform: 'browser',
           agents: [
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
+            { id: 'ubot', name: 'u.bot', vendor: 'Mock agent', url: '', mock: true, found: true, path: null, version: null },
             { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
@@ -479,21 +480,18 @@ function demoApi(): BreezeApi {
 // The feeds Vibe Mode can play. Sign-in and the feed itself are handled by main.js in the desktop app.
 interface SocialSite { id: string; name: string; mark: string; url: string; }
 const SOCIAL_SITES: SocialSite[] = [
-  { id: 'youtube', name: 'YouTube Shorts', mark: '▶', url: 'https://www.youtube.com/shorts' },
-  { id: 'tiktok', name: 'TikTok', mark: '♪', url: 'https://www.tiktok.com/foryou' },
   { id: 'instagram', name: 'Instagram Reels', mark: '◎', url: 'https://www.instagram.com/reels/' },
   { id: 'facebook', name: 'Facebook Reels', mark: 'f', url: 'https://www.facebook.com/reel/' },
-  { id: 'x', name: 'X', mark: '𝕏', url: 'https://x.com/home' },
 ];
 
 // Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
 const BRAND_ICONS: Record<string, string> = {
   codex: 'codex.png',
-  youtube: 'youtube.webp', tiktok: 'tiktok.webp', instagram: 'instagram.webp', facebook: 'facebook.png', x: 'x.webp',
-  local: 'ollama.svg',
+  instagram: 'instagram.webp', facebook: 'facebook.png',
+  local: 'ollama.svg', ubot: 'ubot.svg',
 };
 // Logos that are a shape rather than a square tile; they show whole instead of clipped to the tile's corners.
-const BARE_ICONS = new Set(['youtube', 'facebook']);
+const BARE_ICONS = new Set(['facebook']);
 function brandMark(cls: string, id: string, fallback: string): string {
   const file = BRAND_ICONS[id];
   const inner = file ? `<img class="brand-img" src="assets/icons/${file}" alt="" draggable="false">` : esc(fallback);
@@ -802,6 +800,7 @@ async function toggleFeed(id: string): Promise<void> {
 const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
   codex: { letter: 'Cx', tint: 'codex' },
   local: { letter: 'L', tint: 'local' },
+  ubot: { letter: 'u', tint: 'ubot' },
 };
 let detecting: Promise<Detection> | null = null;
 
@@ -851,7 +850,7 @@ function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
 function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean): string {
   const where = a.path ?? (demo ? 'browser preview' : '');
   const version = a.version ? 'v' + a.version : 'Installed';
-  const sub = a.found ? [version, where].filter(Boolean).join(' · ') : a.vendor + ' · not installed';
+  const sub = a.mock ? 'Mock agent · built in, changes nothing' : a.found ? [version, where].filter(Boolean).join(' · ') : a.vendor + ' · not installed';
   const label = on ? 'Selected' : 'Detected';
   const side = a.found
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`
@@ -5105,7 +5104,7 @@ function closeModal(): void {
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
-  setTimeout(() => scrim.remove(), 200);
+  setTimeout(() => scrim.remove(), 440);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {

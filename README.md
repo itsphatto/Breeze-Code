@@ -74,7 +74,7 @@ Just a prompt and a chat, no editor. Code in a reply becomes an artifact card yo
 
 ### Vibe Mode
 
-While an agent works, the IDE fades and a YouTube Shorts, TikTok, Instagram, Facebook or X feed plays. A notification tells you when the code is ready; leaving is up to you.
+While an agent works, the IDE fades and an Instagram or Facebook feed plays. A notification tells you when the code is ready; leaving is up to you.
 
 </td>
 <td width="50%"><img src="docs/screenshots/vibe.jpg" alt="Vibe Mode with a feed and the code-ready card"></td>

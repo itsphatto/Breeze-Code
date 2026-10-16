@@ -65,8 +65,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tint-codex { --tint: #e4e4e7; }
 .tint-host { --tint: #7aa9ff; }
 .tint-gemini { --tint: #a78bfa; }
-.tint-youtube { --tint: #ff3b30; }
-.tint-tiktok { --tint: #25f4ee; }
 .tint-instagram { --tint: #e1306c; }
 .tint-facebook { --tint: #1877f2; }
 .tint-x { --tint: #e4e4e7; }
@@ -436,8 +434,8 @@ body.resizing-h .term-body { transition: none; }
 
 /* ---------- modal ---------- */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38); backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 40; animation: fade .15s; }
-.scrim.closing { animation: fadeOut .14s forwards; pointer-events: none; }
-.scrim.closing .modal { animation: sink .14s forwards; }
+.scrim.closing { animation: fadeOut .4s ease forwards; pointer-events: none; }
+.scrim.closing .modal { animation: sink .36s ease forwards; }
 .scrim.top { place-items: start center; padding-top: 60px; }
 .modal { width: min(460px, calc(100vw - 32px)); background: var(--glass-strong); border: 1px solid var(--glass-line); border-radius: 16px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05); backdrop-filter: var(--glass-blur); animation: modalIn .22s cubic-bezier(.2,.8,.2,1); }
 .modal.wide { width: min(560px, calc(100vw - 32px)); padding: 12px; }
@@ -814,7 +812,7 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 @keyframes iconIn { from { opacity: 0; transform: scale(.5); } }
 @keyframes iconOut { to { opacity: 0; transform: scale(.5); } }
 .modal.from-icon { animation: iconIn .28s cubic-bezier(.2,.8,.2,1); }
-.scrim.closing .modal.from-icon { animation: iconOut .18s cubic-bezier(.4,0,1,1) forwards; }
+.scrim.closing .modal.from-icon { animation: iconOut .4s cubic-bezier(.45,0,.2,1) forwards; }
 @keyframes menuOutUp { to { opacity: 0; transform: translateY(4px) scale(.98); } }
 
 /* ================= Chat history ================= */
