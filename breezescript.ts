@@ -3533,7 +3533,7 @@ const MENUS: Menu[] = [
     { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
     { sep: true },
     { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
-    { label: 'Breeze Box (chat only)', act: 'mode.box', checked: () => appState.mode === 'box' },
+    { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
     { sep: true },
     { label: 'Add Account…', act: 'account.signIn' },
     { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },

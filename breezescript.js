@@ -404,7 +404,7 @@ const SOCIAL_SITES = [
 // Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
 const BRAND_ICONS = {
     claude: 'claude.png', codex: 'codex.png', antigravity: 'antigravity.png',
-    youtube: 'youtube.webp', tiktok: 'tiktok.webp', instagram: 'instagram.webp', facebook: 'facebook.png', x: 'x.webp',
+    youtube: 'youtube.png', tiktok: 'tiktok.webp', instagram: 'instagram.webp', facebook: 'facebook.png', x: 'x.webp',
     local: 'ollama.svg',
 };
 // Logos that are a shape rather than a square tile; they show whole instead of clipped to the tile's corners.
