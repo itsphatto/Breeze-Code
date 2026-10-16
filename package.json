@@ -30,6 +30,7 @@
       "toolchains.js",
       "discord.js",
       "agentbrain.js",
+      "guard.js",
       "breezescript.js",
       "breeze.html",
       "breeze.css",
@@ -38,6 +39,9 @@
       "assets/**",
       "package.json",
       "breeze.config.json"
+    ],
+    "asarUnpack": [
+      "runtime/**"
     ],
     "win": {
       "target": [

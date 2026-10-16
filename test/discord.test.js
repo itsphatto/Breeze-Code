@@ -23,6 +23,16 @@ test('FrameReader joins split chunks and splits joined ones', () => {
   assert.deepEqual(got, [[1, { n: 1 }], [3, { n: 2 }]]);
 });
 
+test('FrameReader refuses a negative or huge length instead of looping or buffering forever', () => {
+  for (const len of [-8, -1, 2 ** 30]) {
+    const r = new FrameReader(() => assert.fail('no frame should come out'));
+    const head = Buffer.alloc(8);
+    head.writeInt32LE(1, 0);
+    head.writeInt32LE(len, 4);
+    assert.throws(() => r.push(head), /could not read/, String(len));
+  }
+});
+
 test('ipcPaths: Windows named pipes, else the runtime folder', () => {
   assert.equal(ipcPaths('win32', {})[0], '\\\\?\\pipe\\discord-ipc-0');
   assert.equal(ipcPaths('win32', {}).length, 10);
@@ -67,4 +77,22 @@ test('DiscordRpc handshakes with the client id, sets and clears the activity', a
 test('DiscordRpc explains when Discord is not running', async () => {
   const rpc = new DiscordRpc('1', { paths: [pipeName()] });
   await assert.rejects(rpc.connect(), /Discord isn't running/);
+});
+
+test('DiscordRpc drops a connection that sends an unreadable frame', async () => {
+  const pipe = pipeName();
+  const server = net.createServer(sock => sock.once('data', () => {
+    const head = Buffer.alloc(8);
+    head.writeInt32LE(1, 0);
+    head.writeInt32LE(-8, 4);
+    sock.write(head);
+  }));
+  await new Promise(res => server.listen(pipe, res));
+  const rpc = new DiscordRpc('1', { paths: [pipe] });
+  let closed = false;
+  rpc.onClose = () => { closed = true; };
+  await assert.rejects(rpc.connect(), /could not read/);
+  assert.equal(rpc.connected, false);
+  assert.equal(closed, true);
+  server.close();
 });

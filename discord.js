@@ -14,13 +14,20 @@ function encode(op, data) {
   return Buffer.concat([head, body]);
 }
 
-// Turns a byte stream into whole frames, however the chunks are cut.
+// Discord's frames are small JSON messages; anything bigger (or a negative length) is not Discord talking.
+const MAX_FRAME = 1024 * 1024;
+
+// Turns a byte stream into whole frames, however the chunks are cut. Throws on a length no frame can have.
 class FrameReader {
   constructor(onFrame) { this.buf = Buffer.alloc(0); this.onFrame = onFrame; }
   push(chunk) {
     this.buf = Buffer.concat([this.buf, chunk]);
     while (this.buf.length >= 8) {
       const len = this.buf.readInt32LE(4);
+      if (len < 0 || len > MAX_FRAME) {
+        this.buf = Buffer.alloc(0);
+        throw new Error('Discord sent a message Breeze could not read');
+      }
       if (this.buf.length < 8 + len) return;
       const op = this.buf.readInt32LE(0);
       const body = this.buf.subarray(8, 8 + len).toString('utf8');
@@ -86,7 +93,10 @@ class DiscordRpc {
         else wait.res(data.data);
       });
       this.sock = sock;
-      sock.on('data', c => reader.push(c));
+      // A stream that can't be framed can't be trusted any further: drop the connection.
+      sock.on('data', c => {
+        try { reader.push(c); } catch (err) { clearTimeout(t); fail(err); }
+      });
       sock.on('error', () => { /* 'close' follows */ });
       sock.on('close', () => { clearTimeout(t); this.drop(); rej(new Error('Discord closed the connection')); });
       sock.write(encode(OP.HANDSHAKE, { v: 1, client_id: this.clientId }));

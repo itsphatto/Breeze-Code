@@ -270,6 +270,10 @@ function runSteps(steps, { spawn, env, onStart, onData, onChild, onDone }) {
   };
 }
 
+// Outside programs (gcc reading the -include header) can't see into the packaged app's asar archive, so
+// electron-builder unpacks those files next to it (asarUnpack in package.json). In development nothing changes.
+const unpacked = (p) => p.replace(/([\\/])app\.asar(?=[\\/])/, '$1app.asar.unpacked');
+
 function ensureBuildIgnored(rootDir) {
   const file = path.join(rootDir, '.gitignore');
   if (!fs.existsSync(file)) return;
@@ -278,4 +282,4 @@ function ensureBuildIgnored(rootDir) {
   fs.appendFileSync(file, (text === '' || text.endsWith('\n') ? '' : '\n') + 'build/\n');
 }
 
-module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl };
+module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked };

@@ -10,7 +10,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl } = require('./toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked } = require('./toolchains');
+const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'out', '.cache', '__pycache__', '.venv']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -47,6 +48,18 @@ function saveState(patch) {
 /* ================= Window ================= */
 // The app icon on the taskbar, window and dock.
 const APP_ICON = path.join(__dirname, 'Icon.png');
+// The one page the window may show. Anything else (a file dropped onto the window, a link) would run with the
+// preload bridge, which can run commands, so the window never navigates away from it.
+const APP_PAGE = path.join(__dirname, 'breeze.html');
+
+// Only Breeze's own page may use the main process: not another page in the window, not a frame inside it.
+function handle(channel, fn) {
+  ipcMain.handle(channel, (e, ...args) => {
+    const frame = e.senderFrame;
+    if (!frame || frame.parent || !isFileUrl(frame.url, APP_PAGE)) throw new Error('Breeze only answers its own window');
+    return fn(e, ...args);
+  });
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -67,7 +80,7 @@ function createWindow() {
     },
   });
 
-  win.loadFile(path.join(__dirname, 'breeze.html')).catch(logError('loadFile'));
+  win.loadFile(APP_PAGE).catch(logError('loadFile'));
 
   // Open external links in the system browser, never inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -75,7 +88,7 @@ function createWindow() {
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith('file://')) e.preventDefault();
+    if (!isFileUrl(url, APP_PAGE)) e.preventDefault();
   });
   // A reload or crash drops the renderer's terminal state, so nothing may keep running for it.
   win.webContents.on('did-start-navigation', (_e, _url, _inPlace, isMainFrame) => { if (isMainFrame) killAllTerms(); });
@@ -91,7 +104,7 @@ async function servePreview(req) {
   try {
     const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
     let abs = resolveIn(rel);
-    if ((await fsp.stat(abs)).isDirectory()) abs = path.join(abs, 'index.html');
+    if ((await fsp.stat(abs)).isDirectory()) abs = resolveIn(path.join(rel, 'index.html')); // it may be a link too
     const res = await net.fetch(pathToFileURL(abs).href);
     return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('content-type') || 'application/octet-stream', 'Cache-Control': 'no-store' } });
   } catch {
@@ -118,13 +131,7 @@ app.on('window-all-closed', () => {
 });
 
 /* ================= Paths ================= */
-// Resolve a path inside `base` and refuse anything that escapes it.
-function resolveUnder(base, rel = '') {
-  const abs = path.resolve(base, rel);
-  const back = path.relative(base, abs);
-  if (back.startsWith('..') || path.isAbsolute(back)) throw new Error('That path is outside the project');
-  return abs;
-}
+// resolveUnder (guard.js) refuses anything that leaves the folder, by `..` or through a link.
 function resolveIn(rel = '') {
   if (!root) throw new Error('No folder is open');
   return resolveUnder(root, rel);
@@ -178,14 +185,14 @@ function byDirThenName(a, b) {
   return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
 }
 
-ipcMain.handle('fs:openFolder', async () => {
+handle('fs:openFolder', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
   if (r.canceled || !r.filePaths[0]) return null;
   return setRoot(r.filePaths[0]);
 });
 
 // Asks where to create a new project folder (its name is typed in the dialog), creates it and opens it.
-ipcMain.handle('fs:createFolder', async () => {
+handle('fs:createFolder', async () => {
   const r = await dialog.showSaveDialog(win, {
     title: 'Create a new project', buttonLabel: 'Create',
     defaultPath: path.join(app.getPath('documents'), 'my-breeze-project'),
@@ -200,29 +207,29 @@ ipcMain.handle('fs:createFolder', async () => {
   return setRoot(r.filePath);
 });
 
-ipcMain.handle('fs:restore', async () => {
+handle('fs:restore', async () => {
   const { lastRoot } = loadState();
   if (!lastRoot) return null;
   try { return await setRoot(lastRoot); } catch { saveState({ lastRoot: null }); return null; }
 });
 
-ipcMain.handle('fs:closeFolder', () => {
+handle('fs:closeFolder', () => {
   root = null; stopWatching(); saveState({ lastRoot: null });
 });
 
-ipcMain.handle('fs:recent', () => (loadState().recent || []).map(p => ({ path: p, name: path.basename(p) })));
+handle('fs:recent', () => (loadState().recent || []).map(p => ({ path: p, name: path.basename(p) })));
 
-ipcMain.handle('fs:openRecent', async (_e, dir) => {
+handle('fs:openRecent', async (_e, dir) => {
   if (!(loadState().recent || []).includes(dir)) throw new Error('Unknown folder');
   return setRoot(dir);
 });
 
-ipcMain.handle('fs:readDir', async (_e, rel) => {
+handle('fs:readDir', async (_e, rel) => {
   const entries = await fsp.readdir(resolveIn(rel), { withFileTypes: true });
   return entries.map(d => ({ name: d.name, dir: d.isDirectory() })).sort(byDirThenName);
 });
 
-ipcMain.handle('fs:readFile', async (_e, rel) => {
+handle('fs:readFile', async (_e, rel) => {
   const abs = resolveIn(rel);
   const st = await fsp.stat(abs);
   // Images are shown from their file URL, so only their size is needed here.
@@ -233,34 +240,34 @@ ipcMain.handle('fs:readFile', async (_e, rel) => {
   return { text: buf.toString('utf8'), size: st.size };
 });
 
-ipcMain.handle('fs:writeFile', async (_e, rel, text) => {
+handle('fs:writeFile', async (_e, rel, text) => {
   await fsp.writeFile(resolveIn(rel), text, 'utf8');
 });
 
-ipcMain.handle('fs:createFile', async (_e, rel) => {
+handle('fs:createFile', async (_e, rel) => {
   const abs = resolveIn(rel);
   await fsp.mkdir(path.dirname(abs), { recursive: true });
   await fsp.writeFile(abs, '', { flag: 'wx' });
 });
 
-ipcMain.handle('fs:createDir', async (_e, rel) => {
+handle('fs:createDir', async (_e, rel) => {
   await fsp.mkdir(resolveIn(rel), { recursive: false });
 });
 
-ipcMain.handle('fs:rename', async (_e, from, to) => {
+handle('fs:rename', async (_e, from, to) => {
   const dest = resolveIn(to);
   if (fs.existsSync(dest)) throw new Error('Something with that name already exists');
   await fsp.rename(resolveIn(from), dest);
 });
 
 // Deleting moves to the Recycle Bin / Trash so it can be undone.
-ipcMain.handle('fs:trash', async (_e, rel) => {
+handle('fs:trash', async (_e, rel) => {
   if (!rel) throw new Error('Refusing to delete the project folder');
   await shell.trashItem(resolveIn(rel));
 });
 
-ipcMain.handle('fs:fileUrl', (_e, rel) => pathToFileURL(resolveIn(rel)).href);
-ipcMain.handle('fs:previewUrl', (_e, rel) => {
+handle('fs:fileUrl', (_e, rel) => pathToFileURL(resolveIn(rel)).href);
+handle('fs:previewUrl', (_e, rel) => {
   resolveIn(rel); // throws when no folder is open or the path leaves the project
   return `${PREVIEW_SCHEME}://project/${String(rel).split(/[\/]/).map(encodeURIComponent).join('/')}`;
 });
@@ -275,9 +282,9 @@ async function listFiles(dir) {
   return files.concat(...nested).slice(0, MAX_LISTED_FILES);
 }
 
-ipcMain.handle('fs:listFiles', async () => (await listFiles(resolveIn(''))).map(toRel));
+handle('fs:listFiles', async () => (await listFiles(resolveIn(''))).map(toRel));
 
-ipcMain.handle('fs:search', (_e, query, matchCase) => searchProject(query, matchCase));
+handle('fs:search', (_e, query, matchCase) => searchProject(query, matchCase));
 
 // A file's text if it is small and not binary, else null.
 async function readSearchable(abs) {
@@ -297,10 +304,10 @@ function searchText(text, rel, needle, matchCase, results) {
     if (col !== -1) results.push({ path: rel, line: i, col, text: lines[i].slice(0, 300) });
   }
 }
-// Reads files a batch at a time and stops once there are enough results.
-async function searchProject(query, matchCase, base = resolveIn('')) {
+// Reads files a batch at a time and stops once there are enough results. `skip(rel)` leaves files out.
+async function searchProject(query, matchCase, base = resolveIn(''), skip = () => false) {
   if (!query) return [];
-  const files = await listFiles(base);
+  const files = (await listFiles(base)).filter(f => !skip(relTo(base, f)));
   const needle = matchCase ? query : query.toLowerCase();
   const results = [];
   const batch = async start => {
@@ -389,11 +396,11 @@ function syntaxCheck(code, ext) {
     return syntaxError(e, code, isModule ? MODULE_WRAP.length : 0);
   }
 }
-ipcMain.handle('lint:check', (_e, code, ext) => (typeof code === 'string' && code.length <= 400000 ? syntaxCheck(code, String(ext)) : null));
+handle('lint:check', (_e, code, ext) => (typeof code === 'string' && code.length <= 400000 ? syntaxCheck(code, String(ext)) : null));
 
 /* ================= Terminal ================= */
 let nextTermId = 1;
-ipcMain.handle('term:cwd', () => termCwd);
+handle('term:cwd', () => termCwd);
 
 const unquote = s => (s.length > 1 && (s[0] === '"' || s[0] === "'") && s.at(-1) === s[0] ? s.slice(1, -1) : s);
 // "cd somewhere" changes the terminal's folder instead of running in a shell that exits right away.
@@ -406,7 +413,7 @@ function changeDir(command) {
   termCwd = target;
   return { cwd: termCwd };
 }
-ipcMain.handle('term:run', async (_e, command) => {
+handle('term:run', async (_e, command) => {
   const cd = changeDir(command);
   if (cd) return cd;
   const { tools, pathValue } = await getTools();
@@ -414,14 +421,17 @@ ipcMain.handle('term:run', async (_e, command) => {
   const child = spawn(command, { shell: true, cwd: termCwd, env: toolEnv(process.env, [...tools.binDirs, ...agentDirs()], process.platform, pathValue), windowsHide: true });
   terms.set(id, child);
   child.stdin.on('error', ignoreEpipe);
-  const send = chunk => win?.webContents.send('term:data', id, chunk.toString());
+  // Decoded as a stream, so a character split across two chunks stays whole.
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  const send = chunk => win?.webContents.send('term:data', id, chunk);
   child.stdout.on('data', send);
   child.stderr.on('data', send);
   child.on('error', err => send(`${err.message}\n`));
   child.on('close', code => { terms.delete(id); win?.webContents.send('term:exit', id, code); });
   return { id };
 });
-ipcMain.handle('term:write', (_e, id, text) => {
+handle('term:write', (_e, id, text) => {
   const stdin = terms.get(id)?.stdin;
   if (stdin?.writable) stdin.write(String(text));
 });
@@ -471,14 +481,15 @@ function nearestCsproj(abs) {
     if (path.relative(root, dir) === '' || dir === path.dirname(dir)) return null;
   }
 }
-ipcMain.handle('run:file', async (_e, rel) => {
+handle('run:file', async (_e, rel) => {
   if (activeRun) return { error: 'A program is still running — press Ctrl+C to stop it' };
   if (!root) return { error: 'Open a folder first' };
   const claim = activeRun = { id: 0, cancel() { /* still starting */ } };
   const fail = error => { if (activeRun === claim) activeRun = null; return { error }; };
   try {
     const abs = resolveIn(rel);
-    const stdioHeader = path.join(__dirname, 'runtime', 'breeze_stdio.h');
+    // gcc can't read inside the packaged app's asar archive; the header is unpacked next to it.
+    const stdioHeader = unpacked(path.join(__dirname, 'runtime', 'breeze_stdio.h'));
     let { tools, pathValue } = await getTools();
     const opts = { csproj: nearestCsproj(abs) };
     let plan = runPlan(abs, tools, process.platform, stdioHeader, opts);
@@ -527,13 +538,13 @@ function killTree(child) {
   if (process.platform === 'win32') execFile(TASKKILL, ['/pid', String(child.pid), '/T', '/F'], () => { /* already gone */ });
   else child.kill('SIGTERM');
 }
-ipcMain.handle('term:kill', (_e, id) => {
+handle('term:kill', (_e, id) => {
   const c = terms.get(id);
   if (c) killTree(c); // the whole tree first, then stop the run from starting its next step
   if (activeRun?.id === id) activeRun.cancel();
 });
 // Completes the last word of a terminal line to a file or folder in the terminal's folder.
-ipcMain.handle('term:complete', async (_e, word) => {
+handle('term:complete', async (_e, word) => {
   const w = unquote(String(word || ''));
   const cut = Math.max(w.lastIndexOf('/'), w.lastIndexOf('\\')) + 1;
   const dirPart = w.slice(0, cut), start = w.slice(cut).toLowerCase();
@@ -598,7 +609,7 @@ async function locate(commands, paths) {
   return found.find(Boolean) || paths.find(p => p && fs.existsSync(p)) || null;
 }
 
-ipcMain.handle('sys:detect', async () => {
+handle('sys:detect', async () => {
   const agents = await Promise.all(AGENTS.map(async a => {
     const bin = await locate(a.commands, a.paths());
     if (bin) agentBins.set(a.id, bin); else agentBins.delete(a.id);
@@ -623,11 +634,11 @@ ipcMain.handle('sys:detect', async () => {
 });
 
 /* ================= Window & shell IPC ================= */
-ipcMain.handle('sys:openExternal', (_e, url) => openInBrowser(url));
-ipcMain.handle('win:reload', () => win?.webContents.reload());
-ipcMain.handle('win:devtools', () => win?.webContents.toggleDevTools());
-ipcMain.handle('win:quit', () => app.quit());
-ipcMain.handle('win:edit', (_e, role) => {
+handle('sys:openExternal', (_e, url) => openInBrowser(url));
+handle('win:reload', () => win?.webContents.reload());
+handle('win:devtools', () => win?.webContents.toggleDevTools());
+handle('win:quit', () => app.quit());
+handle('win:edit', (_e, role) => {
   const wc = win?.webContents;
   if (wc && ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'].includes(role)) wc[role]();
 });
@@ -702,7 +713,7 @@ async function llmFind(key) {
   const answered = errors.find(e => !/fetch failed|timeout|aborted|ECONNREFUSED/i.test(e.message));
   throw answered || new Error('No local LLM server is running. Start Ollama or LM Studio, then connect again.');
 }
-ipcMain.handle('llm:connect', async (_e, url, key) => {
+handle('llm:connect', async (_e, url, key) => {
   url = llmBase(url);
   key = String(key || '').trim();
   if (!url) ({ url } = await llmFind(key));
@@ -712,12 +723,12 @@ ipcMain.handle('llm:connect', async (_e, url, key) => {
   saveState({ llmUrl: url, llmModel: models[0], llmModels: models, llmOff: false });
   return { url, model: models[0], models };
 });
-ipcMain.handle('llm:setModel', (_e, model) => {
+handle('llm:setModel', (_e, model) => {
   if (!(loadState().llmModels || []).includes(model)) throw new Error('That model is not on the server');
   saveState({ llmModel: model });
 });
 // Forget the server, and stop looking for one until the user connects again.
-ipcMain.handle('llm:disconnect', () => {
+handle('llm:disconnect', () => {
   setSecret('llmKey', null);
   saveState({ llmUrl: null, llmModel: null, llmModels: null, llmOff: true });
 });
@@ -735,7 +746,7 @@ const relOut = p => {
 };
 const SAFE_ID = /^[\w-]{6,80}$/;
 
-ipcMain.handle('agent:run', (_e, opts) => {
+handle('agent:run', (_e, opts) => {
   const runId = nextRun++;
   startRun(runId, opts).catch(err => {
     emit(runId, { t: 'error', text: err.message });
@@ -744,7 +755,7 @@ ipcMain.handle('agent:run', (_e, opts) => {
   });
   return runId;
 });
-ipcMain.handle('agent:stop', (_e, runId) => {
+handle('agent:stop', (_e, runId) => {
   const r = runs.get(runId);
   if (!r) return;
   r.stopped = true;
@@ -795,7 +806,10 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
     const cli = cliArgs(agent, mode, prompt, session);
     // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags,
     // a validated model name and a validated session id do (npm .cmd shims need a shell on Windows).
-    const child = spawn(bin, cli.args, { cwd: base, shell: /\.(?:cmd|bat)$/i.test(bin), windowsHide: true, env: process.env });
+    const opts = { cwd: base, windowsHide: true, env: process.env };
+    const child = /\.(?:cmd|bat)$/i.test(bin)
+      ? spawn(shellCommand(bin, cli.args), { ...opts, shell: true })
+      : spawn(bin, cli.args, opts);
     run.child = child;
     child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
     child.stdin.end(cli.prompt ?? undefined);
@@ -823,13 +837,16 @@ function streamCli(runId, run, child, parse, mode, retryModel) {
     if (!text) return;
     try { parse(runId, JSON.parse(text), ctx, mode); } catch { ctx.stderr += text + '\n'; } // not JSON: keep it for the error message
   };
+  // Decoded as a stream, so a character split across two chunks stays whole.
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => {
-    buf += chunk.toString();
+    buf += chunk;
     const lines = buf.split('\n');
     buf = lines.pop();
     for (const l of lines) line(l.trim());
   });
-  child.stderr.on('data', chunk => { ctx.stderr = (ctx.stderr + chunk.toString()).slice(-4000); });
+  child.stderr.on('data', chunk => { ctx.stderr = (ctx.stderr + chunk).slice(-4000); });
   child.on('error', err => { ctx.lastError = err.message; });
   child.on('close', code => {
     runs.delete(runId);
@@ -920,10 +937,17 @@ const LLM_TOOLS = [
 const WRITE_TOOLS = new Set(['edit_file', 'write_file']);
 const LIST_MAX = 200;
 
-// Each tool works inside ctx.base: the open project, or the Breeze Box folder.
+// Each tool works inside ctx.base: the open project, or the Breeze Box folder. Secrets (.env…) and the .git
+// folder are off limits: what the model reads goes to the LLM server, and git's config and hooks run commands.
+function agentPath(ctx, rel) {
+  const abs = resolveUnder(ctx.base, rel);
+  const why = agentBlocked(ctx.base, abs);
+  if (why) throw new Error(why);
+  return abs;
+}
 const LLM_TOOL_FNS = {
   async list_files(ctx, a) {
-    const dir = resolveUnder(ctx.base, a.path || '.');
+    const dir = agentPath(ctx, a.path || '.');
     emit(ctx.runId, { t: 'tool', kind: 'read', label: `Listed ${a.path && a.path !== '.' ? a.path : 'the project'}` });
     const out = [];
     const walk = async (d, indent, level) => {
@@ -942,7 +966,7 @@ const LLM_TOOL_FNS = {
     return out.join('\n') + (out.length >= LIST_MAX ? '\n… more entries; list a subfolder' : '');
   },
   async read_file(ctx, a) {
-    const abs = resolveUnder(ctx.base, a.path);
+    const abs = agentPath(ctx, a.path);
     await fsp.stat(abs); // a missing file comes back as an error the model can read
     const rel = relTo(ctx.base, abs);
     const range = a.start_line > 1 || a.end_line ? ` (lines ${a.start_line || 1}–${a.end_line || ''})` : '';
@@ -953,10 +977,10 @@ const LLM_TOOL_FNS = {
   },
   async search_files(ctx, a) {
     emit(ctx.runId, { t: 'tool', kind: 'search', label: `Searched for ${a.query}` });
-    return brain.formatHits(await searchProject(String(a.query || ''), false, ctx.base));
+    return brain.formatHits(await searchProject(String(a.query || ''), false, ctx.base, blockedRel));
   },
   async edit_file(ctx, a) {
-    const abs = resolveUnder(ctx.base, a.path);
+    const abs = agentPath(ctx, a.path);
     const rel = relTo(ctx.base, abs);
     const { text, line } = brain.applyEdit(await fsp.readFile(abs, 'utf8'), a.old_text, a.new_text);
     await fsp.writeFile(abs, text, 'utf8');
@@ -965,7 +989,7 @@ const LLM_TOOL_FNS = {
     return `Edited ${rel} at line ${line}.`;
   },
   async write_file(ctx, a) {
-    const abs = resolveUnder(ctx.base, a.path);
+    const abs = agentPath(ctx, a.path);
     const content = String(a.content ?? '');
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await fsp.writeFile(abs, content, 'utf8');
@@ -1138,7 +1162,7 @@ async function gitBin() {
 async function git(args, { input, timeout = 60000 } = {}) {
   const bin = await gitBin();
   return new Promise((res, rej) => {
-    const child = execFile(bin, args, {
+    const child = execFile(bin, safeGitArgs(args), {
       cwd: resolveIn(''), windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
     }, (err, stdout, stderr) => (err ? rej(new Error((stderr || err.message).trim())) : res(stdout)));
@@ -1161,7 +1185,7 @@ function parseBranchHeader(head) {
   const count = word => Number(new RegExp(String.raw`${word} (\d+)`).exec(track)?.[1] || 0);
   return { branch: branch === 'HEAD (no branch)' ? 'detached' : branch, upstream, ahead: count('ahead'), behind: count('behind') };
 }
-ipcMain.handle('git:status', async () => {
+handle('git:status', async () => {
   if (!root) return { repo: false };
   let top;
   try { top = (await git(['rev-parse', '--show-toplevel'])).trim(); } catch { return { repo: false }; } // not a repository
@@ -1184,7 +1208,7 @@ ipcMain.handle('git:status', async () => {
   return res;
 });
 
-ipcMain.handle('git:log', async () => {
+handle('git:log', async () => {
   let out;
   try { out = await git(['log', '--all', '--topo-order', '-n', '150', '-z', '--pretty=format:%H%x1f%P%x1f%an%x1f%ar%x1f%D%x1f%s']); }
   catch { return { head: null, commits: [] }; } // no commits yet
@@ -1196,7 +1220,7 @@ ipcMain.handle('git:log', async () => {
   return { head, commits };
 });
 
-ipcMain.handle('git:show', async (_e, hash) => {
+handle('git:show', async (_e, hash) => {
   if (!HASH.test(hash)) throw new Error('Bad commit id');
   const out = await git(['show', '--numstat', '--format=%H%x1f%an%x1f%ae%x1f%ar%x1f%B%x1e', hash]);
   const [header, stats = ''] = out.split('\x1e');
@@ -1208,37 +1232,37 @@ ipcMain.handle('git:show', async (_e, hash) => {
   return { hash: full, author, email, when, message: (body || '').trim(), files };
 });
 
-ipcMain.handle('git:diff', (_e, rel, staged) => git(['diff', '--no-color', ...(staged ? ['--cached'] : []), '--', ...checkPaths(rel)]));
-ipcMain.handle('git:init', () => git(['init']));
-ipcMain.handle('git:stage', (_e, paths) => git(['add', '-A', '--', ...checkPaths(paths)]));
-ipcMain.handle('git:unstage', (_e, paths, hasCommits) => {
+handle('git:diff', (_e, rel, staged) => git(['diff', '--no-color', ...(staged ? ['--cached'] : []), '--', ...checkPaths(rel)]));
+handle('git:init', () => git(['init']));
+handle('git:stage', (_e, paths) => git(['add', '-A', '--', ...checkPaths(paths)]));
+handle('git:unstage', (_e, paths, hasCommits) => {
   const p = checkPaths(paths);
   return hasCommits ? git(['restore', '--staged', '--', ...p]) : git(['rm', '--cached', '-r', '-q', '--', ...p]);
 });
 // Discarding untracked files moves them to the Recycle Bin rather than deleting them.
-ipcMain.handle('git:discard', async (_e, files) => {
+handle('git:discard', async (_e, files) => {
   const tracked = files.filter(f => !f.untracked).map(f => f.path);
   const untracked = files.filter(f => f.untracked).map(f => f.path);
   checkPaths([...tracked, ...untracked]);
   await Promise.all(untracked.map(p => shell.trashItem(resolveIn(p))));
   if (tracked.length) await git(['restore', '--worktree', '--', ...tracked]);
 });
-ipcMain.handle('git:commit', async (_e, message, all) => {
+handle('git:commit', async (_e, message, all) => {
   if (!String(message || '').trim()) throw new Error('Write a message for this checkpoint first');
   if (all) await git(['add', '-A']);
   await git(['commit', '-F', '-'], { input: message });
   return (await git(['rev-parse', '--short', 'HEAD'])).trim();
 });
-ipcMain.handle('git:branches', async () => {
+handle('git:branches', async () => {
   const out = await git(['branch', '--format=%(refname:short)']).catch(() => '');
   return out.split('\n').map(s => s.trim()).filter(Boolean);
 });
-ipcMain.handle('git:switch', async (_e, name, create, from) => {
+handle('git:switch', async (_e, name, create, from) => {
   await git(['check-ref-format', '--branch', name]);
   if (from && !HASH.test(from)) throw new Error('Bad commit id');
   return git(create ? ['switch', '-c', name, ...(from ? [from] : [])] : ['switch', name]);
 });
-ipcMain.handle('git:sync', async (_e, op) => {
+handle('git:sync', async (_e, op) => {
   const opts = { timeout: 120000 };
   if (op === 'fetch') return git(['fetch', '--all', '--prune'], opts);
   if (op === 'pull') return git(['pull', '--ff-only'], opts);
@@ -1282,16 +1306,16 @@ function addAccount(user) {
   const { accounts } = accountsState();
   saveState({ user, accounts: [...accounts.filter(a => accountId(a) !== accountId(user)), user] });
 }
-ipcMain.handle('auth:user', () => loadState().user || null);
-ipcMain.handle('auth:accounts', () => accountsState());
-ipcMain.handle('auth:switch', (_e, id) => {
+handle('auth:user', () => loadState().user || null);
+handle('auth:accounts', () => accountsState());
+handle('auth:switch', (_e, id) => {
   const user = accountsState().accounts.find(a => accountId(a) === id);
   if (!user) throw new Error('That account is no longer signed in');
   saveState({ user });
   return user;
 });
 // Signs the active account out and switches to the next one, if any.
-ipcMain.handle('auth:signOut', () => {
+handle('auth:signOut', () => {
   const { accounts, active } = accountsState();
   if (active) setSecret(`token:${active}`, null);
   const rest = accounts.filter(a => accountId(a) !== active);
@@ -1299,8 +1323,8 @@ ipcMain.handle('auth:signOut', () => {
   saveState({ accounts: rest, user });
   return user;
 });
-ipcMain.handle('auth:cancel', () => { authAbort?.abort(); authAbort = null; });
-ipcMain.handle('auth:start', (_e, provider) => {
+handle('auth:cancel', () => { authAbort?.abort(); authAbort = null; });
+handle('auth:start', (_e, provider) => {
   const cfg = authConfig();
   if (provider === 'GitHub' && !cfg.github.clientId) return { error: 'not-configured' };
   if (provider === 'Google' && !cfg.google.clientId) return { error: 'not-configured' };
@@ -1495,13 +1519,13 @@ async function signedIn(id) {
   return cookies.length > 0;
 }
 
-ipcMain.handle('vibe:status', async () => {
+handle('vibe:status', async () => {
   const ids = Object.keys(VIBE_SITES);
   const states = await Promise.all(ids.map(signedIn));
   return Object.fromEntries(ids.map((id, i) => [id, states[i]]));
 });
 // Opens the site in a Breeze window; resolves with the sign-in state once the user closes it.
-ipcMain.handle('vibe:connect', (_e, id) => {
+handle('vibe:connect', (_e, id) => {
   const site = vibeSite(id);
   return new Promise(resolve => {
     const w = new BrowserWindow({ parent: win, width: 460, height: 820, title: `Connect ${site.name} — Breeze`, icon: APP_ICON, autoHideMenuBar: true, backgroundColor: '#000000', webPreferences: feedPrefs() });
@@ -1511,14 +1535,14 @@ ipcMain.handle('vibe:connect', (_e, id) => {
   });
 });
 // Forgets the site's sign-in by removing its cookies from the feed session.
-ipcMain.handle('vibe:disconnect', async (_e, id) => {
+handle('vibe:disconnect', async (_e, id) => {
   const ses = vibeSession();
   const lists = await Promise.all(vibeSite(id).domains.map(domain => ses.cookies.get({ domain })));
   await Promise.all(lists.flat().map(c => ses.cookies.remove(`https://${c.domain.replace(/^\./, '')}${c.path}`, c.name)));
 });
 const toBounds = b => ({ x: Math.round(b.x), y: Math.round(b.y), width: Math.max(1, Math.round(b.width)), height: Math.max(1, Math.round(b.height)) });
 // Lays the live feed over the renderer's 9:16 frame.
-ipcMain.handle('vibe:show', (_e, id, bounds) => {
+handle('vibe:show', (_e, id, bounds) => {
   const site = vibeSite(id);
   if (!win) return;
   if (!vibeView) {
@@ -1531,10 +1555,10 @@ ipcMain.handle('vibe:show', (_e, id, bounds) => {
   vibeView.setBounds(toBounds(bounds));
   vibeView.webContents.loadURL(site.url).catch(logError('feed'));
 });
-ipcMain.handle('vibe:bounds', (_e, bounds) => vibeView?.setBounds(toBounds(bounds)));
-ipcMain.handle('vibe:mute', (_e, muted) => vibeView?.webContents.setAudioMuted(!!muted));
+handle('vibe:bounds', (_e, bounds) => vibeView?.setBounds(toBounds(bounds)));
+handle('vibe:mute', (_e, muted) => vibeView?.webContents.setAudioMuted(!!muted));
 // Closing the view also stops its video and sound.
-ipcMain.handle('vibe:hide', () => {
+handle('vibe:hide', () => {
   if (!vibeView) return;
   win?.contentView.removeChildView(vibeView);
   vibeView.webContents.close();
@@ -1574,13 +1598,13 @@ function discordFlush() {
   discordRpc.setActivity({ ...discordWanted, largeImageKey: 'breeze', largeImageText: 'Breeze IDE' }).catch(logError('discord'));
 }
 const discordText = (s, max = 120) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, max) : undefined);
-ipcMain.handle('discord:set', async (_e, a) => {
+handle('discord:set', async (_e, a) => {
   const user = await discordConnect();
   discordWanted = { details: discordText(a?.details), state: discordText(a?.state), startTimestamp: Number(a?.start) || undefined };
   discordFlush();
   return { user: user?.global_name || user?.username || null };
 });
-ipcMain.handle('discord:clear', async () => {
+handle('discord:clear', async () => {
   discordWanted = null;
   clearTimeout(discordTimer);
   if (!discordRpc) return;

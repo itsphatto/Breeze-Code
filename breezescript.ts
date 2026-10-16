@@ -208,7 +208,7 @@ const h = new Date().getHours();
 const hello = h < 12 ? "Good morning" : "Hey there";
 document.querySelector(".hero p").prepend(hello + ". ");
 `,
-  '.env': `# Protected — agents can't read this without your OK
+  '.env': `# Protected — Breeze's local agent can't read this
 MAPS_KEY=demo-key-not-real
 `,
   'assets/beans.jpg': '',
@@ -1694,6 +1694,15 @@ function flushSession(): void {
   if (Object.keys(dirty).length) store.set(hotExitKey(), dirty); else store.del(hotExitKey());
 }
 window.addEventListener('beforeunload', flushSession);
+// A file dropped on the window would replace Breeze with that file (the desktop app refuses the navigation too).
+// Only drags carrying files are stopped, so dragging text inside the editor still works.
+for (const type of ['dragover', 'drop'] as const) {
+  document.addEventListener(type, e => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'none'; // the pointer shows the file can't be dropped here
+  });
+}
 
 // Puts back a tab's unsaved text and caret from the last session.
 function restoreBuffer(b: Buffer, s: Session, dirty: Record<string, string>): void {
@@ -2071,7 +2080,7 @@ api.fs.onChange(paths => background((async () => {
 type Spot = { line: number; col: number; len?: number };
 function openFile(path: string, at?: Spot): void {
   if (baseName(path).startsWith('.env') && !buffers.has(path)) {
-    openModal(`<h3>This is a protected file</h3><p class="sub">${esc(baseName(path))} holds secrets. You can view it, but agents can't read it unless you allow it each time.</p><div class="row end"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="openEnv">Open for me only</button></div>`,
+    openModal(`<h3>This is a protected file</h3><p class="sub">${esc(baseName(path))} holds secrets. You can view it, but Breeze's local LLM agent can't read or change it. Codex and other installed agents use their own file access, so Breeze can't keep them out.</p><div class="row end"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="openEnv">Open for me only</button></div>`,
       m => { $('#openEnv', m).onclick = () => { closeModal(); void actuallyOpen(path, at); }; });
     return;
   }

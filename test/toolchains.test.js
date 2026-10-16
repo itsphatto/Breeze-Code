@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl } = require('../toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked } = require('../toolchains');
 
 const H = 'C:\\app\\runtime\\breeze_stdio.h';
 const T = (p, name, version = '1.0') => ({ path: p, name, version });
@@ -392,4 +392,12 @@ test('findTools ignores a dotnet with no SDK (its --version fails)', async () =>
   const r = await findTools(m);
   assert.equal(r.dotnet, null);
   assert.ok(m.calls.some((c) => c[0] === '/usr/share/dotnet/dotnet' && c[1] === '--version'));
+});
+
+test('unpacked points into app.asar.unpacked in the packaged app, and changes nothing in development', () => {
+  assert.equal(unpacked('C:\\Program Files\\Breeze IDE\\resources\\app.asar\\runtime\\breeze_stdio.h'),
+    'C:\\Program Files\\Breeze IDE\\resources\\app.asar.unpacked\\runtime\\breeze_stdio.h');
+  assert.equal(unpacked('/opt/Breeze/resources/app.asar/runtime/breeze_stdio.h'), '/opt/Breeze/resources/app.asar.unpacked/runtime/breeze_stdio.h');
+  assert.equal(unpacked('D:\\Project-B\\runtime\\breeze_stdio.h'), 'D:\\Project-B\\runtime\\breeze_stdio.h');
+  assert.equal(unpacked('C:\\r\\app.asar.unpacked\\runtime\\h'), 'C:\\r\\app.asar.unpacked\\runtime\\h');
 });
