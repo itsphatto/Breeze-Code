@@ -5024,6 +5024,29 @@ async function boot(): Promise<void> {
   // Refresh the tool and agent status in the background; the cached result shows meanwhile.
   if (appState.onboarded) detectTools().catch(() => { /* shown in the setup card */ });
 }
-// The opening animation clears itself with CSS; drop it from the page once it has.
-$('#splash').addEventListener('animationend', e => { if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).remove(); });
+// Opening animation hand-off: the glow and logo are CSS. Once the logo has settled, it glides into the welcome
+// page's logo on a first run, or the splash fades out over the app.
+function endSplash(): void {
+  const splash = $('#splash');
+  const welcome = $('.ob-step[data-step="0"]');
+  welcome.classList.remove('ob-await');
+  if (getComputedStyle(splash).display === 'none') { splash.remove(); return; } // reduced motion: no splash at all
+  if (!welcome.getClientRects().length) {
+    splash.addEventListener('animationend', () => splash.remove(), { once: true });
+    splash.classList.add('out');
+    return;
+  }
+  const from = $('.splash-logo', splash).getBoundingClientRect(), to = $('.ob-logo', welcome).getBoundingClientRect();
+  splash.style.setProperty('--dx', `${to.left + to.width / 2 - (from.left + from.width / 2)}px`);
+  splash.style.setProperty('--dy', `${to.top + to.height / 2 - (from.top + from.height / 2)}px`);
+  splash.style.setProperty('--s', String(to.width / from.width));
+  welcome.classList.add('ob-landing', 'ob-intro');
+  splash.classList.add('leaving');
+  setTimeout(() => { welcome.classList.remove('ob-landing'); splash.remove(); }, 700);
+}
+{
+  const splash = $('#splash');
+  if (getComputedStyle(splash).display === 'none') endSplash();
+  else splash.addEventListener('animationend', e => { if (e.animationName === 'splashLogo') setTimeout(endSplash, 800); });
+}
 background(boot());

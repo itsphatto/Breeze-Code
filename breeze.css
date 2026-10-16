@@ -486,9 +486,11 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 @keyframes blink { 50% { opacity: 0; } }
 @keyframes pulse { 50% { opacity: .35; } }
 @keyframes swirl { 0% { transform: rotate(0) scale(.6); opacity: 0; } 60% { transform: rotate(300deg) scale(1.15); opacity: 1; } 100% { transform: rotate(360deg) scale(1); } }
-/* Opening animation, every launch (3.5s): the blue glow slowly comes up, the logo fades up through it, then the splash clears. */
+/* Opening animation, every launch (3.5s): the blue glow slowly comes up and the logo fades up through it. Then the
+   logo glides into the welcome page's logo (first run) or the splash fades out over the app. The 6s fade is only a
+   failsafe in case the script never hands off. */
 .splash { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: var(--bg); pointer-events: none;
-  animation: splashOut .6s ease 2.9s forwards; }
+  animation: splashOut .6s ease 6s forwards; }
 .splash::before { content: ""; position: absolute; inset: 0;
   background: radial-gradient(900px 520px at 50% 58%, rgba(0,94,255,.38), rgba(0,94,255,.1) 45%, transparent 72%);
   opacity: 0; animation: splashGlow 1.8s ease-out forwards; }
@@ -497,6 +499,18 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 @keyframes splashGlow { to { opacity: 1; } }
 @keyframes splashLogo { to { opacity: 1; transform: none; } }
 @keyframes splashOut { to { opacity: 0; visibility: hidden; } }
+.splash.out { animation: splashOut .6s ease forwards; }
+.splash.leaving { animation: none; background-color: transparent; transition: background-color .7s ease; }
+.splash.leaving::before { animation: none; opacity: 0; transition: opacity .7s ease; }
+.splash.leaving .splash-logo { animation: none; opacity: 1; transform: translate(var(--dx), var(--dy)) scale(var(--s)); filter: drop-shadow(0 0 0 transparent);
+  transition: transform .7s cubic-bezier(.65,0,.25,1), filter .7s ease; }
+/* The welcome page waits under the splash, then its title, tagline and button rise in one after another. */
+.ob-await > * { opacity: 0; }
+.ob-landing > .ob-logo { opacity: 0; }
+.ob-intro > :not(.ob-logo) { animation: rise .55s cubic-bezier(.2,.8,.2,1) backwards; }
+.ob-intro > h1 { animation-delay: .3s; }
+.ob-intro > .lead { animation-delay: .42s; }
+.ob-intro > .btn { animation-delay: .54s; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (prefers-reduced-motion: reduce) { .splash { display: none; } }
 
