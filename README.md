@@ -102,7 +102,7 @@ npm install
 npm start
 ```
 
-`npm start` compiles `breezescript.ts` and launches the app. Opening `breeze.html` in a browser gives a demo of the UI with a sample project and canned agent runs.
+`npm start` compiles `breezescript.ts` and launches the app. `breezescript.js` is build output and isn't committed, so run `npm run build` once before opening `breeze.html` in a browser for a demo of the UI with a sample project and canned agent runs.
 
 | Script | What it does |
 | --- | --- |

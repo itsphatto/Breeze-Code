@@ -1,5 +1,5 @@
 // Electron main process for Breeze IDE: window, file system, search, terminal, git, agents, sign-in and Vibe Mode.
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, net, protocol, safeStorage, session, shell } = require('electron');
 const { spawn, execFile, exec } = require('node:child_process');
 const crypto = require('node:crypto');
 const http = require('node:http');
@@ -83,7 +83,24 @@ function createWindow() {
   win.on('closed', () => { win = null; vibeView = null; stopWatching(); killAllTerms(); });
 }
 
+// The preview iframe is sandboxed (an opaque origin), and Chromium won't let an opaque origin load file://
+// stylesheets, scripts or images. So the preview is served from breeze-preview://project/<path> instead.
+const PREVIEW_SCHEME = 'breeze-preview';
+protocol.registerSchemesAsPrivileged([{ scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
+async function servePreview(req) {
+  try {
+    const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
+    let abs = resolveIn(rel);
+    if ((await fsp.stat(abs)).isDirectory()) abs = path.join(abs, 'index.html');
+    const res = await net.fetch(pathToFileURL(abs).href);
+    return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('content-type') || 'application/octet-stream', 'Cache-Control': 'no-store' } });
+  } catch {
+    return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
+  }
+}
+
 app.whenReady().then(() => {
+  protocol.handle(PREVIEW_SCHEME, servePreview);
   // The menu bar is drawn in HTML; the native one would only duplicate it.
   Menu.setApplicationMenu(null);
   if (process.platform === 'darwin') app.dock?.setIcon(APP_ICON);
@@ -243,6 +260,10 @@ ipcMain.handle('fs:trash', async (_e, rel) => {
 });
 
 ipcMain.handle('fs:fileUrl', (_e, rel) => pathToFileURL(resolveIn(rel)).href);
+ipcMain.handle('fs:previewUrl', (_e, rel) => {
+  resolveIn(rel); // throws when no folder is open or the path leaves the project
+  return `${PREVIEW_SCHEME}://project/${String(rel).split(/[\/]/).map(encodeURIComponent).join('/')}`;
+});
 
 // Every file under `dir`, skipping build output and dependencies. Folders are read in parallel.
 async function listFiles(dir) {

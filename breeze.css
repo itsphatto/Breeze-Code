@@ -275,6 +275,10 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .tab.dirty .x:hover span { display: inline; }
 .tab .dot { width: 6px; height: 6px; border-radius: 50%; }
 .tab.has-err { color: #f87171; }
+.tab .gst { margin-left: -2px; font: 600 10px var(--font-code); }
+.tab .gst.git-m { color: #e2c08d; }
+.tab .gst.git-u, .tab .gst.git-a { color: #73c991; }
+.tab .gst.git-d { color: #f87171; }
 
 /* ---------- code editor ---------- */
 .editor { flex: 1; display: flex; min-height: 0; position: relative; overflow: hidden; font: 13px/21px var(--font-code); }

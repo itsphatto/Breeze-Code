@@ -57,6 +57,7 @@ interface BreezeApi {
     listFiles(): Promise<string[]>;
     search(query: string, matchCase: boolean): Promise<SearchHit[]>;
     fileUrl(rel: string): Promise<string>;
+    previewUrl(rel: string): Promise<string>;
     onChange(cb: (paths: string[]) => void): () => void;
   };
   lint: { check(code: string, ext: string): Promise<SyntaxResult>; };
@@ -345,6 +346,7 @@ function demoApi(): BreezeApi {
       },
       // No file URLs in the browser: images get a drawn stand-in, everything else ''.
       async fileUrl(rel) { return binary.has(rel) && IMAGE_FILE.test(rel) ? DEMO_IMAGE : ''; },
+      async previewUrl() { return ''; },
       onChange() { return () => {}; },
     },
     lint: { async check() { return null; } },
@@ -2082,7 +2084,10 @@ function tabHtml(n: string): string {
   const cls = ['tab', n === active ? 'on' : '', isDirty(b) ? 'dirty' : '', b?.diags?.length ? 'has-err' : '', seenTabs.has(n) ? '' : 'enter'].filter(Boolean).join(' ');
   seenTabs.add(n);
   const dot = lock ? `<span class="dot tint-${lock}"></span>` : '';
-  return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}<span class="x" data-close-tab="1" title="Close (Ctrl+W)">${svgIcon('x', 12)}</span></div>`;
+  const f = gitState.files?.find(x => x.path === n);
+  const st = f && statusOf(f);
+  const gitTag = st ? `<span class="gst ${st.cls}" title="${st.title}">${st.letter}</span>` : '';
+  return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}${gitTag}<span class="x" data-close-tab="1" title="Close (Ctrl+W)">${svgIcon('x', 12)}</span></div>`;
 }
 function renderTabs(): void {
   // Re-rendering mid-drag would drop the tab being dragged; catch up when it lands.
@@ -2835,9 +2840,9 @@ async function startPreview(): Promise<void> {
 }
 async function reloadPreview(): Promise<void> {
   if (!running || !previewPath) return;
-  const url = await api.fs.fileUrl(previewPath).catch(() => '');
+  const url = await api.fs.previewUrl(previewPath).catch(() => '');
   if (url) {
-    $('#urlText').textContent = url.replace(/^file:\/\/\//, '');
+    $('#urlText').textContent = previewPath;
     frame.removeAttribute('srcdoc');
     frame.src = `${url}?t=${Date.now()}`;
   } else {
@@ -3533,7 +3538,7 @@ const MENUS: Menu[] = [
     { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
     { sep: true },
     { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
-    { label: 'Breeze Box (chat only)', act: 'mode.box', checked: () => appState.mode === 'box' },
+    { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
     { sep: true },
     { label: 'Add Account…', act: 'account.signIn' },
     { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
@@ -4277,7 +4282,7 @@ async function refreshGit(): Promise<void> {
   } catch {
     gitState = { repo: false }; // git missing or not a repository: show the "initialize" panel
   }
-  renderScm(); renderBranch(); renderTree();
+  renderScm(); renderBranch(); renderTree(); renderTabs();
 }
 function renderBranch(): void {
   const s = gitState;

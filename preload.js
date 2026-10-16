@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('breeze', {
     listFiles: () => invoke('fs:listFiles'),
     search: (query, matchCase) => invoke('fs:search', query, matchCase),
     fileUrl: rel => invoke('fs:fileUrl', rel),
+    previewUrl: rel => invoke('fs:previewUrl', rel),
     onChange: cb => listen('fs:changed', cb),
   },
   lint: {
