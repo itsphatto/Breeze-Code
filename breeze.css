@@ -270,9 +270,9 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .tab .x:hover { opacity: 1; background: var(--bg-3); }
 .tab.dirty .x { opacity: .8; }
 .tab.dirty .x::before { content: "●"; }
-.tab.dirty .x span { display: none; }
+.tab.dirty .x .ico-svg { display: none; }
 .tab.dirty .x:hover::before { content: none; }
-.tab.dirty .x:hover span { display: inline; }
+.tab.dirty .x:hover .ico-svg { display: block; }
 .tab .dot { width: 6px; height: 6px; border-radius: 50%; }
 .tab.has-err { color: #f87171; }
 .tab .gst { margin-left: -2px; font: 600 10px var(--font-code); }
