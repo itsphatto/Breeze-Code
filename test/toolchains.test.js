@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint } = require('../toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl } = require('../toolchains');
 
 const H = 'C:\\app\\runtime\\breeze_stdio.h';
 const T = (p, name, version = '1.0') => ({ path: p, name, version });
@@ -69,7 +69,7 @@ test('runPlan on linux has no .exe', () => {
 });
 
 test('runPlan rejects other files', () => {
-  assert.deepEqual(runPlan('C:\\p\\a.js', tools, 'win32', H), { error: 'Breeze can run .c, .cpp and .py files' });
+  assert.deepEqual(runPlan('C:\\p\\a.js', tools, 'win32', H), { error: 'Breeze can run .c, .cpp, .cs and .py files' });
 });
 
 const WIN_C = 'No C/C++ compiler found. Install one with:\nwinget install BrechtSanders.WinLibs.POSIX.UCRT';
@@ -162,7 +162,7 @@ test('findTools leaves cxx null without a twin, and everything null when nothing
   assert.equal(r.cc.name, 'gcc');
   assert.equal(r.cxx, null);
   const none = await findTools(machine('win32', {}));
-  assert.deepEqual(none, { cc: null, cxx: null, python: null, binDirs: [] });
+  assert.deepEqual(none, { cc: null, cxx: null, python: null, dotnet: null, binDirs: [] });
 });
 
 test('findTools rejects the Store python shortcut', async () => {
@@ -327,4 +327,69 @@ test('mergePath keeps fresh first, then inherited entries it lacks', () => {
     'C:\\Windows;C:\\Tools\\;C:\\venv\\Scripts;C:\\nm\\.bin');
   assert.equal(mergePath('/usr/bin:/bin', '/opt/x:/usr/bin/:/Bin', 'linux'), '/usr/bin:/bin:/opt/x:/Bin');
   assert.equal(mergePath('', undefined, 'linux'), '');
+});
+
+/* ----- C# ----- */
+const withDotnet = (version = '10.0.401') => ({ ...tools, dotnet: T('C:\\Program Files\\dotnet\\dotnet.exe', 'dotnet', version) });
+
+test('runPlan runs a lone .cs file with dotnet run', () => {
+  const r = runPlan('C:\\p\\Hello.cs', withDotnet(), 'win32', H);
+  assert.equal(r.steps.length, 1);
+  assert.equal(r.steps[0].file, 'C:\\Program Files\\dotnet\\dotnet.exe');
+  assert.deepEqual(r.steps[0].args, ['run', 'C:\\p\\Hello.cs']);
+  assert.equal(r.steps[0].display, 'dotnet run "Hello.cs"');
+  assert.equal(r.steps[0].cwd, 'C:\\p');
+  assert.equal(r.steps[0].env.DOTNET_NOLOGO, '1');
+});
+
+test('runPlan runs the nearest C# project when there is one, on any SDK', () => {
+  const r = runPlan('C:\\p\\App\\src\\Program.cs', withDotnet('8.0.100'), 'win32', H, { csproj: 'C:\\p\\App\\App.csproj' });
+  assert.deepEqual(r.steps[0].args, ['run', '--project', 'C:\\p\\App\\App.csproj']);
+  assert.equal(r.steps[0].display, 'dotnet run --project "App.csproj"');
+  assert.equal(r.steps[0].cwd, 'C:\\p\\App');
+});
+
+test('runPlan says an old .NET SDK cannot run a lone .cs file, and how to fix it', () => {
+  const err = runPlan('C:\\p\\Hello.cs', withDotnet('8.0.404'), 'win32', H).error;
+  assert.match(err, /^\.NET SDK 8\.0\.404 can't run a single \.cs file; that needs \.NET 10 or newer\./);
+  assert.match(err, /\nwinget install Microsoft\.DotNet\.SDK\.10\n/);
+  assert.match(err, /https:\/\/dotnet\.microsoft\.com\/download/);
+  assert.match(err, /dotnet new console$/);
+});
+
+test('runPlan without the .NET SDK gives an install command and a download link', () => {
+  const none = { cc: null, cxx: null, python: null, dotnet: null, binDirs: [] };
+  assert.equal(runPlan('C:\\p\\a.cs', none, 'win32', H).error,
+    'No C# compiler found. Install the .NET SDK with:\nwinget install Microsoft.DotNet.SDK.10\nOr download it from https://dotnet.microsoft.com/download');
+  assert.equal(runPlan('/p/a.cs', none, 'darwin', H).error,
+    'No C# compiler found. Install the .NET SDK with:\nbrew install --cask dotnet-sdk\nOr download it from https://dotnet.microsoft.com/download');
+  assert.equal(runPlan('/p/a.cs', none, 'linux', H).error,
+    'No C# compiler found. Install the .NET SDK with your package manager\nDownload it from https://learn.microsoft.com/dotnet/core/install/linux');
+});
+
+test('installHint and installUrl for C#', () => {
+  assert.equal(installHint('cs', 'win32'), 'winget install Microsoft.DotNet.SDK.10');
+  assert.equal(installUrl('cs', 'win32'), 'https://dotnet.microsoft.com/download');
+  assert.equal(installUrl('c', 'win32'), null);
+});
+
+test('findTools finds dotnet on the PATH', async () => {
+  const r = await findTools(machine('win32', { 'C:\\bin\\dotnet.exe': '10.0.401\r\n' }));
+  assert.deepEqual(r.dotnet, { path: 'C:\\bin\\dotnet.exe', name: 'dotnet', version: '10.0.401' });
+  assert.deepEqual(r.binDirs, []);
+});
+
+test('findTools finds dotnet in Program Files off the PATH and adds its folder', async () => {
+  const m = machine('win32', { 'C:\\Program Files\\dotnet\\dotnet.exe': '10.0.100' });
+  m.env.ProgramFiles = 'C:\\Program Files';
+  const r = await findTools(m);
+  assert.equal(r.dotnet.path, 'C:\\Program Files\\dotnet\\dotnet.exe');
+  assert.deepEqual(r.binDirs, ['C:\\Program Files\\dotnet']);
+});
+
+test('findTools ignores a dotnet with no SDK (its --version fails)', async () => {
+  const m = machine('linux', {}, { exists: (p) => p === '/usr/share/dotnet/dotnet' });
+  const r = await findTools(m);
+  assert.equal(r.dotnet, null);
+  assert.ok(m.calls.some((c) => c[0] === '/usr/share/dotnet/dotnet' && c[1] === '--version'));
 });

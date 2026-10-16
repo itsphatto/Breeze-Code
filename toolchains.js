@@ -13,6 +13,11 @@ const WIN_EXTRA = [
   'C:\\ProgramData\\mingw64\\mingw64\\bin',
 ];
 const WINLIBS = '%LOCALAPPDATA%\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs*\\mingw64\\bin';
+// Where the .NET SDK installs when it isn't on the PATH (installers, Homebrew, distro packages, dotnet-install script).
+const DOTNET_DIRS = (platform, env) => (platform === 'win32'
+  ? [env.ProgramFiles && env.ProgramFiles + '\\dotnet', env.USERPROFILE && env.USERPROFILE + '\\.dotnet']
+  : ['/usr/local/share/dotnet', '/usr/share/dotnet', '/usr/lib/dotnet', '/opt/homebrew/bin', env.HOME && env.HOME + '/.dotnet']
+).filter(Boolean);
 
 // Compilers in lookup order: [C compiler, its C++ partner]
 const COMPILERS = (platform) => [
@@ -73,13 +78,18 @@ async function findTools(o) {
     }
   }
 
+  // C#: the .NET SDK's `dotnet`. `dotnet --version` only exits 0 when an SDK (not just a runtime) is installed.
+  const dotnetDirs = [...pathDirs];
+  for (const d of DOTNET_DIRS(platform, env || {})) if (!dotnetDirs.some((x) => same(x, d))) dotnetDirs.push(d);
+  const dotnet = tool(await probe(dotnetDirs, 'dotnet'));
+
   const binDirs = [];
-  for (const t of [cc, cxx, python]) {
+  for (const t of [cc, cxx, python, dotnet]) {
     if (!t) continue;
     const d = P.dirname(t.path);
     if (!pathDirs.some((x) => same(x, d)) && !binDirs.some((x) => same(x, d))) binDirs.push(d);
   }
-  return { cc, cxx, python, binDirs };
+  return { cc, cxx, python, dotnet, binDirs };
 }
 
 async function freshPath(platform, run) {
@@ -107,7 +117,9 @@ function toolEnv(baseEnv, binDirs, platform, pathValue) {
   return env;
 }
 
-// What to tell the user when a tool isn't installed. `cmd` is the single command to run, if there is one.
+// What to tell the user when a tool isn't installed. `cmd` is the single command to run, if there is one;
+// `url` is a page to download it from.
+const DOTNET_URL = 'https://dotnet.microsoft.com/download';
 const MISSING = {
   c: {
     win32: { lead: 'No C/C++ compiler found. Install one with:', cmd: 'winget install BrechtSanders.WinLibs.POSIX.UCRT' },
@@ -119,11 +131,20 @@ const MISSING = {
     darwin: { lead: "Python wasn't found. Install it with:", cmd: 'xcode-select --install' },
     other: { lead: "Python wasn't found. Install python3 with your package manager" },
   },
+  cs: {
+    win32: { lead: 'No C# compiler found. Install the .NET SDK with:', cmd: 'winget install Microsoft.DotNet.SDK.10', url: DOTNET_URL },
+    darwin: { lead: 'No C# compiler found. Install the .NET SDK with:', cmd: 'brew install --cask dotnet-sdk', url: DOTNET_URL },
+    other: { lead: 'No C# compiler found. Install the .NET SDK with your package manager', url: 'https://learn.microsoft.com/dotnet/core/install/linux' },
+  },
 };
 const entry = (kind, platform) => MISSING[kind][platform] || MISSING[kind].other;
-const missing = (kind, platform) => { const m = entry(kind, platform); return m.cmd ? m.lead + '\n' + m.cmd : m.lead; };
+// The lead and command, then the download page when there is one.
+const download = (m) => (m.url ? `\n${m.cmd ? 'Or download it from' : 'Download it from'} ${m.url}` : '');
+const missing = (kind, platform) => { const m = entry(kind, platform); return (m.cmd ? m.lead + '\n' + m.cmd : m.lead) + download(m); };
 // Short install hint for the tools list: the command, or the plain advice where there is none.
 const installHint = (kind, platform) => { const m = entry(kind, platform); return m.cmd || m.lead; };
+// The download page for the tools list's "Get" button, if there is one.
+const installUrl = (kind, platform) => entry(kind, platform).url || null;
 
 // PATH entries: `fresh` first, then those of `inherited` that `fresh` lacks (case-insensitive on Windows, trailing separators ignored).
 function mergePath(fresh, inherited, platform) {
@@ -141,11 +162,30 @@ function mergePath(fresh, inherited, platform) {
   return out.join(delim);
 }
 
-function runPlan(absFile, tools, platform, stdioHeader) {
+// `opts.csproj` is the nearest .csproj at or above a .cs file, if any (main.js looks it up).
+function runPlan(absFile, tools, platform, stdioHeader, opts = {}) {
   const P = pathFor(platform);
   const cwd = P.dirname(absFile);
   const { name, ext, base } = P.parse(absFile);
   const e = ext.toLowerCase();
+
+  if (e === '.cs') {
+    const dn = tools.dotnet;
+    if (!dn) return { error: missing('cs', platform) };
+    const env = { DOTNET_NOLOGO: '1' };
+    // Inside a project, run the project: it builds every .cs file in it.
+    if (opts.csproj) {
+      return { steps: [{ display: `dotnet run --project "${P.basename(opts.csproj)}"`, file: dn.path, args: ['run', '--project', opts.csproj], cwd: P.dirname(opts.csproj), env }] };
+    }
+    // A lone .cs file runs as a file-based app, which needs the .NET 10 SDK or newer.
+    const major = Number(/^(\d+)\./.exec(dn.version)?.[1] || 0);
+    if (major && major < 10) {
+      const m = entry('cs', platform);
+      return { error: `.NET SDK ${dn.version} can't run a single .cs file; that needs .NET 10 or newer.` +
+        (m.cmd ? `\nUpdate with:\n${m.cmd}` : '') + download(m) + '\nOr make this folder a project with: dotnet new console' };
+    }
+    return { steps: [{ display: `dotnet run "${base}"`, file: dn.path, args: ['run', absFile], cwd, env }] };
+  }
 
   if (e === '.py') {
     const py = tools.python;
@@ -158,7 +198,7 @@ function runPlan(absFile, tools, platform, stdioHeader) {
   }
 
   const cpp = ['.cpp', '.cc', '.cxx'].includes(e);
-  if (e !== '.c' && !cpp) return { error: 'Breeze can run .c, .cpp and .py files' };
+  if (e !== '.c' && !cpp) return { error: 'Breeze can run .c, .cpp, .cs and .py files' };
   const compiler = cpp ? tools.cxx : tools.cc;
   if (!compiler) return { error: missing('c', platform) };
 
@@ -238,4 +278,4 @@ function ensureBuildIgnored(rootDir) {
   fs.appendFileSync(file, (text === '' || text.endsWith('\n') ? '' : '\n') + 'build/\n');
 }
 
-module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint };
+module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl };

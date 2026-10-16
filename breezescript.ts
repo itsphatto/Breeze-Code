@@ -34,7 +34,7 @@ interface SearchHit { path: string; line: number; col: number; text: string; }
 interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
 interface Accounts { accounts: User[]; active: string | null; }
 interface Completion { text: string; dir: boolean; }
-interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; }
+interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; url?: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 interface Rect { x: number; y: number; width: number; height: number; }
 interface DiscordActivity { details?: string; state?: string; start?: number; }
@@ -375,7 +375,8 @@ function demoApi(): BreezeApi {
             { id: 'antigravity', name: 'Antigravity', vendor: 'Google', url: 'https://antigravity.google', found: false, path: null, version: null },
             { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
-          tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null }],
+          tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
+            { id: 'dotnet', name: 'C#', found: false, version: null, optional: true, hint: 'winget install Microsoft.DotNet.SDK.10', url: 'https://dotnet.microsoft.com/download' }],
         };
       },
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
@@ -911,7 +912,10 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
 
 const TOOL_DOWNLOADS: Record<string, string> = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
 function toolHtml(t: DetectedTool): string {
-  if (!t.found && t.optional) return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}`;
+  if (!t.found && t.optional) {
+    const get = t.url ? `<button class="btn btn-sm" data-get="${escAttr(t.url)}">Get ${t.name} ${svgIcon('external', 12)}</button>` : '';
+    return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}${get}`;
+  }
   if (!t.found) return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ${svgIcon('external', 12)}</button>`;
   const version = t.version ? ' ' + esc(t.version) : '';
   return `<span class="pill ok">${t.name}${version} ready</span>`;
@@ -1045,6 +1049,7 @@ const LANGS: Record<string, [lexer: string, name: string]> = {
   json: ['json', 'JSON'], jsonc: ['js', 'JSON with Comments'],
   md: ['md', 'Markdown'], markdown: ['md', 'Markdown'],
   py: ['py', 'Python'],
+  cs: ['cs', 'C#'], csx: ['cs', 'C# Script'], csproj: ['html', 'C# Project'],
   png: ['', 'PNG Image'], jpg: ['', 'JPEG Image'], jpeg: ['', 'JPEG Image'], gif: ['', 'GIF Image'], webp: ['', 'WebP Image'],
   avif: ['', 'AVIF Image'], bmp: ['', 'Bitmap Image'], ico: ['', 'Icon'],
 };
@@ -1060,6 +1065,7 @@ const either = (...patterns: RegExp[]) => new RegExp(patterns.map(p => p.source)
 const lexer = (rules: TokenRule[], flags = 'g') => new RegExp(rules.map(([kind, p]) => `(?<${kind}>${p.source})`).join('|'), flags);
 const keywords = (list: string) => new RegExp(String.raw`\b(?:${list.replaceAll(' ', '|')})\b`);
 const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return super switch this throw try typeof var void while with yield async await static get set type interface enum implements private public protected readonly declare as true false null undefined';
+const CS_KW = 'abstract as async await base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach get goto if implicit in init int interface internal is lock long namespace new null object operator out override params private protected public readonly record ref required return sbyte sealed set short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile when where while with yield';
 const PY_KW = 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self';
 const LINE_COMMENT = /\/\/[^\n]*/;
 const BLOCK_COMMENT = /\/\*[\s\S]*?(?:\*\/|$)/;
@@ -1075,6 +1081,12 @@ const LEXERS: Record<string, RegExp> = {
     ['num', either(/#[\da-fA-F]{3,8}\b/, /-?\b\d+(?:\.\d+)?(?:%|[a-z]{1,3})?/)],
   ]),
   json: lexer([['prop', /"(?:\\.|[^"\\\n])*"(?=\s*:)/], ['str', /"(?:\\.|[^"\\\n])*"?/], ['num', either(/-/, NUMBER)], ['kw', /\b(?:true|false|null)\b/]]),
+  // C#: raw """…""" strings, verbatim/interpolated @"…" $"…" strings, and #region-style directives.
+  cs: lexer([
+    ['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['kw', /(?<=^|\n)[ \t]*#[a-z]+/],
+    ['str', either(/\$*"""[\s\S]*?(?:"""|$)/, /(?:\$@|@\$|@)"(?:""|[^"])*"?/, /\$?"(?:\\.|[^"\\\n])*"?/, /'(?:\\.|[^'\\\n])*'?/)],
+    ['num', either(/\b0[xX][\da-fA-F_]+[uUlL]*\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?[fFdDmMuUlL]*\b/)], ['kw', keywords(CS_KW)], ['prop', /\b[A-Za-z_]\w*(?=\s*[(<])/],
+  ]),
   py: lexer([['com', /#[^\n]*/], ['str', either(/"""[\s\S]*?(?:"""|$)/, /'''[\s\S]*?(?:'''|$)/, QUOTED)], ['num', NUMBER], ['kw', keywords(PY_KW)], ['prop', /\b[A-Za-z_]\w*(?=\()/]]),
   md: lexer([
     ['kw', /(?<=^|\n)#{1,6}[^\n]*/], ['str', either(/```[^`]*(?:```|$)/, /`[^`\n]*`/)], ['com', /(?<=^|\n)>[^\n]*/],
@@ -1573,6 +1585,7 @@ const ICONS: Record<string, string> = {
   scss: svg16('<circle cx="8" cy="8" r="6.5" fill="#cd6799"/><path d="M10.5 5.5c-1-1-4-.6-4 .9 0 1.6 3.5 1.3 3.5 3 0 1.4-2.6 1.6-3.8.6" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/>'),
   js: badge('#f1d33b', '#1e1e1e', 'JS'),
   ts: badge('#3178c6', '#ffffff', 'TS'),
+  cs: badge('#68217a', '#ffffff', 'C#'),
   jsx: svg16('<g fill="none" stroke="#61dafb" stroke-width="1"><ellipse cx="8" cy="8" rx="6.6" ry="2.6"/><ellipse cx="8" cy="8" rx="6.6" ry="2.6" transform="rotate(60 8 8)"/><ellipse cx="8" cy="8" rx="6.6" ry="2.6" transform="rotate(120 8 8)"/></g><circle cx="8" cy="8" r="1.4" fill="#61dafb"/>'),
   json: svg16('<path d="M6 2.5c-1.6 0-1.8.8-1.8 2v1.3c0 1-.5 1.7-1.7 1.9v.6c1.2.2 1.7.9 1.7 1.9v1.3c0 1.2.2 2 1.8 2M10 2.5c1.6 0 1.8.8 1.8 2v1.3c0 1 .5 1.7 1.7 1.9v.6c-1.2.2-1.7.9-1.7 1.9v1.3c0 1.2-.2 2-1.8 2" fill="none" stroke="#f5b942" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="1" fill="#f5b942"/>'),
   md: svg16('<rect x="1" y="3.5" width="14" height="9" rx="2" fill="none" stroke="#6aa8d8" stroke-width="1.2"/><path d="M3.5 10.5v-4l1.8 2 1.8-2v4M11.2 6.3v4M9.6 8.9l1.6 1.6 1.6-1.6" fill="none" stroke="#6aa8d8" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>'),
@@ -1593,7 +1606,7 @@ const EXT_ICON: Record<string, string> = {
   html: 'html', htm: 'html', xml: 'html', vue: 'html', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
   js: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx', tsx: 'jsx', ts: 'ts', mts: 'ts', cts: 'ts', json: 'json', jsonc: 'json', md: 'md', markdown: 'md',
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image', bmp: 'image', avif: 'image', svg: 'svg',
-  py: 'py', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
+  py: 'py', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
   txt: 'text', log: 'text', csv: 'text', lock: 'lock',
 };
 function fileIcon(name: string): string {
@@ -2865,9 +2878,11 @@ const termOut = $('#termOut');
 const termInput = $<HTMLInputElement>('#termInput');
 // Colour codes and lone carriage returns don't render in the panel.
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-// Where compilers and Python say the trouble is: `file:line:col: error: msg` (GCC, clang) and `File "file", line N`.
+// Where compilers and Python say the trouble is: `file:line:col: error: msg` (GCC, clang), `File "file", line N`,
+// and `file(line,col): error CS1002: msg [project.csproj]` (C#).
 interface ErrorRef { path: string; line: number; col: number; msg: string; error: boolean; start: number; end: number; }
 const GCC_REF = /^((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
+const CS_REF = /^[ \t]*((?:[A-Za-z]:(?=[\\/]))?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
 const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
 // Turns a path from the output into a project-relative one, or null when it points outside the project.
 // Windows paths (drive letter) compare without regard to case or slash direction.
@@ -2888,6 +2903,13 @@ function parseErrorRefs(text: string, cwd: string, root: string): ErrorRef[] {
     if (path == null) continue;
     const end = m.index + m[1].length + 1 + m[2].length + (m[3] ? m[3].length + 1 : 0);
     refs.push({ path, line: Number(m[2]) - 1, col: m[3] ? Number(m[3]) - 1 : 0, msg: m[5].replace(/\r$/, ''), error: m[4] !== 'warning' && m[4] !== 'note', start: m.index, end });
+  }
+  for (const m of text.matchAll(CS_REF)) {
+    const path = projectPath(m[1], cwd, root);
+    if (path == null) continue;
+    const start = m.index + m[0].indexOf(m[1]);
+    const end = start + m[1].length + m[2].length + m[3].length + 3; // through "(line,col)"
+    refs.push({ path, line: Number(m[2]) - 1, col: Number(m[3]) - 1, msg: `${m[5]}: ${m[6]}`, error: m[4] === 'error', start, end });
   }
   for (const m of text.matchAll(PY_REF)) {
     const path = projectPath(m[2], cwd, root);
@@ -2995,7 +3017,7 @@ async function runCommand(cmd: string): Promise<void> {
   if (r.id != null) { term.proc = r.id; $('#termPs').classList.add('busy'); }
 }
 // C, C++ and Python files run in the terminal; their input comes from the terminal's input line.
-function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|cc|cxx|py)$/i.test(path); }
+function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|cc|cxx|cs|py)$/i.test(path); }
 async function runFile(): Promise<void> {
   const b = activeBuf();
   if (!active || b?.kind !== 'text') { toast('Save the file first'); return; }

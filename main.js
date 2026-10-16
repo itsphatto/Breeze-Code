@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint } = require('./toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl } = require('./toolchains');
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'out', '.cache', '__pycache__', '.venv']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -458,9 +458,19 @@ function getTools(force = false) {
   return toolsPromise;
 }
 
-// Runs a .c, .cpp or .py file in the open folder, streaming into the terminal under one id.
+// Runs a .c, .cpp, .cs or .py file in the open folder, streaming into the terminal under one id.
 let activeRun = null; // { id, cancel }
-const SOURCE_FILE = /\.(?:c|cc|cpp|cxx|py)$/i;
+const SOURCE_FILE = /\.(?:c|cc|cpp|cxx|cs|py)$/i;
+// The nearest .csproj in the .cs file's folder or a folder above it, without leaving the open project.
+function nearestCsproj(abs) {
+  if (!/\.cs$/i.test(abs)) return null;
+  for (let dir = path.dirname(abs); ; dir = path.dirname(dir)) {
+    let names = [];
+    try { names = fs.readdirSync(dir).filter(n => /\.csproj$/i.test(n)).sort(); } catch { /* unreadable: keep looking up */ }
+    if (names.length) return path.join(dir, names[0]);
+    if (path.relative(root, dir) === '' || dir === path.dirname(dir)) return null;
+  }
+}
 ipcMain.handle('run:file', async (_e, rel) => {
   if (activeRun) return { error: 'A program is still running — press Ctrl+C to stop it' };
   if (!root) return { error: 'Open a folder first' };
@@ -470,10 +480,11 @@ ipcMain.handle('run:file', async (_e, rel) => {
     const abs = resolveIn(rel);
     const stdioHeader = path.join(__dirname, 'runtime', 'breeze_stdio.h');
     let { tools, pathValue } = await getTools();
-    let plan = runPlan(abs, tools, process.platform, stdioHeader);
+    const opts = { csproj: nearestCsproj(abs) };
+    let plan = runPlan(abs, tools, process.platform, stdioHeader, opts);
     if (plan.error && SOURCE_FILE.test(abs)) {
       ({ tools, pathValue } = await getTools(true));
-      plan = runPlan(abs, tools, process.platform, stdioHeader);
+      plan = runPlan(abs, tools, process.platform, stdioHeader, opts);
     }
     if (plan.error) return fail(plan.error);
     if (plan.steps.length > 1) fs.mkdirSync(path.join(plan.steps[0].cwd, 'build'), { recursive: true }); // gcc won't create it
@@ -635,8 +646,8 @@ ipcMain.handle('sys:detect', async () => {
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
   }));
   const found = (await getTools(true)).tools;
-  for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py']]) {
-    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform) });
+  for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py'], ['dotnet', 'C#', found.dotnet, 'cs']]) {
+    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform), url: t ? null : installUrl(kind, process.platform) });
   }
   return { agents, tools, platform: process.platform };
 });

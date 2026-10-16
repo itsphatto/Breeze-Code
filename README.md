@@ -86,7 +86,7 @@ While an agent works, the IDE fades and a YouTube Shorts, TikTok, Instagram, Fac
 | | |
 | --- | --- |
 | **Editor** | Tabs you can reorder, go to file or line, find, and syntax checking for JavaScript and TypeScript |
-| **Terminal and Run** | Integrated terminal; press F5 to run C, C++ and Python files with the compilers Breeze finds |
+| **Terminal and Run** | Integrated terminal; press F5 to run C, C++, C# and Python files with the compilers Breeze finds. C# uses the .NET SDK (10 or newer for a single `.cs` file; any version inside a `.csproj` project), and Breeze tells you how to install anything that's missing |
 | **Live preview** | Open `index.html` next to your code and reload as you go |
 | **Local LLM** | A token-efficient agent loop: a project map, ranged file reads and snippet edits keep requests small |
 | **Accounts** | Sign in with GitHub or Google, with several accounts |
