@@ -871,3 +871,7 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 /* Vibe Mode: the ready card pops when the agent finishes. */
 .vibe-ready.ping { animation: readyPing .6s cubic-bezier(.2,.8,.2,1); }
 @keyframes readyPing { 0% { transform: translateY(10px) scale(.96); opacity: 0; } 60% { transform: translateY(-2px) scale(1.02); opacity: 1; } 100% { transform: none; } }
+
+#ChooseYourAgentHeading{
+  margin-bottom: 22px;
+}

@@ -206,7 +206,7 @@
 
     <!-- 2 · Agent -->
     <section class="ob-step setup hidden" data-step="2">
-      <h2>Pick your AI agent</h2>
+      <h2 id="ChooseYourAgentHeading">Pick your AI agent</h2>
       <div class="setup-grid">
         <div class="setup-card">
           <header>
@@ -234,17 +234,17 @@
     <!-- 3 · Mode -->
     <section class="ob-step mode-step hidden" data-step="3">
       <h2>How do you want to work?</h2>
-      <p class="lead">Switch between them any time from Settings (the gear icon).</p>
+      <p class="lead">Switch between them any time from Settings.</p>
       <div class="mode-grid">
         <button class="mode-card on" data-mode="ide">
           <span class="mode-art ide-art" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="nm">IDE</span>
+          <span class="nm">Breeze Code</span>
           <span class="sub">Files, code, terminal, preview and agents all in one view.</span>
         </button>
         <button class="mode-card" data-mode="box">
           <span class="mode-art box-art" aria-hidden="true"><i></i><i></i></span>
           <span class="nm">Breeze Box</span>
-          <span class="sub">Pure chat mode, talk to any available agent without opening the editor.</span>
+          <span class="sub">Talk to any available agent without opening the editor.</span>
         </button>
       </div>
       <div class="setup-card project-card" id="projectCard">
@@ -257,7 +257,7 @@
             </svg> Open folder</button>
           <button id="createFolder"><svg width="16" height="16">
               <use href="#i-newfile" />
-            </svg> Create new</button>
+            </svg> Create new folder</button>
         </div>
       </div>
       <div class="row center mode-actions">
