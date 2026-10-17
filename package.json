@@ -2,7 +2,7 @@
   "name": "breeze-ide",
   "private": true,
   "version": "0.3.0",
-  "description": "Breeze IDE",
+  "description": "A Development Environment",
   "author": "itsphatto",
   "main": "main.js",
   "scripts": {
