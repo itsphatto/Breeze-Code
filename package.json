@@ -1,7 +1,7 @@
 {
   "name": "breeze-code",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A Development Environment",
   "author": "itsphatto",
   "main": "main.js",
@@ -20,7 +20,7 @@
   },
   "build": {
     "appId": "com.breeze.ide",
-    "productName": "Breeze IDE",
+    "productName": "Breeze Code",
     "directories": {
       "output": "dist"
     },

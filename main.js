@@ -67,7 +67,7 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: 'Breeze IDE',
+    title: 'Breeze Code',
     icon: APP_ICON,
     backgroundColor: '#000000',
     titleBarStyle: 'hidden',
@@ -1595,7 +1595,7 @@ function discordFlush() {
   if (wait > 0) { discordTimer = setTimeout(discordFlush, wait); return; }
   if (!discordRpc?.connected || !discordWanted) return;
   discordSentAt = Date.now();
-  discordRpc.setActivity({ ...discordWanted, largeImageKey: 'breeze', largeImageText: 'Breeze IDE' }).catch(logError('discord'));
+  discordRpc.setActivity({ ...discordWanted, largeImageKey: 'breeze', largeImageText: 'Breeze Code' }).catch(logError('discord'));
 }
 const discordText = (s, max = 120) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, max) : undefined);
 handle('discord:set', async (_e, a) => {

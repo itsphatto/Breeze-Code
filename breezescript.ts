@@ -1,4 +1,4 @@
-/* Breeze IDE — renderer logic.
+/* Breeze Code — renderer logic.
    Files, search, terminal and agent detection are real in the desktop app (main.js + preload.js).
    Opened in a plain browser, a small in-memory demo project stands in for the disk.
    Agent conversations, checkpoints and collaboration are still simulated. */
@@ -988,7 +988,7 @@ function renderModeChoice(): void {
   $$('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === appState.mode));
   $('#projFolder').textContent = rootInfo ? rootInfo.root : 'No folder yet';
   $('#projFolder').title = rootInfo?.root ?? '';
-  $('#startBuilding').textContent = appState.mode === 'box' ? 'Open Breeze Box' : 'Start building';
+  $('#startBuilding').textContent = appState.mode === 'box' ? 'Open Breeze Box' : 'Open Breeze Code';
 }
 $$('[data-mode]').forEach(b => b.onclick = () => {
   appState.mode = b.dataset.mode === 'box' ? 'box' : 'ide';
@@ -1715,7 +1715,7 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   rootInfo = info;
   $('#projectName').textContent = info.name;
   $('#projectName').title = info.root;
-  document.title = `${info.name} — Breeze IDE`;
+  document.title = `${info.name} — Breeze Code`;
   const s = store.get<Session>(sessionKey(), { tabs: [], active: null, expanded: [], pos: {} });
   const dirty = store.get<Record<string, string>>(hotExitKey(), {});
   expanded.clear();
@@ -1741,7 +1741,7 @@ function resetWorkspace(): void {
   openTabs = []; active = null; rootInfo = null;
   stopPreview();
   $('#projectName').textContent = 'No folder';
-  document.title = 'Breeze IDE';
+  document.title = 'Breeze Code';
   gitState = { repo: false }; gitLog = { head: null, commits: [] };
   renderScm(); renderBranch(); emptyChat();
 }
@@ -3489,7 +3489,7 @@ const commands: Record<string, () => unknown> = {
 function showAbout(): void {
   const where = isDesktop ? 'Desktop app' : 'Browser preview';
   const engine = /Electron\/[\d.]+|Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0] ?? '';
-  openModal(`<h3>Breeze IDE</h3><p class="sub">Smooth as a breeze.</p><p class="sub fs-12">${where} · ${esc(engine)}</p><div class="row end"><button class="btn btn-primary" data-close>OK</button></div>`);
+  openModal(`<h3>Breeze Code</h3><p class="sub">Smooth as a breeze.</p><p class="sub fs-12">${where} · ${esc(engine)}</p><div class="row end"><button class="btn btn-primary" data-close>OK</button></div>`);
 }
 function run(act: string): void {
   const fn = commands[act];
@@ -4876,14 +4876,14 @@ function setVibeArmed(on: boolean): void {
   const arm = $('#vibeArm');
   if (!arm.querySelector('svg')) arm.innerHTML = `${svgIcon(on ? 'circleDot' : 'circle', 14)}<span></span>`;
   void setIcon(arm, on ? 'circleDot' : 'circle');
-  $('span', arm).textContent = `Vibe Mode ${on ? 'on' : 'off'}`;
+  $('span', arm).textContent = `Vibe Code Mode ${on ? 'on' : 'off'}`;
   $('#vibeArm').classList.toggle('armed', on);
 }
 $('#vibeArm').onclick = () => {
-  if (appState.vibeArmed) { setVibeArmed(false); toast('Vibe Mode off'); return; }
+  if (appState.vibeArmed) { setVibeArmed(false); toast('Vibe Code Mode off'); return; }
   if (!connectedSites().length) { openFeedPicker(); return; }
   setVibeArmed(true);
-  toast(`Vibe Mode on — ${siteById(appState.vibeSite)?.name ?? 'your feed'} plays while agents work`);
+  toast(`Vibe Code Mode on — ${siteById(appState.vibeSite)?.name ?? 'your feed'} plays while agents work`);
 };
 function openFeedPicker(): void {
   openModal(`<h3>Vibe Mode feeds</h3><p class="sub">Pick what plays while your agents work. Connecting opens the site so you can sign in.</p>
@@ -5019,13 +5019,13 @@ function discordActivity(): DiscordActivity {
   const inBox = appState.mode === 'box';
   const file = active ? baseName(active) : null;
   if (!appState.discordDetails) {
-    return { details: working ? 'Vibe coding with agents' : inBox ? 'Chatting with an agent' : 'Writing code', state: 'Breeze IDE', start: discordSince };
+    return { details: working ? 'Vibe coding with agents' : inBox ? 'Chatting with an agent' : 'Writing code', state: 'Breeze Code', start: discordSince };
   }
   let details = inBox ? 'Chatting in Breeze Box' : 'Idle';
   if (working) details = `${working.name}: ${working.task}`;
   else if (!inBox && file) details = `Editing ${file}`;
   const lang = !inBox && active ? langOf(active)[1] : '';
-  const where = rootInfo ? `in ${rootInfo.name}` : 'Breeze IDE';
+  const where = rootInfo ? `in ${rootInfo.name}` : 'Breeze Code';
   return { details, state: lang && !working ? `${lang} · ${where}` : where, start: discordSince };
 }
 function renderDiscord(state: 'on' | 'off' | 'error', why = ''): void {
@@ -5073,7 +5073,7 @@ $('#discord').onclick = () => {
   if (appState.discord) { discordOff(); toast('Discord presence off'); return; }
   const preview = () => {
     const a = discordActivity();
-    return `<b>Breeze IDE</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div>`;
+    return `<b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div>`;
   };
   openModal(`<h3>Show what you're doing on Discord?</h3><p class="sub">Your friends will see:</p>
     <div class="setup-card mb-12" id="dPreview">${preview()}</div>
