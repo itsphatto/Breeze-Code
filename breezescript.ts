@@ -59,6 +59,7 @@ interface BreezeApi {
     fileUrl(rel: string): Promise<string>;
     previewUrl(rel: string): Promise<string>;
     onChange(cb: (paths: string[]) => void): () => void;
+    importFile(dir: string, name: string, data: Uint8Array): Promise<string>;
   };
   lint: { check(code: string, ext: string): Promise<SyntaxResult>; };
   term: {
@@ -280,6 +281,18 @@ function demoApi(): BreezeApi {
   const feeds = () => store.get<Record<string, boolean>>('breeze.demoVibe', {});
   return {
     fs: {
+      async importFile(dir, name, data) {
+        needOpen();
+        const dot = name.lastIndexOf('.');
+        const stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+        let rel = joinPath(dir, name);
+        for (let n = 1; exists(rel); n++) rel = joinPath(dir, `${stem} (${n})${ext}`);
+        for (let d = dirName(rel); d; d = dirName(d)) dirs.add(d);
+        files.set(rel, new TextDecoder().decode(data));
+        return rel;
+      },
+
+
       async openFolder() { store.set('breeze.demoOpen', true); return info; },
       // Browser preview: a new, empty in-memory project.
       async createFolder() {
@@ -288,6 +301,8 @@ function demoApi(): BreezeApi {
         info = { root: 'demo:/my-breeze-project', name: 'my-breeze-project' };
         store.set('breeze.demoOpen', true);
         return info;
+
+        
       },
       async restore() { return store.get('breeze.demoOpen', false) ? info : null; },
       async closeFolder() { store.del('breeze.demoOpen'); },
@@ -1694,15 +1709,81 @@ function flushSession(): void {
   if (Object.keys(dirty).length) store.set(hotExitKey(), dirty); else store.del(hotExitKey());
 }
 window.addEventListener('beforeunload', flushSession);
-// A file dropped on the window would replace Breeze with that file (the desktop app refuses the navigation too).
-// Only drags carrying files are stopped, so dragging text inside the editor still works.
-for (const type of ['dragover', 'drop'] as const) {
-  document.addEventListener(type, e => {
-    if (!e.dataTransfer?.types.includes('Files')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'none'; // the pointer shows the file can't be dropped here
-  });
+/* ----- Dropping files from the computer ----- */
+// Files dragged in from Explorer are copied into the project: into the clicked folder in the explorer, or the open
+// file's folder when dropped on the editor. Anywhere else the drop is refused (it would replace Breeze with the file).
+const DROP_MAX_FILES = 500;
+const DROP_MAX_BYTES = 50 * 1024 * 1024;
+const DROP_SKIP = new Set(['.git', 'node_modules']);
+interface Dropped { rel: string; file: File; }
+let dropMark: HTMLElement | null = null;
+const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+function markDrop(el: HTMLElement | null): void {
+  if (dropMark === el) return;
+  dropMark?.classList.remove('drop-over');
+  dropMark = el;
+  el?.classList.add('drop-over');
 }
+function dropTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
+  if (!rootInfo) return null;
+  const t = e.target as HTMLElement;
+  if (t.closest('#editorPane')) return { el: $('#editorPane'), dir: targetDir() };
+  const row = t.closest<HTMLElement>('#tree [data-path]');
+  if (row) { const p = row.dataset.path as string; return { el: row, dir: row.dataset.dir ? p : dirName(p) }; }
+  return t.closest('#tree') ? { el: $('#tree'), dir: '' } : null;
+}
+const entryFile = (e: FileSystemFileEntry) => new Promise<File>((res, rej) => e.file(res, rej));
+async function entryChildren(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
+  const reader = dir.createReader(), all: FileSystemEntry[] = [];
+  for (;;) { // readEntries returns at most ~100 at a time
+    const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
+    if (!batch.length) return all;
+    all.push(...batch);
+  }
+}
+async function collectDropped(entry: FileSystemEntry, prefix: string, out: Dropped[], skipped: string[]): Promise<void> {
+  if (DROP_SKIP.has(entry.name)) { skipped.push(entry.name); return; }
+  if (out.length >= DROP_MAX_FILES) return;
+  if (entry.isFile) { out.push({ rel: prefix + entry.name, file: await entryFile(entry as FileSystemFileEntry) }); return; }
+  for (const child of await entryChildren(entry as FileSystemDirectoryEntry)) await collectDropped(child, `${prefix}${entry.name}/`, out, skipped);
+}
+async function importDropped(entries: FileSystemEntry[], dir: string): Promise<void> {
+  const found: Dropped[] = [], skipped: string[] = [], saved: string[] = [], failed: string[] = [];
+  for (const entry of entries) await collectDropped(entry, '', found, skipped);
+  const files = found.filter(d => d.file.size <= DROP_MAX_BYTES);
+  for (const d of files) {
+    try { saved.push(await api.fs.importFile(dir, d.rel, new Uint8Array(await d.file.arrayBuffer()))); }
+    catch (err) { failed.push(errMsg(err)); }
+  }
+  for (let d = dir; d; d = dirName(d)) expanded.add(d);
+  await refreshTree(); saveSession();
+  if (saved.length === 1 && entries.length === 1 && entries[0].isFile) openFile(saved[0]);
+  const notes = [
+    skipped.length ? `skipped ${[...new Set(skipped)].join(', ')}` : '',
+    found.length > files.length ? `${plural(found.length - files.length, 'file')} over 50 MB left out` : '',
+    found.length >= DROP_MAX_FILES ? `stopped at ${DROP_MAX_FILES} files` : '',
+    failed.length ? `${failed.length} failed: ${failed[0]}` : '',
+  ].filter(Boolean);
+  toast(`Added ${plural(saved.length, 'file')}${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+}
+document.addEventListener('dragover', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  const t = dropTarget(e);
+  markDrop(t?.el ?? null);
+  if (e.dataTransfer) e.dataTransfer.dropEffect = t ? 'copy' : 'none';
+});
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) markDrop(null); });
+document.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  const t = dropTarget(e);
+  markDrop(null);
+  if (!t) return;
+  // The item list is only readable during the event, so take the entries now and read them afterwards.
+  const entries = [...(e.dataTransfer?.items ?? [])].map(i => i.webkitGetAsEntry()).filter((x): x is FileSystemEntry => !!x);
+  background(importDropped(entries, t.dir));
+});
 
 // Puts back a tab's unsaved text and caret from the last session.
 function restoreBuffer(b: Buffer, s: Session, dirty: Record<string, string>): void {

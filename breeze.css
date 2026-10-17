@@ -875,3 +875,7 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 #ChooseYourAgentHeading{
   margin-bottom: 22px;
 }
+
+.drop-over { outline: 2px dashed var(--blue); outline-offset: -3px; }
+/*drag and drop file*/
+.tree-item.drop-over { background: var(--blue-soft); }

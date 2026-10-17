@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('breeze', {
     fileUrl: rel => invoke('fs:fileUrl', rel),
     previewUrl: rel => invoke('fs:previewUrl', rel),
     onChange: cb => listen('fs:changed', cb),
+    importFile: (dir, name, bytes) => invoke('fs:import', dir, name, bytes),
   },
   lint: {
     check: (code, ext) => invoke('lint:check', code, ext),
