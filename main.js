@@ -1383,7 +1383,7 @@ const PAGE_ICON = {
 let wordmarkUri = null;
 function wordmarkSrc() {
   if (wordmarkUri === null) {
-    try { wordmarkUri = `data:image/png;base64,${fs.readFileSync(path.join(__dirname, 'BreezeIDE.png')).toString('base64')}`; } catch { wordmarkUri = ''; }
+    try { wordmarkUri = `data:image/png;base64,${fs.readFileSync(path.join(__dirname, 'BreezeCode.png')).toString('base64')}`; } catch { wordmarkUri = ''; }
   }
   return wordmarkUri;
 }

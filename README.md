@@ -2,7 +2,7 @@
 
 
 
-<img src="BreezeIDE.png" height="44" alt="Breeze IDE">
+<img src="BreezeCode.png" height="44" alt="Breeze IDE">
 
 **A lightweight desktop IDE where your AI agents plan, build and show their work, right next to your code.**
 
