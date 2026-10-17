@@ -282,6 +282,25 @@ async function listFiles(dir) {
   return files.concat(...nested).slice(0, MAX_LISTED_FILES);
 }
 
+const IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+// A dropped file arrives as bytes, so Breeze never reads a path the page names. Never overwrites: a taken name gets " (1)".
+handle('fs:import', async (_e, dirRel, name, data) => {
+  if (!(data instanceof Uint8Array)) throw new Error('Nothing to save');
+  if (data.byteLength > IMPORT_MAX_BYTES) throw new Error(`${path.basename(String(name))} is larger than 50 MB`);
+  const target = resolveIn(path.join(String(dirRel || ''), String(name)));
+  if (path.relative(root, target).split(path.sep).some(p => /^(?:\.git|git~1)[. ]*$/i.test(p))) throw new Error('Files can’t be dropped into the .git folder');
+  await fsp.mkdir(path.dirname(target), { recursive: true });
+  const { dir, name: stem, ext } = path.parse(target);
+  for (let n = 0; ; n++) {
+    const candidate = n ? path.join(dir, `${stem} (${n})${ext}`) : target;
+    try { await fsp.writeFile(candidate, data, { flag: 'wx' }); return toRel(candidate); }
+    catch (err) { if (err.code !== 'EEXIST' || n > 999) throw err; }
+  }
+});
+
+
+
+
 handle('fs:listFiles', async () => (await listFiles(resolveIn(''))).map(toRel));
 
 handle('fs:search', (_e, query, matchCase) => searchProject(query, matchCase));
