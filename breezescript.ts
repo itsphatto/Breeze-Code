@@ -2384,14 +2384,23 @@ async function saveAll(): Promise<void> {
 /* ================= Code editor ================= */
 const LINE_H = 21;
 const INDENT = '  ';
+
 const hlInner = document.createElement('div');
 $('#hl').appendChild(hlInner);
 hlInner.style.position = 'relative';
+const hlLines = document.createElement('div');   // the rendered window of lines
+hlLines.style.position = 'relative';
+const hlBoxes = document.createElement('div');   // find hits, squiggles, tag pairs
+hlInner.append(hlLines, hlBoxes);
 const gutInner = document.createElement('div');
 $('#gutter').appendChild(gutInner);
-let charW = 0;
-let curLine = -1;
-let renderQueued = false;
+const gutLines = document.createElement('div');
+gutLines.style.position = 'relative';
+gutInner.append(gutLines);
+
+let charW = 0; //variable
+let curLine = -1;//variable
+let renderQueued = false;//variable
 
 const activeBuf = (): Buffer | undefined => (active ? buffers.get(active) : undefined);
 function activeText(): (Buffer & { ta: HTMLTextAreaElement }) | undefined {
@@ -2450,7 +2459,7 @@ function renderEditor(): void {
       delete empty.dataset.img;
       empty.innerHTML = b ? fileNoteHtml(b.path, editorNote(b)) : welcomeHtml();
     }
-    hlInner.innerHTML = ''; gutInner.innerHTML = '';
+    hlLines.replaceChildren(); hlBoxes.replaceChildren(); gutLines.replaceChildren();
     closeFind();
     updateStatus();
     return;
@@ -2602,48 +2611,85 @@ function gutterHtml(i: number, d: Diag | undefined): string {
   const attrs = (cls ? ` class="${cls}"` : '') + (d ? ` title="${escAttr(d.msg)}"` : '');
   return `<div${attrs}>${i + 1}</div>`;
 }
+
+
+const OVERSCAN = 40;
+let winFirst = 0, winLast = 0, winTotal = 1;
+const hlCache = new WeakMap<Buffer, { text: string; lexer: string; lines: string[] }>();
+// Re-lexes only when the text changed, so scrolling never re-highlights.
+function highlighted(b: Buffer): string[] {
+  const lexer = langOf(b.path)[0];
+  const c = hlCache.get(b);
+  if (c && c.text === b.text && c.lexer === lexer) return c.lines;
+  const lines = highlightLines(b.text, lexer);
+  hlCache.set(b, { text: b.text, lexer, lines });
+  return lines;
+}
+function visibleLines(ta: HTMLTextAreaElement, total: number): [number, number] {
+  const first = clamp(Math.floor((ta.scrollTop - 10) / LINE_H), 0, total - 1);
+  const last = clamp(Math.ceil((ta.scrollTop + (ta.clientHeight || 800)) / LINE_H), 0, total);
+  return [first, last];
+}
 function renderCode(): void {
   const b = activeText();
   if (!b) return;
-  const lines = highlightLines(b.text, langOf(b.path)[0]);
+  const lines = highlighted(b);
+  winTotal = lines.length;
   curLine = lineAt(b.text, b.ta.selectionStart);
   const cw = measureChar();
   const errAt = visibleDiags(b, lines.length);
   const add = added[b.path];
-  hlInner.innerHTML = lines.map((h, i) => lineHtml(h, i, add, errAt.get(i))).join('');
-  hlInner.append(...findBoxes(b, cw), ...squiggles(b, lines.length, cw), ...tagBoxes(b, cw));
+  const [vf, vl] = visibleLines(b.ta, lines.length);
+  winFirst = Math.max(0, vf - OVERSCAN);
+  winLast = Math.min(lines.length, vl + OVERSCAN);
+  const rows: string[] = [], nums: string[] = [];
+  for (let i = winFirst; i < winLast; i++) {
+    rows.push(lineHtml(lines[i], i, add, errAt.get(i)));
+    nums.push(gutterHtml(i, errAt.get(i)));
+  }
+  hlLines.innerHTML = rows.join('');
+  hlLines.style.top = `${winFirst * LINE_H}px`;
+  gutLines.innerHTML = nums.join('');
+  gutLines.style.top = `${winFirst * LINE_H}px`;
+  hlBoxes.replaceChildren(...findBoxes(b, cw), ...squiggles(b, lines.length, cw), ...tagBoxes(b, cw));
   tagKey = `${b.path}:${b.ta.selectionStart}:${b.text.length}`;
   $('#gutter').style.width = `${Math.max(3, String(lines.length).length) * 8 + 32}px`;
-  gutInner.innerHTML = lines.map((_, i) => gutterHtml(i, errAt.get(i))).join('');
   syncScroll();
   updateStatus();
 }
 function syncScroll(): void {
   const b = activeText();
   if (!b) return;
+  // Scrolled past the rendered window: draw the new one (cheap, the highlighting is cached).
+  const [vf, vl] = visibleLines(b.ta, winTotal);
+  if (vf < winFirst || vl > winLast) { renderCode(); return; }
   hlInner.style.transform = `translate(${-b.ta.scrollLeft}px, ${-b.ta.scrollTop}px)`;
   gutInner.style.transform = `translateY(${-b.ta.scrollTop}px)`;
 }
+
+
+
 function updateCaret(): void {
   const b = activeText();
   if (!b) return;
   const i = lineAt(b.text, b.ta.selectionStart);
   if (i !== curLine) {
-    hlInner.children[curLine]?.classList.remove('cur-line');
-    gutInner.children[curLine]?.classList.remove('cur');
-    hlInner.children[i]?.classList.add('cur-line');
-    gutInner.children[i]?.classList.add('cur');
+    hlLines.children[curLine - winFirst]?.classList.remove('cur-line');
+    gutLines.children[curLine - winFirst]?.classList.remove('cur');
+    hlLines.children[i - winFirst]?.classList.add('cur-line');
+    gutLines.children[i - winFirst]?.classList.add('cur');
     curLine = i;
   }
   // Clicking (or arrowing) into a tag marks it and its partner; the boxes are swapped without redrawing the code.
   const key = `${b.path}:${b.ta.selectionStart}:${b.text.length}`;
   if (key !== tagKey) {
     tagKey = key;
-    $$('.tagpair', hlInner).forEach(x => x.remove());
-    hlInner.append(...tagBoxes(b, measureChar()));
+    $$('.tagpair', hlBoxes).forEach(x => x.remove());
+    hlBoxes.append(...tagBoxes(b, measureChar()));
   }
   updateStatus();
-}
+
+}//end of update caret
 function updateStatus(): void {
   const b = activeBuf();
   const tb = activeText();
@@ -4747,7 +4793,7 @@ function commitDetailHtml(d?: GitCommitDetail): string {
 const commitRow = (hash: string) => $(`#scm .commit[data-commit="${hash}"]`);
 function closeCommitDetail(hash: string): void {
   const row = commitRow(hash);
-  row?.classList.remove('on');
+  row?.classList.remove('on')
   const d = row?.nextElementSibling;
   if (d?.classList.contains('commit-detail')) d.remove();
 }
