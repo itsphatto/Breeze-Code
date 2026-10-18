@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('breeze', {
     branches: () => invoke('git:branches'),
     switchTo: (name, create, from) => invoke('git:switch', name, create, from),
     sync: op => invoke('git:sync', op),
+    deleteBranch: name => invoke('git:deleteBranch', name), 
   },
   auth: {
     user: () => invoke('auth:user'),

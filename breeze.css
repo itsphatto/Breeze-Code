@@ -879,3 +879,34 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .drop-over { outline: 2px dashed var(--blue); outline-offset: -3px; }
 /*drag and drop file*/
 .tree-item.drop-over { background: var(--blue-soft); }
+
+/* Hold-to-delete branch button */
+.br-del { position: relative;
+    margin-left: auto;
+    align-self: center;
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    place-content: center;
+    border: 1px solid transparent;
+    border-radius: 6px; background: none;
+    color: var(--text-3); overflow: hidden;
+    opacity: .5;
+    touch-action: none;
+    user-select: none; 
+  }
+     
+.qo-item:hover .br-del, .br-del:focus-visible, .br-del.holding { opacity: 1; }
+.br-del:hover { color: var(--err); background: rgba(239,68,68,.1); }
+.br-del::before { content: ""; position: absolute; inset: 0; background: rgba(239,68,68,.5); transform: scaleY(0); transform-origin: bottom; }
+.br-del.holding { color: #fff; border-color: var(--err); }
+.br-del.holding::before { animation: holdFill 5s linear forwards; }
+.br-del .ico-svg { 
+  position: relative;
+  display:block;
+ }
+.qo-item:has(.br-del.holding) { transform: none; } /* no row shrink while holding */
+@keyframes holdFill { to { transform: scaleY(1); } }
