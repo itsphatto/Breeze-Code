@@ -1822,6 +1822,7 @@ function restoreBuffer(b: Buffer, s: Session, dirty: Record<string, string>): vo
 async function loadWorkspace(info: RootInfo): Promise<void> {
   if (rootInfo) { flushSession(); resetWorkspace(); }
   rootInfo = info;
+  background(loadNpmScripts());
   $('#projectName').textContent = info.name;
   $('#projectName').title = info.root;
   document.title = `${info.name} — Breeze Code`;
@@ -3426,6 +3427,7 @@ const SUBCOMMANDS: Record<string, string[]> = {
 // The project's npm scripts, so `npm s` hints `npm start` and `npm run b` hints `npm run build`.
 let npmScripts: string[] = [];
 async function loadNpmScripts(): Promise<void> {
+  if (!rootInfo) { npmScripts = []; return; }
   const r = await api.fs.readFile('package.json').catch(() => null);
   try { npmScripts = Object.keys(JSON.parse(r?.text ?? '{}').scripts ?? {}); } catch { npmScripts = []; }
 }
