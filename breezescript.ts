@@ -96,6 +96,7 @@ interface BreezeApi {
     branches(): Promise<string[]>;
     switchTo(name: string, create: boolean, from?: string): Promise<unknown>;
     sync(op: 'fetch' | 'pull' | 'push'): Promise<unknown>;
+    deleteBranch(name: string): Promise<unknown>;
   };
   auth: {
     user(): Promise<User | null>;
@@ -435,6 +436,7 @@ function demoApi(): BreezeApi {
       async commit() { throw new Error('Checkpoints are saved with git in the desktop app.'); },
       async branches() { return ['main', 'try-dark-menu']; },
       async switchTo() { throw new Error('Switching branches works in the desktop app.'); },
+      async deleteBranch() { throw new Error('Deleting branches works in the desktop app.'); },
       async sync() { throw new Error('Push and pull work in the desktop app.'); },
     },
     auth: {
@@ -550,6 +552,7 @@ const LINE_ICONS: Record<string, IconNode> = {
   copy: [['rect', { x: 8, y: 8, width: 14, height: 14, rx: 2 }], ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]],
   download: [['path', { d: 'M12 15V3' }], ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['path', { d: 'm7 10 5 5 5-5' }]],
   circleDot: [['circle', { cx: 12, cy: 12, r: 9 }], ['circle', { cx: 12, cy: 12, r: 3, fill: 'currentColor' }]],
+  trash: [['path', { d: 'M3 6h18' }], ['path', { d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' }], ['path', { d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' }], ['path', { d: 'M10 11v6' }], ['path', { d: 'M14 11v6' }]],
 };
 const iconBody = (name: string): string =>
   (LINE_ICONS[name] ?? LINE_ICONS.dot).map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`).join('');
@@ -4811,12 +4814,44 @@ async function newBranch(from?: string): Promise<void> {
 }
 function branchListHtml(branches: string[], q: string): string {
   const create = q && !branches.includes(q) ? `<div class="qo-item" data-new="1"><span>＋ Create branch “${esc(q)}”</span></div>` : '';
+
   const rows = branches.filter(b => b.toLowerCase().includes(q.toLowerCase())).map(b => {
-    const current = b === gitState.branch;
-    return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>${svgIcon('gitBranch', 14)} ${esc(b)}</span>${current ? '<small>current</small>' : ''}</div>`;
+
+  const current = b === gitState.branch;
+  const del = current ? '' : `<button class="br-del" data-del="${escAttr(b)}" title="Hold for 5 seconds to delete" aria-label="Hold for 5 seconds to delete ${escAttr(b)}">${svgIcon('trash', 14)}</button>`;
+  return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>${svgIcon('gitBranch', 14)} ${esc(b)}</span>${current ? '<small>current</small>' : ''}${del}</div>`;
   });
+
   return create + rows.join('');
 }
+
+
+const HOLD_MS =5000;//hold time duration
+// Fires onDone only if the button is held for the full 5 seconds; releasing, leaving the button or losing focus cancels.
+function holdToDelete(btn: HTMLElement, onDone: () => void): void {
+  let timer: number | undefined;
+  const stop = (early: boolean) => {
+    if (timer == null) return;
+    clearTimeout(timer); timer = undefined;
+    btn.classList.remove('holding');
+    if (early) toast('Keep holding for 5 seconds to delete');
+  };
+  const start = () => {
+    if (timer != null) return;
+    btn.classList.add('holding');
+    timer = setTimeout(() => { timer = undefined; btn.classList.remove('holding'); if (btn.isConnected) onDone(); }, HOLD_MS);
+  };
+  btn.onpointerdown = e => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); btn.setPointerCapture(e.pointerId); start(); };
+  btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
+  btn.onpointerup = () => stop(true);
+  btn.onpointercancel = () => stop(false);
+  btn.onblur = () => stop(false);
+  btn.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (!e.repeat) start(); } };
+  btn.onkeyup = () => stop(true);
+  btn.onclick = e => e.stopPropagation(); // never let it count as picking the row
+}
+
+
 async function pickBranch(): Promise<void> {
   if (!gitState.repo) { showView('git', true); return; }
   const branches = await api.git.branches().catch(() => [] as string[]);
@@ -4828,10 +4863,18 @@ async function pickBranch(): Promise<void> {
       const msg = create ? `Switched to new branch ${name}` : `Switched to ${name}`;
       if (create || name !== gitState.branch) void gitOp(() => api.git.switchTo(name, create), msg);
     };
+    const remove = async (name: string) => {
+      if (!(await gitOp(() => api.git.deleteBranch(name), `Deleted branch ${name}`))) return;
+      const i = branches.indexOf(name);
+      if (i >= 0) branches.splice(i, 1);
+      render();
+    };
+
     const render = () => {
       const q = input.value.trim();
       $('#brList', m).innerHTML = branchListHtml(branches, q);
       $$('[data-br]', m).forEach(el => el.onclick = () => switchTo(el.dataset.br as string, false));
+      $$('[data-del]', m).forEach(btn => holdToDelete(btn, () => void remove(btn.dataset.del as string)));
       $('[data-new]', m)?.addEventListener('click', () => switchTo(q, true));
     };
     input.oninput = render;

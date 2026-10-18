@@ -1281,6 +1281,15 @@ handle('git:switch', async (_e, name, create, from) => {
   if (from && !HASH.test(from)) throw new Error('Bad commit id');
   return git(create ? ['switch', '-c', name, ...(from ? [from] : [])] : ['switch', name]);
 });
+
+handle('git:deleteBranch', async (_e, name) => {
+  const names = (await git(['branch', '--format=%(refname:short)'])).split('\n').map(s => s.trim()).filter(Boolean);
+  if (!names.includes(String(name))) throw new Error('That branch no longer exists');
+  const current = (await git(['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')).trim();
+  if (name === current) throw new Error("You can't delete the branch you're on. Switch to another branch first.");
+  return git(['branch', '-D', '--', name]);
+});
+
 handle('git:sync', async (_e, op) => {
   const opts = { timeout: 120000 };
   if (op === 'fetch') return git(['fetch', '--all', '--prune'], opts);
