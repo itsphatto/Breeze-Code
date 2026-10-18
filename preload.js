@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld('breeze', {
     detect: () => invoke('sys:detect'),
     openExternal: url => invoke('sys:openExternal', url),
   },
+  live: {
+    status: () => invoke('live:status'),
+    start: () => invoke('live:start'),
+  },
   llm: {
     connect: (url, key) => invoke('llm:connect', url, key),
     setModel: model => invoke('llm:setModel', model),

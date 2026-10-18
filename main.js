@@ -22,6 +22,8 @@ const MAX_SEARCH_RESULTS = 500;
 let win = null;
 let root = null;          // absolute path of the open project folder
 let watcher = null;
+let liveServer = null;
+const liveClients = new Set();
 let termCwd = os.homedir();
 const terms = new Map();  // id -> child process
 
@@ -31,7 +33,7 @@ const logError = where => err => {
 };
 // Opens an https link in the user's browser.
 function openInBrowser(url) {
-  if (typeof url === 'string' && url.startsWith('https://')) shell.openExternal(url).catch(logError('openExternal'));
+  if (typeof url === 'string' && (/^https:\/\//.test(url) || url === LIVE_URL)) shell.openExternal(url).catch(logError('openExternal'));
 }
 
 /* ================= Persisted main-process state ================= */
@@ -93,7 +95,7 @@ function createWindow() {
   // A reload or crash drops the renderer's terminal state, so nothing may keep running for it.
   win.webContents.on('did-start-navigation', (_e, _url, _inPlace, isMainFrame) => { if (isMainFrame) killAllTerms(); });
   win.webContents.on('render-process-gone', killAllTerms);
-  win.on('closed', () => { win = null; vibeView = null; stopWatching(); killAllTerms(); });
+  win.on('closed', () => { win = null; vibeView = null; stopWatching(); stopLiveServer(); killAllTerms(); });
 }
 
 // The preview iframe is sandboxed (an opaque origin), and Chromium won't let an opaque origin load file://
@@ -148,6 +150,7 @@ function boxDir() {
 async function setRoot(dir) {
   const st = await fsp.stat(dir);
   if (!st.isDirectory()) throw new Error('Not a folder');
+  if (root !== dir) stopLiveServer();
   root = dir;
   termCwd = dir;
   const recent = [dir, ...(loadState().recent || []).filter(r => r !== dir)].slice(0, 10);
@@ -169,7 +172,9 @@ function startWatching() {
       pending.add(rel);
       clearTimeout(timer);
       timer = setTimeout(() => {
-        win?.webContents.send('fs:changed', [...pending]);
+        const changed = [...pending];
+        win?.webContents.send('fs:changed', changed);
+        notifyLiveClients(changed);
         pending = new Set();
       }, 250);
     });
@@ -177,6 +182,79 @@ function startWatching() {
   } catch { watcher = null; } // some file systems can't be watched; Refresh still works
 }
 function stopWatching() { watcher?.close(); watcher = null; }
+
+/* ================= Live Share ================= */
+// A deliberately small local-only static server. Files are read on each request, so browser refreshes
+// always see the current on-disk project state; connected pages receive a reload event after edits.
+const LIVE_PORT = 2001;
+const LIVE_URL = `http://127.0.0.1:${LIVE_PORT}/`;
+const LIVE_RELOAD_PATH = '/__breeze_live_reload';
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.wasm': 'application/wasm',
+};
+const liveReloadScript = `<script>(() => { const s = new EventSource('${LIVE_RELOAD_PATH}'); s.onmessage = () => location.reload(); })();</script>`;
+function notifyLiveClients(changed) {
+  if (!liveClients.size) return;
+  const body = `data: ${JSON.stringify({ changed })}\n\n`;
+  for (const res of liveClients) res.write(body);
+}
+function stopLiveServer() {
+  for (const res of liveClients) res.end();
+  liveClients.clear();
+  if (liveServer) liveServer.close();
+  liveServer = null;
+}
+async function hasLiveIndex() {
+  if (!root) return false;
+  try { return (await fsp.stat(resolveIn('index.html'))).isFile(); } catch { return false; }
+}
+async function serveLive(req, res) {
+  try {
+    const parsed = new URL(req.url || '/', LIVE_URL);
+    if (parsed.pathname === LIVE_RELOAD_PATH) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      res.write(': connected\n\n');
+      liveClients.add(res);
+      req.on('close', () => liveClients.delete(res));
+      return;
+    }
+    const decoded = decodeURIComponent(parsed.pathname);
+    const rel = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
+    const abs = resolveIn(rel);
+    const st = await fsp.stat(abs);
+    if (!st.isFile()) throw new Error('Not a file');
+    const type = MIME_TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream';
+    let body = await fsp.readFile(abs);
+    if (type.startsWith('text/html')) {
+      const html = body.toString('utf8');
+      body = Buffer.from(/<\/body\s*>/i.test(html) ? html.replace(/<\/body\s*>/i, `${liveReloadScript}</body>`) : html + liveReloadScript);
+    }
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+    res.end(body);
+  } catch {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Not found');
+  }
+}
+async function startLiveServer() {
+  if (!(await hasLiveIndex())) throw new Error('Live Share needs an index.html file in the project root');
+  if (!liveServer) {
+    liveServer = http.createServer((req, res) => { void serveLive(req, res); });
+    await new Promise((resolve, reject) => {
+      const fail = err => { liveServer?.off('listening', ready); liveServer = null; reject(err); };
+      const ready = () => { liveServer?.off('error', fail); resolve(); };
+      liveServer.once('error', fail);
+      liveServer.once('listening', ready);
+      liveServer.listen(LIVE_PORT, '127.0.0.1');
+    });
+  }
+  openInBrowser(LIVE_URL);
+  return { url: LIVE_URL, running: true };
+}
 
 /* ================= File system IPC ================= */
 // Folders first, then names A–Z.
@@ -214,7 +292,7 @@ handle('fs:restore', async () => {
 });
 
 handle('fs:closeFolder', () => {
-  root = null; stopWatching(); saveState({ lastRoot: null });
+  root = null; stopWatching(); stopLiveServer(); saveState({ lastRoot: null });
 });
 
 handle('fs:recent', () => (loadState().recent || []).map(p => ({ path: p, name: path.basename(p) })));
@@ -654,6 +732,8 @@ handle('sys:detect', async () => {
 
 /* ================= Window & shell IPC ================= */
 handle('sys:openExternal', (_e, url) => openInBrowser(url));
+handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: LIVE_URL }));
+handle('live:start', () => startLiveServer());
 handle('win:reload', () => win?.webContents.reload());
 handle('win:devtools', () => win?.webContents.toggleDevTools());
 handle('win:quit', () => app.quit());

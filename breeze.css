@@ -426,6 +426,7 @@ body.resizing-h .term-body { transition: none; }
 .sb { padding: 0 8px; height: 100%; display: flex; align-items: center; gap: 5px; border: none; background: none; color: inherit; font-size: inherit; }
 .sb:hover { background: var(--bg-3); color: var(--text); }
 .sb.armed { color: #7aa9ff; }
+.sb.live { color: #78dba9; }
 #sbProblems { color: #f87171; }
 .statusbar .spacer { flex: 1; }
 .dot-ok { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }

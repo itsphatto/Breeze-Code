@@ -38,6 +38,7 @@ interface DetectedTool { id: string; name: string; found: boolean; version: stri
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 interface Rect { x: number; y: number; width: number; height: number; }
 interface DiscordActivity { details?: string; state?: string; start?: number; }
+interface LiveStatus { available: boolean; running: boolean; url: string; }
 
 interface BreezeApi {
   fs: {
@@ -73,6 +74,7 @@ interface BreezeApi {
   };
   run: { file(rel: string): Promise<{ id?: number; error?: string }>; };
   sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; };
+  live: { status(): Promise<LiveStatus>; start(): Promise<LiveStatus>; };
   // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
   // An empty url makes the desktop app look for Ollama or LM Studio at their usual addresses.
   llm: { connect(url: string, key: string): Promise<{ url?: string; model: string; models: string[] }>; setModel(model: string): Promise<void>; disconnect(): Promise<void>; };
@@ -394,6 +396,14 @@ function demoApi(): BreezeApi {
         };
       },
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
+    },
+    live: {
+      async status() { return { available: files.has('index.html'), running: false, url: 'http://127.0.0.1:2001/' }; },
+      async start() {
+        if (!files.has('index.html')) throw new Error('Live Share needs an index.html file in the project root');
+        window.open('http://127.0.0.1:2001/', '_blank', 'noopener');
+        return { available: true, running: true, url: 'http://127.0.0.1:2001/' };
+      },
     },
     // Browser preview only: canned answers so every panel can be tried without the desktop app.
     llm: {
@@ -1691,6 +1701,23 @@ const locks: Record<string, AgentKey> = {};
 const added: Record<string, Set<number>> = {};
 let ctxPath: string | null = null;
 
+async function refreshLiveShare(): Promise<void> {
+  const button = $('#liveShare');
+  const status = await api.live.status().catch(() => null);
+  const show = !!rootInfo && !!status?.available;
+  button.classList.toggle('hidden', !show);
+  button.classList.toggle('live', !!status?.running);
+  button.title = status?.running ? `Live Share is running at ${status.url}` : 'Host index.html locally and open it in your browser';
+  $('span', button).textContent = status?.running ? 'Live Share: on' : 'Live Share';
+}
+$('#liveShare').onclick = () => background((async () => {
+  try {
+    const live = await api.live.start();
+    await refreshLiveShare();
+    toast(`Live Share opened at ${live.url}`);
+  } catch (e) { toast(errMsg(e)); }
+})());
+
 const sessionKey = () => `breeze.session:${rootInfo?.root ?? ''}`;
 const hotExitKey = () => `breeze.dirty:${rootInfo?.root ?? ''}`;
 const isDirty = (b?: Buffer) => !!b && b.kind === 'text' && b.text !== b.saved;
@@ -1816,6 +1843,7 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   renderTabs(); renderEditor(); renderTree();
   restoreChat(SURFACES.ide);
   renderBoxFolder();
+  void refreshLiveShare();
   void refreshGit();
   term.cwd = await api.term.cwd(); renderPs();
 }
@@ -1828,6 +1856,7 @@ function resetWorkspace(): void {
   document.title = 'Breeze Code';
   gitState = { repo: false }; gitLog = { head: null, commits: [] };
   renderScm(); renderBranch(); emptyChat();
+  void refreshLiveShare();
 }
 
 async function loadDir(rel: string): Promise<void> {
@@ -2158,6 +2187,7 @@ api.fs.onChange(paths => background((async () => {
     if (b.kind === 'image' && b.url?.startsWith('file:')) return reloadImage(b);
     return b.kind === 'text' && !isDirty(b) ? reloadText(b) : null;
   }));
+  if (paths.includes('index.html')) await refreshLiveShare();
 })()));
 
 /* ================= Opening, tabs & saving ================= */
