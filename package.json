@@ -13,17 +13,20 @@
     "dist": "tsc && electron-builder --win",
     "predist": "node scripts/write-config.js"
   },
+
   "devDependencies": {
     "electron": "^44.7.2",
     "electron-builder": "^26.15.3",
     "typescript": "^7.0.2"
   },
+
   "build": {
     "appId": "com.breeze.ide",
-    "productName": "Breeze Code",
+    "productName": "Breeze Code", 
     "directories": {
       "output": "dist"
     },
+    
     "files": [
       "main.js",
       "preload.js",
@@ -50,7 +53,9 @@
       "icon": "Icon.png"
     }
   },
+
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "morphicons": "^2.0.0"
   }
 }
