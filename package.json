@@ -1,7 +1,7 @@
 {
   "name": "breeze-code",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "A Light Weight Development Environment",
   "author": "itsphatto",
   "main": "main.js",
@@ -13,7 +13,6 @@
     "dist": "tsc && electron-builder --win",
     "predist": "node scripts/write-config.js"
   },
-
   "devDependencies": {
     "electron": "^44.7.2",
     "electron-builder": "^26.15.3",
@@ -23,10 +22,9 @@
     "type": "git",
     "url": "https://github.com/itsphatto/BreezeCode.git"
   },
-
   "build": {
     "appId": "com.breeze.ide",
-    "productName": "Breeze Code", 
+    "productName": "Breeze Code",
     "publish": [
       {
         "provider": "github",
@@ -38,7 +36,6 @@
     "directories": {
       "output": "dist"
     },
-    
     "files": [
       "main.js",
       "preload.js",
@@ -65,7 +62,6 @@
       "icon": "Icon.png"
     }
   },
-
   "dependencies": {
     "electron-updater": "^6.8.9",
     "morphicons": "^2.0.0"

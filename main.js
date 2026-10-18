@@ -82,9 +82,10 @@ function configureAutoUpdater() {
 
 
 
-// Keep Chromium's disposable caches out of the profile folder. On some Windows
-// setups that folder is protected or locked, which blocks cache creation.
-const SESSION_DATA = path.join(os.tmpdir(), 'Breeze Code', 'session-data');
+// Keep Chromium's cache in this app's own per-user data directory. The shared
+// temp directory can be locked by another process on Windows, which prevents
+// Chromium from creating its disk and GPU caches.
+const SESSION_DATA = path.join(app.getPath('userData'), 'session-data');
 fs.mkdirSync(SESSION_DATA, { recursive: true });
 app.setPath('sessionData', SESSION_DATA);
 
