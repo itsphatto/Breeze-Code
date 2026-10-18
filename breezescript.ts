@@ -398,11 +398,11 @@ function demoApi(): BreezeApi {
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
     },
     live: {
-      async status() { return { available: files.has('index.html'), running: false, url: 'http://127.0.0.1:2001/' }; },
+      async status() { return { available: files.has('index.html'), running: false, url: 'http://127.0.0.1:2026/' }; },
       async start() {
         if (!files.has('index.html')) throw new Error('Live Share needs an index.html file in the project root');
-        window.open('http://127.0.0.1:2001/', '_blank', 'noopener');
-        return { available: true, running: true, url: 'http://127.0.0.1:2001/' };
+        window.open('http://127.0.0.1:2026/', '_blank', 'noopener');
+        return { available: true, running: true, url: 'http://127.0.0.1:2026/' };
       },
     },
     // Browser preview only: canned answers so every panel can be tried without the desktop app.

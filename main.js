@@ -186,7 +186,7 @@ function stopWatching() { watcher?.close(); watcher = null; }
 /* ================= Live Share ================= */
 // A deliberately small local-only static server. Files are read on each request, so browser refreshes
 // always see the current on-disk project state; connected pages receive a reload event after edits.
-const LIVE_PORT = 2001;
+const LIVE_PORT = 2026;
 const LIVE_URL = `http://127.0.0.1:${LIVE_PORT}/`;
 const LIVE_RELOAD_PATH = '/__breeze_live_reload';
 const MIME_TYPES = {
