@@ -10,7 +10,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "test": "node --check main.js && node --check preload.js && node --test \"test/**/*.test.js\"",
-    "dist": "tsc && electron-builder --win",
+    "dist": "tsc && electron-builder --win --publish never",
     "predist": "node scripts/write-config.js"
   },
   "devDependencies": {
