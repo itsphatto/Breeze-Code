@@ -12,6 +12,9 @@ const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked } = require('./toolchains');
 const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
+const { autoUpdater } = require('electron-updater');
+
+
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'out', '.cache', '__pycache__', '.venv']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -26,6 +29,58 @@ let liveServer = null;
 const liveClients = new Set();
 let termCwd = os.homedir();
 const terms = new Map();  // id -> child process
+
+
+/* ================= Application updates ================= */
+// electron-builder writes app-update.yml from the `build.publish` configuration
+// in package.json. electron-updater reads that file in a packaged application.
+// Keep update checks out of development, where no update configuration exists.
+function configureAutoUpdater() {
+  if (!app.isPackaged) {
+    console.info('[updater] Skipping update check in development.');
+    return;
+  }
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('error', error => {
+    // An unavailable release or network issue must not prevent the IDE opening.
+    console.error('[updater] Update error:', error?.message || error);
+  });
+
+  autoUpdater.on('update-available', async info => {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update available',
+      message: `Breeze Code ${info.version} is available.`,
+      detail: 'Download the update now? You can keep using Breeze Code while it downloads.',
+      buttons: ['Download update', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) autoUpdater.downloadUpdate().catch(logError('update download'));
+  });
+
+  autoUpdater.on('update-downloaded', async info => {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'Update ready',
+      message: `Breeze Code ${info.version} has been downloaded.`,
+      detail: 'Restart now to install it, or install automatically when you close the app.',
+      buttons: ['Restart and install', 'Install on quit'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) autoUpdater.quitAndInstall(false, true);
+  });
+
+  autoUpdater.checkForUpdates().catch(logError('update check'));
+}
+
+
 
 // Keep Chromium's disposable caches out of the profile folder. On some Windows
 // setups that folder is protected or locked, which blocks cache creation.
@@ -132,6 +187,8 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+  configureAutoUpdater();
+
 }).catch(logError('startup'));
 
 app.on('window-all-closed', () => {
