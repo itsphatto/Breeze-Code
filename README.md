@@ -93,7 +93,7 @@ While an agent works, the IDE fades and an Instagram or Facebook feed plays. A n
 | **Discord** | Rich Presence shows what you're working on |
 | **Security** | API keys are encrypted with the OS keychain |
 
-## Getting started
+## Getting started (FOR DEVELOPER)
 
 Requires [Node.js](https://nodejs.org/) 20 or newer.
 
