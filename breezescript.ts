@@ -31,7 +31,7 @@ interface Diag { line: number; col: number; len: number; msg: string; }
 type SyntaxResult = { ok: true } | (Diag & { eof?: boolean }) | null;
 interface RootInfo { root: string; name: string; }
 interface SearchHit { path: string; line: number; col: number; text: string; }
-interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; mock?: boolean; models?: string[]; }
+interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
 interface Accounts { accounts: User[]; active: string | null; }
 interface Completion { text: string; dir: boolean; }
 interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; url?: string | null; }
@@ -388,7 +388,6 @@ function demoApi(): BreezeApi {
           demo: true, platform: 'browser',
           agents: [
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
-            { id: 'ubot', name: 'u.bot', vendor: 'Mock agent', url: '', mock: true, found: true, path: null, version: null },
             { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
@@ -515,7 +514,7 @@ const SOCIAL_SITES: SocialSite[] = [
 const BRAND_ICONS: Record<string, string> = {
   codex: 'codex.png',
   instagram: 'instagram.webp', facebook: 'facebook.png',
-  local: 'ollama.svg', ubot: 'ubot.svg',
+  local: 'ollama.svg',
 };
 // Logos that are a shape rather than a square tile; they show whole instead of clipped to the tile's corners.
 const BARE_ICONS = new Set(['facebook']);
@@ -828,7 +827,6 @@ async function toggleFeed(id: string): Promise<void> {
 const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
   codex: { letter: 'Cx', tint: 'codex' },
   local: { letter: 'L', tint: 'local' },
-  ubot: { letter: 'u', tint: 'ubot' },
 };
 let detecting: Promise<Detection> | null = null;
 
@@ -878,7 +876,7 @@ function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
 function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean): string {
   const where = a.path ?? (demo ? 'browser preview' : '');
   const version = a.version ? 'v' + a.version : 'Installed';
-  const sub = a.mock ? 'Mock agent · built in, changes nothing' : a.found ? [version, where].filter(Boolean).join(' · ') : a.vendor + ' · not installed';
+  const sub = a.found ? [version, where].filter(Boolean).join(' · ') : a.vendor + ' · not installed';
   const label = on ? 'Selected' : 'Detected';
   const side = a.found
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`

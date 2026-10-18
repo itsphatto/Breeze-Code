@@ -27,6 +27,12 @@ const liveClients = new Set();
 let termCwd = os.homedir();
 const terms = new Map();  // id -> child process
 
+// Keep Chromium's disposable caches out of the profile folder. On some Windows
+// setups that folder is protected or locked, which blocks cache creation.
+const SESSION_DATA = path.join(os.tmpdir(), 'Breeze Code', 'session-data');
+fs.mkdirSync(SESSION_DATA, { recursive: true });
+app.setPath('sessionData', SESSION_DATA);
+
 // Logs a failure from work nobody waits for. A page load that a redirect or reload replaced isn't one.
 const logError = where => err => {
   if (err?.code !== 'ERR_ABORTED') console.error(`[breeze] ${where}:`, err?.message ?? err);
@@ -717,8 +723,6 @@ handle('sys:detect', async () => {
   // A saved server may have been closed since: it only counts as found while it answers and still has the model.
   if (llm) llm = await llmReachable(llm).then(() => llm, () => null);
   agents.push({ id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [] });
-  // u.bot is a built-in mock agent: it needs nothing installed and only plays back a canned reply.
-  agents.push({ id: 'ubot', name: 'u.bot', vendor: 'Mock agent', url: '', mock: true, found: true, path: null, version: null });
   const tools = await Promise.all([['git', 'Git'], ['node', 'Node.js']].map(async ([cmd, name]) => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
@@ -898,7 +902,6 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
   const run = { child: null, abort: null, stopped: false };
   runs.set(runId, run);
   if (agent === 'local') return runLocal(runId, run, { mode, prompt, session, base });
-  if (agent === 'ubot') return runMock(runId, run, { mode, prompt });
   const bin = agentBins.get(agent);
   if (!bin) throw new Error('That agent was not found on this computer. Rescan from Settings → Run Setup Again.');
   const launch = () => {
@@ -995,29 +998,6 @@ function codexEvent(runId, d, ctx, mode) {
     if (mode === 'plan' && ctx.lastText) emit(runId, { t: 'plan', text: ctx.lastText });
     emit(runId, { t: 'done', ok: true, tokens: (d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0) });
   }
-}
-
-// u.bot: a mock agent. It reads nothing and changes nothing; it plays a short scripted run so the whole chat flow can be tried.
-async function runMock(runId, run, { mode, prompt }) {
-  const pause = ms => new Promise(r => setTimeout(r, ms));
-  const said = String(prompt).replace(/\s+/g, ' ').trim().slice(0, 120);
-  const steps = [
-    [{ t: 'session', id: `ubot-${runId}`, model: 'mock' }, 150],
-    [{ t: 'tool', kind: 'read', label: 'Looked around the project (mock)' }, 700],
-  ];
-  if (mode === 'plan') {
-    steps.push([{ t: 'text', text: `u.bot here. You asked: "${said}"` }, 600], [{ t: 'plan', text: '1. Look at the files involved\n2. Make the change\n3. Check that it still runs\n\n(Mock plan: u.bot is a stand-in agent.)' }, 500]);
-  } else {
-    steps.push([{ t: 'text', text: `u.bot here. You asked: "${said}"\n\nI'm a mock agent, so I didn't change anything.` }, 800]);
-  }
-  steps.push([{ t: 'done', ok: true, ms: 1500, tokens: 0 }, 300]);
-  const started = Date.now();
-  for (const [ev, ms] of steps) {
-    await pause(ms);
-    if (run.stopped) { runs.delete(runId); emit(runId, { t: 'done', ok: false, stopped: true }); return; }
-    emit(runId, ev.t === 'done' ? { ...ev, ms: Date.now() - started } : ev);
-  }
-  runs.delete(runId);
 }
 
 /* ----- Local LLM agent loop (OpenAI-style function calling over the project folder) ----- */
