@@ -6,6 +6,7 @@
     "strict": true,
     "noEmitOnError": true,
     "removeComments": false,
+    "types": [],
     "outDir": "."
   },
   "files": ["breezescript.ts"]

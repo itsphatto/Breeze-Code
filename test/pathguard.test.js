@@ -100,5 +100,5 @@ test('isPageUrl matches only the app page', () => {
 
 test('main.js checks every navigation of the window against breeze.html', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-  assert.match(src, /win\.webContents\.on\('will-navigate', \(e, url\) => \{\s*if \(!isPageUrl\(url, APP_PAGE\)\) e\.preventDefault\(\);/);
+  assert.match(src, /win\.webContents\.on\('will-navigate', \(e, url\) => \{\s*if \(!isFileUrl\(url, APP_PAGE\)\) e\.preventDefault\(\);/);
 });

@@ -4,8 +4,11 @@
    Agent conversations, checkpoints and collaboration are still simulated. */
 
 /* ================= Types ================= */
+type TimeoutId = ReturnType<typeof setTimeout>;
+type IntervalId = ReturnType<typeof setInterval>;
 type AgentKey = 'assistant' | 'planner' | 'builder';
 type AgentStatus = 'idle' | 'working' | 'waiting' | 'done';
+
 
 interface Agent {
   name: string;
@@ -34,7 +37,7 @@ interface SearchHit { path: string; line: number; col: number; text: string; }
 interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
 interface Accounts { accounts: User[]; active: string | null; }
 interface Completion { text: string; dir: boolean; }
-interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; url?: string | null; }
+interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; cmd?: string | null; url?: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
 interface Rect { x: number; y: number; width: number; height: number; }
 interface DiscordActivity { details?: string; state?: string; start?: number; }
@@ -73,7 +76,7 @@ interface BreezeApi {
     onExit(cb: (id: number, code: number | null) => void): () => void;
   };
   run: { file(rel: string): Promise<{ id?: number; error?: string }>; };
-  sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; };
+  sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; runCommand(cmd: string): Promise<boolean>; };
   live: { status(): Promise<LiveStatus>; start(): Promise<LiveStatus>; };
   // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
   // An empty url makes the desktop app look for Ollama or LM Studio at their usual addresses.
@@ -82,7 +85,9 @@ interface BreezeApi {
   discord: { set(activity: DiscordActivity): Promise<{ user: string | null }>; clear(): Promise<void>; };
   agent: {
     run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null; box?: boolean }): Promise<number>;
+
     stop(runId: number): Promise<void>;
+    setModel(agent: string, model: string): Promise<boolean>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
   };
   git: {
@@ -289,7 +294,11 @@ function demoApi(): BreezeApi {
         const dot = name.lastIndexOf('.');
         const stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
         let rel = joinPath(dir, name);
-        for (let n = 1; exists(rel); n++) rel = joinPath(dir, `${stem} (${n})${ext}`);
+        let n = 1;
+        while (exists(rel)) {
+          rel = joinPath(dir, `${stem} (${n})${ext}`);
+          n++;
+        }
         for (let d = dirName(rel); d; d = dirName(d)) dirs.add(d);
         files.set(rel, new TextDecoder().decode(data));
         return rel;
@@ -395,6 +404,7 @@ function demoApi(): BreezeApi {
         };
       },
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
+      async runCommand(cmd) { window.open('https://www.google.com/search?q=' + encodeURIComponent(cmd)); return true; },
     },
     live: {
       async status() {
@@ -426,6 +436,7 @@ function demoApi(): BreezeApi {
         return id;
       },
       async stop() { /* demo runs finish on their own */ },
+      async setModel() { return true; },
       onEvent(cb) { agentListeners.push(cb); return () => {}; },
     },
     git: {
@@ -704,7 +715,7 @@ for (const id of ['#avatars', '#boxAvatar']) {
 // The onboarding step and the "Add account" dialog share this panel; signinRoot is the one in use.
 const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
     <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
-    <button class="btn" data-signin="Google"><svg width="18" height="18"><use href="#i-google"/></svg>Continue with Google</button>
+    <button class="btn" data-signin="Google"><img src="assets/icons/Google.png" width="18" height="18" alt="Google">Continue with Google</button>
     <p class="signin-error hidden" data-si="error" role="alert"></p>
   </div>
   <div class="waiting hidden" data-si="wait">
@@ -887,9 +898,12 @@ function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`
     : `<button class="get side" data-get="${escAttr(a.url)}">Get it ${svgIcon('external', 12)}</button>`;
   const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
+  const modelOptions = (a.found && a.models && a.models.length)
+    ? `<div class="key-row"><select class="select" data-agent-model="${a.id}" aria-label="Model">${a.models.map(m => `<option value="${escAttr(m)}"${m === a.version ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>`
+    : '';
   return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
     ${mark}<span class="nm">${esc(a.name)}</span>${side}
-    <span class="sub" title="${escAttr(sub)}">${esc(sub)}</span></div>`;
+    <span class="sub" title="${escAttr(sub)}">${esc(sub)}</span>${modelOptions}</div>`;
 }
 function agentOptionsHtml(d: Detection): string {
   return d.agents.map(a => {
@@ -944,6 +958,22 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
     el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input, select')) pick(); };
     el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); pick(); } };
   });
+  
+  $$('[data-agent-model]', root).forEach(sel => {
+    (sel as HTMLSelectElement).onchange = async () => {
+      const agId = (sel as HTMLElement).dataset.agentModel;
+      const modelVal = (sel as HTMLSelectElement).value;
+      const targetAgent = appState.detect?.agents.find(a => a.id === agId);
+      if (agId === 'codex') {
+        await api.agent.setModel('codex', modelVal);
+        if (targetAgent) targetAgent.version = modelVal;
+        saveApp();
+        renderAgentPill();
+        toast(`Codex model · ${modelVal}`);
+      }
+    };
+  });
+  
   $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
   bindLocalLlm(root, onChange);
 }
@@ -951,8 +981,11 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
 const TOOL_DOWNLOADS: Record<string, string> = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
 function toolHtml(t: DetectedTool): string {
   if (!t.found && t.optional) {
+    const cmd = t.cmd || (t.hint && /^(?:winget|brew|xcode-select)\b/.test(t.hint) ? t.hint : null);
+    const runBtn = cmd ? `<button class="btn btn-sm btn-primary" data-run-cmd="${escAttr(cmd)}" title="Run command in terminal">Run ▷</button>` : '';
     const get = t.url ? `<button class="btn btn-sm" data-get="${escAttr(t.url)}">Get ${t.name} ${svgIcon('external', 12)}</button>` : '';
-    return `<span class="pill">${t.name} not found</span>${t.hint ? `<code class="tool-hint" style="user-select:text;font-size:12px;color:var(--text-dim,inherit)">${esc(t.hint)}</code>` : ''}${get}`;
+    const hintHtml = t.hint ? `<span class="tool-hint-block"><code class="tool-hint-cmd">${esc(t.hint)}</code>${runBtn}${get}</span>` : get;
+    return `<span class="pill">${t.name} not found</span>${hintHtml}`;
   }
   if (!t.found) return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ${svgIcon('external', 12)}</button>`;
   const version = t.version ? ' ' + esc(t.version) : '';
@@ -973,6 +1006,26 @@ function renderDetection(): void {
 
   $('#toolList').innerHTML = d.tools.map(toolHtml).join('');
   $$('[data-get]', $('#toolList')).forEach(b => b.onclick = () => background(api.sys.openExternal(b.dataset.get ?? '')));
+  $$('[data-run-cmd]', $('#toolList')).forEach(b => {
+    b.onclick = async () => {
+      const cmd = b.dataset.runCmd;
+      if (!cmd) return;
+      b.classList.add('busy');
+      const prev = b.textContent;
+      b.textContent = 'Running…';
+      try {
+        await api.sys.runCommand(cmd);
+        toast(`Launched terminal command: ${cmd}`);
+      } catch (err) {
+        toast(`Failed to run command: ${errMsg(err)}`);
+      } finally {
+        setTimeout(() => {
+          b.classList.remove('busy');
+          b.textContent = prev;
+        }, 2000);
+      }
+    };
+  });
   const missing = d.tools.filter(t => !t.found && !t.optional).map(t => t.name);
   $('#toolsPill').className = missing.length ? 'pill warn' : 'pill ok';
   $('#toolsPill').textContent = missing.length ? `${missing.join(' & ')} missing` : 'Ready';
@@ -990,6 +1043,95 @@ function modelLabel(a: DetectedAgent | null): string {
   if (!a) return 'no agent';
   return a.api && a.version ? a.version : a.name;
 }
+
+function updateComposerModelSelect(a: DetectedAgent | null): void {
+  const sel = $('#agentModelSelect') as HTMLSelectElement | null;
+  if (!sel) return;
+  const btn = sel.nextElementSibling?.classList.contains('dd-btn') ? (sel.nextElementSibling as HTMLElement) : null;
+  if (!a || !a.found || !a.models || !a.models.length) {
+    sel.classList.add('hidden');
+    if (btn) btn.classList.add('hidden');
+    sel.innerHTML = '';
+    return;
+  }
+  sel.classList.remove('hidden');
+  if (btn) btn.classList.remove('hidden');
+  const current = a.version || a.models[0];
+  sel.innerHTML = a.models.map(m => `<option value="${escAttr(m)}"${m === current ? ' selected' : ''}>${esc(m)}</option>`).join('');
+  sel.value = current;
+  if (btn) {
+    btn.innerHTML = `<span class="dd-val">${esc(current)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+  }
+  sel.onchange = async () => {
+    const chosen = sel.value;
+    if (btn) {
+      btn.innerHTML = `<span class="dd-val">${esc(chosen)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    }
+    if (a.id === 'codex') {
+      await api.agent.setModel('codex', chosen);
+      a.version = chosen;
+      saveApp();
+      renderAgentPill();
+      toast(`Codex model set to ${chosen}`);
+    } else if (a.api) {
+      await api.llm.setModel(chosen);
+      a.version = chosen;
+      saveApp();
+      renderAgentPill();
+      toast(`Local LLM model set to ${chosen}`);
+    }
+  };
+}
+function agentPillMenuItems(): MenuItem[] {
+  const a = selectedAgent();
+  const items: MenuItem[] = [];
+  if (a && a.found && a.models && a.models.length) {
+    items.push({ label: `${a.name} Models:`, enabled: () => false });
+    for (const m of a.models) {
+      items.push({
+        label: m,
+        checked: () => (a.version || a.models?.[0]) === m,
+        run: () => {
+          if (a.id === 'codex') {
+            background(api.agent.setModel('codex', m).then(() => {
+              a.version = m;
+              saveApp();
+              renderAgentPill();
+              toast(`Codex model set to ${m}`);
+            }));
+          } else if (a.api) {
+            background(api.llm.setModel(m).then(() => {
+              a.version = m;
+              saveApp();
+              renderAgentPill();
+              toast(`Local LLM model set to ${m}`);
+            }));
+          }
+        }
+      });
+    }
+    items.push({ sep: true });
+  }
+  items.push({ label: 'Switch Agent:', enabled: () => false });
+  for (const ag of appState.detect?.agents ?? []) {
+    items.push({
+      label: ag.name,
+      checked: () => ag.id === appState.agent,
+      enabled: () => ag.found,
+      run: () => {
+        appState.agent = ag.id;
+        saveApp();
+        renderAgentPill();
+        toast(`Active agent: ${ag.name}`);
+      }
+    });
+  }
+  items.push({ sep: true });
+  items.push({ label: 'Manage agents…', run: openAgentPicker });
+  return items;
+}
+
+
 function renderAgentPill(): void {
   const a = selectedAgent();
   $('#agentPill').textContent = a ? a.name : 'Choose an agent';
@@ -997,8 +1139,14 @@ function renderAgentPill(): void {
   $('#boxModel').innerHTML = `${esc(a ? `${a.name}${model}` : 'Choose an agent')}${svgIcon('chevronDown', 12)}`;
   for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
+  updateComposerModelSelect(a);
 }
-$('#agentPill').onclick = openAgentPicker;
+
+$('#agentPill').onclick = e => {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  popupMenu(r.left, r.bottom + 4, agentPillMenuItems());
+};
+
 function openAgentPicker(): void {
   openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. A local LLM connects by its server address.</p>
     <div class="agent-list" id="pickList"></div>
@@ -1041,26 +1189,43 @@ $('#startBuilding').onclick = () => {
   enterMode(appState.mode);
 };
 // Switching between the onboarding, the IDE and Breeze Box: the old screen fades back, the new one rises in.
-let swapTimer: number | undefined;
+let swapTimer: TimeoutId | undefined;
 let booted = false;
 function swapScreen(to: string): void {
   const next = $(to);
   const screens = ['#onboard', '#ide', '#box'].map(id => $(id));
   // At launch the remembered screen just appears; the animation is for switching.
-  if (!booted) { for (const el of screens) el.classList.toggle('hidden', el !== next); return; }
+  if (!booted) {
+    for (const el of screens) {
+      el.classList.toggle('hidden', el !== next);
+    }
+    return;
+  }
+  
   const prev = screens.find(el => el !== next && !el.classList.contains('hidden') && !el.classList.contains('screen-out'));
   clearTimeout(swapTimer);
-  for (const el of screens) if (el !== next && el !== prev) { el.classList.remove('screen-out'); el.classList.add('hidden'); }
+  
+  for (const el of screens) {
+    if (el !== next && el !== prev) {
+      el.classList.remove('screen-out');
+      el.classList.add('hidden');
+    }
+  }
+  
   if (!next.classList.contains('hidden') && !next.classList.contains('screen-out')) return; // already showing
   next.classList.remove('hidden', 'screen-out', 'screen-in');
-  void next.offsetWidth; // restart the entrance animation
+  const _ = next.offsetWidth; // restart the entrance animation
   next.classList.add('screen-in');
   next.addEventListener('animationend', () => next.classList.remove('screen-in'), { once: true });
   queueDiscord();
   if (!prev) return;
   prev.classList.add('screen-out');
-  swapTimer = setTimeout(() => { prev.classList.remove('screen-out'); prev.classList.add('hidden'); }, 260);
+  swapTimer = setTimeout(() => {
+    prev.classList.remove('screen-out');
+    prev.classList.add('hidden');
+  }, 260);
 }
+
 function showIde(): void {
   swapScreen('#ide');
   useSurface('ide');
@@ -1673,7 +1838,7 @@ const CHEV = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stro
 
 /* ================= Workspace ================= */
 interface Snapshot { text: string; sel: [number, number]; }
-interface Buffer {
+interface EditorBuffer {
   path: string;
   kind: 'text' | 'binary' | 'large' | 'image';
   text: string;
@@ -1686,7 +1851,7 @@ interface Buffer {
   diagLines?: number;    // line count the errors were found at (they're hidden while it differs)
   runDiags?: Diag[];     // the entries of `diags` that came from the last failed run (cleared by the next run or lint)
   lintSeq?: number;
-  lintTimer?: number;
+  lintTimer?: TimeoutId;
   undo: Snapshot[];      // the editor keeps its own history (see "Undo & redo")
   redo: Snapshot[];
   lastEdit: { kind: string; at: number } | null;
@@ -1696,8 +1861,10 @@ interface Session { tabs: string[]; active: string | null; expanded: string[]; p
 let rootInfo: RootInfo | null = null;
 const dirCache = new Map<string, DirEntry[]>();
 const expanded = new Set<string>();
-const buffers = new Map<string, Buffer>();
-const textareaOwner = new WeakMap<HTMLTextAreaElement, Buffer>();
+const buffers = new Map<string, EditorBuffer>();
+const textareaOwner = new WeakMap<HTMLTextAreaElement, EditorBuffer>();
+const isDirty = (b?: EditorBuffer) => !!b && b.kind === 'text' && b.text !== b.saved;
+let sessionTimer: TimeoutId | undefined;
 let openTabs: string[] = [];
 let active: string | null = null;
 const locks: Record<string, AgentKey> = {};
@@ -1723,8 +1890,7 @@ $('#liveShare').onclick = () => background((async () => {
 
 const sessionKey = () => `breeze.session:${rootInfo?.root ?? ''}`;
 const hotExitKey = () => `breeze.dirty:${rootInfo?.root ?? ''}`;
-const isDirty = (b?: Buffer) => !!b && b.kind === 'text' && b.text !== b.saved;
-let sessionTimer: number | undefined;
+
 function saveSession(): void {
   if (!rootInfo) return;
   clearTimeout(sessionTimer);
@@ -1834,7 +2000,7 @@ document.addEventListener('drop', e => {
 });
 
 // Puts back a tab's unsaved text and caret from the last session.
-function restoreBuffer(b: Buffer, s: Session, dirty: Record<string, string>): void {
+function restoreBuffer(b: EditorBuffer, s: Session, dirty: Record<string, string>): void {
   if (b.kind === 'text' && dirty[b.path] != null) { b.text = dirty[b.path]; if (b.ta) b.ta.value = b.text; }
   const pos = s.pos[b.path];
   if (b.ta && pos) { b.ta.setSelectionRange(pos[0], pos[0]); b.ta.scrollTop = pos[1]; }
@@ -1883,18 +2049,18 @@ async function loadDir(rel: string): Promise<void> {
   catch { dirCache.delete(rel); expanded.delete(rel); } // gone or unreadable: show it collapsed
 }
 
-function kindOf(r: FileRead): Buffer['kind'] {
+function kindOf(r: FileRead): EditorBuffer['kind'] {
   if (r.image) return 'image';
   if (r.binary) return 'binary';
   return r.tooLarge ? 'large' : 'text';
 }
-async function loadBuffer(path: string): Promise<Buffer | null> {
+async function loadBuffer(path: string): Promise<EditorBuffer | null> {
   const existing = buffers.get(path);
   if (existing) return existing;
   let r: FileRead;
   try { r = await api.fs.readFile(path); } catch (e) { toast(`Couldn't open ${baseName(path)}: ${errMsg(e)}`); return null; }
   const raw = r.text ?? '';
-  const b: Buffer = {
+  const b: EditorBuffer = {
     path, size: r.size, kind: kindOf(r),
     eol: raw.includes('\r\n') ? '\r\n' : '\n',
     text: raw.replaceAll('\r\n', '\n'), saved: '', ta: null,
@@ -1908,7 +2074,7 @@ async function loadBuffer(path: string): Promise<Buffer | null> {
 }
 
 /* ----- Syntax errors for a buffer ----- */
-function scheduleLint(b: Buffer, delay = 450): void {
+function scheduleLint(b: EditorBuffer, delay = 450): void {
   clearTimeout(b.lintTimer);
   b.lintTimer = setTimeout(() => void lintBuffer(b), delay);
 }
@@ -1920,7 +2086,7 @@ function mergeSyntax(diags: Diag[], r: SyntaxResult): Diag[] {
   if (diags.length && (r.eof || diags.some(d => d.line === r.line))) return diags;
   return [...diags, { line: r.line, col: r.col, len: r.len, msg: r.msg }].sort((x, y) => x.line - y.line);
 }
-async function lintBuffer(b: Buffer): Promise<void> {
+async function lintBuffer(b: EditorBuffer): Promise<void> {
   if (b.kind !== 'text' || buffers.get(b.path) !== b) return;
   const seq = b.lintSeq = (b.lintSeq ?? 0) + 1;
   const text = b.text, ext = extOf(b.path);
@@ -1941,7 +2107,7 @@ async function lintBuffer(b: Buffer): Promise<void> {
 }
 
 // Each open file keeps its own textarea (and history) across tab switches.
-function createTextarea(b: Buffer): HTMLTextAreaElement {
+function createTextarea(b: EditorBuffer): HTMLTextAreaElement {
   const ta = document.createElement('textarea');
   ta.className = 'ta hidden';
   ta.spellcheck = false;
@@ -1975,7 +2141,7 @@ function createTextarea(b: Buffer): HTMLTextAreaElement {
 // The editor records its own history, so edits made by commands (indent, comment, move line…) undo
 // exactly like typing. Typing groups into words; a pause of a second starts a new step.
 const GROUPED = new Set(['type', 'deleteContentBackward', 'deleteContentForward']);
-function remember(b: Buffer, kind: string): void {
+function remember(b: EditorBuffer, kind: string): void {
   const ta = b.ta;
   if (!ta) return;
   const now = Date.now();
@@ -1986,7 +2152,7 @@ function remember(b: Buffer, kind: string): void {
   if (b.undo.length > 500) b.undo.shift();
   b.redo = [];
 }
-function beforeEdit(b: Buffer, e: InputEvent): void {
+function beforeEdit(b: EditorBuffer, e: InputEvent): void {
   if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
     e.preventDefault();
     stepHistory(b, e.inputType === 'historyUndo');
@@ -1995,7 +2161,7 @@ function beforeEdit(b: Buffer, e: InputEvent): void {
   const word = e.inputType === 'insertText' && !!e.data && !/\s/.test(e.data);
   remember(b, word ? 'type' : e.inputType);
 }
-function stepHistory(b: Buffer, back: boolean): void {
+function stepHistory(b: EditorBuffer, back: boolean): void {
   const ta = b.ta;
   const [from, to] = back ? [b.undo, b.redo] : [b.redo, b.undo];
   const snap = from.pop();
@@ -2037,7 +2203,8 @@ function renderTree(): void {
   const walk = (rel: string, depth: number) => {
     for (const e of dirCache.get(rel) ?? []) {
       const p = joinPath(rel, e.name);
-      rows.push(treeRow(e, p, depth, decor, !!rel && rel === justExpanded));
+      const isEntering = !!justExpanded && (rel === justExpanded || rel.startsWith(justExpanded + '/'));
+      rows.push(treeRow(e, p, depth, decor, isEntering));
       if (e.dir && expanded.has(p)) walk(p, depth + 1);
     }
   };
@@ -2098,8 +2265,15 @@ $('#tree').addEventListener('contextmenu', e => {
   ], () => { ctxPath = null; renderTree(); });
 });
 async function toggleDir(p: string): Promise<void> {
-  if (expanded.has(p)) expanded.delete(p);
-  else {
+  if (expanded.has(p)) {
+    const prefix = p + '/';
+    const childRows = $$<HTMLElement>('#tree .tree-item', $('#tree')).filter(r => (r.dataset.path ?? '').startsWith(prefix));
+    if (childRows.length > 0) {
+      childRows.forEach(r => r.classList.add('leaving'));
+      await new Promise(r => setTimeout(r, 130));
+    }
+    expanded.delete(p);
+  } else {
     expanded.add(p);
     if (!dirCache.has(p)) await loadDir(p);
     justExpanded = p;
@@ -2193,7 +2367,7 @@ function deleteEntry(p: string, isDir: boolean): void {
 }
 
 // Files changed on disk (by an agent, git or another editor): reload what isn't being edited.
-async function reloadImage(b: Buffer): Promise<void> {
+async function reloadImage(b: EditorBuffer): Promise<void> {
   // Same file URL, new query: the viewer reloads the picture.
   const url = b.url ?? '';
   const q = url.indexOf('?');
@@ -2201,7 +2375,7 @@ async function reloadImage(b: Buffer): Promise<void> {
   b.size = (await api.fs.readFile(b.path).catch(() => null))?.size ?? b.size;
   if (b.path === active) renderEditor();
 }
-async function reloadText(b: Buffer): Promise<void> {
+async function reloadText(b: EditorBuffer): Promise<void> {
   const r = await api.fs.readFile(b.path).catch(() => null); // deleted or unreadable: keep the buffer
   if (r?.text == null) return;
   const text = r.text.replaceAll('\r\n', '\n');
@@ -2218,10 +2392,11 @@ api.fs.onChange(paths => background((async () => {
   const dirs = new Set([...paths.map(dirName), ...paths].filter(d => dirCache.has(d)));
   await Promise.all([...dirs].map(loadDir));
   renderTree();
-  const changed = paths.map(p => buffers.get(p)).filter((b): b is Buffer => !!b);
+  const changed = paths.map(p => buffers.get(p)).filter((b): b is EditorBuffer => !!b);
   await Promise.all(changed.map(b => {
     if (b.kind === 'image' && b.url?.startsWith('file:')) return reloadImage(b);
-    return b.kind === 'text' && !isDirty(b) ? reloadText(b) : null;
+    if (b.kind === 'text' && !isDirty(b)) return reloadText(b);
+    return Promise.resolve();
   }));
   if (paths.some(path => path === 'index.html' || path.endsWith('/index.html'))) await refreshLiveShare();
 })()));
@@ -2314,7 +2489,7 @@ $('#tabs').addEventListener('auxclick', e => {
 
 // Closes several tabs at once, asking once about any unsaved ones.
 function closeTabs(paths: string[]): void {
-  const dirty = paths.map(p => buffers.get(p)).filter((b): b is Buffer => isDirty(b));
+  const dirty = paths.map(p => buffers.get(p)).filter((b): b is EditorBuffer => isDirty(b));
   const finish = () => {
     for (const p of paths) dropTab(p);
     renderTabs(); renderEditor(); renderTree(); saveSession();
@@ -2468,10 +2643,10 @@ let charW = 0; //variable
 let curLine = -1;//variable
 let renderQueued = false;//variable
 
-const activeBuf = (): Buffer | undefined => (active ? buffers.get(active) : undefined);
-function activeText(): (Buffer & { ta: HTMLTextAreaElement }) | undefined {
+const activeBuf = (): EditorBuffer | undefined => (active ? buffers.get(active) : undefined);
+function activeText(): (EditorBuffer & { ta: HTMLTextAreaElement }) | undefined {
   const b = activeBuf();
-  return b?.kind === 'text' && b.ta ? b as Buffer & { ta: HTMLTextAreaElement } : undefined;
+  return b?.kind === 'text' && b.ta ? b as EditorBuffer & { ta: HTMLTextAreaElement } : undefined;
 }
 function measureChar(): number {
   if (charW) return charW;
@@ -2507,7 +2682,7 @@ function visualCol(lineText: string, col: number): number {
   return v;
 }
 
-function editorNote(b: Buffer): string {
+function editorNote(b: EditorBuffer): string {
   if (b.kind === 'binary') return 'This file is binary, so Breeze can\'t show it as text.';
   if (b.kind === 'image') return 'Breeze couldn\'t load this image.';
   return `This file is too large to open (${(b.size / 1048576).toFixed(1)} MB).`;
@@ -2541,7 +2716,7 @@ function fmtSize(n: number): string {
   return n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 }
 // Images open in a viewer: fitted to the editor, click to see them at actual size.
-function showImage(el: HTMLElement, b: Buffer): void {
+function showImage(el: HTMLElement, b: EditorBuffer): void {
   el.classList.add('img-mode');
   if (el.dataset.img === b.url) return; // already showing it: keep its zoom and scroll
   el.dataset.img = b.url;
@@ -2594,7 +2769,7 @@ function box(cls: string, top: number, left: number, width?: number): HTMLElemen
   if (width != null) d.style.width = `${width}px`;
   return d;
 }
-function findBoxes(b: Buffer, cw: number): HTMLElement[] {
+function findBoxes(b: EditorBuffer, cw: number): HTMLElement[] {
   if (!findOpen || !findLen) return [];
   const vis = findHits.length > 3000 ? findHits.slice(Math.max(0, findIdx - 1500), findIdx + 1500) : findHits;
   return vis.map(off => {
@@ -2606,7 +2781,7 @@ function findBoxes(b: Buffer, cw: number): HTMLElement[] {
 }
 // Syntax errors: a red line, a squiggle under the mistake and the message after the code.
 // While an edit has added or removed lines they wait for the next check instead of drifting.
-function visibleDiags(b: Buffer, lineCount: number): Map<number, Diag> {
+function visibleDiags(b: EditorBuffer, lineCount: number): Map<number, Diag> {
   const errAt = new Map<number, Diag>();
   if (!b.diags?.length || b.diagLines !== lineCount) return errAt;
   for (const d of b.diags) {
@@ -2615,7 +2790,7 @@ function visibleDiags(b: Buffer, lineCount: number): Map<number, Diag> {
   }
   return errAt;
 }
-function squiggles(b: Buffer, lineCount: number, cw: number): HTMLElement[] {
+function squiggles(b: EditorBuffer, lineCount: number, cw: number): HTMLElement[] {
   if (!b.diags?.length || b.diagLines !== lineCount) return [];
   const raw = b.text.split('\n');
   return b.diags.map(d => {
@@ -2648,7 +2823,7 @@ function tagPairs(text: string, xml: boolean): [TagSpan, TagSpan][] {
   return pairs;
 }
 // The two tags around the caret as offset ranges to mark: exactly the tag names, so the boxes hug the letters.
-function tagMarks(b: Buffer): [number, number][] {
+function tagMarks(b: EditorBuffer): [number, number][] {
   const lexer = langOf(b.path)[0], ext = b.path.split('.').pop()?.toLowerCase() ?? '';
   if ((lexer !== 'html' && ext !== 'jsx' && ext !== 'tsx') || b.text.length > 200000) return [];
   if (!b.ta) return [];
@@ -2658,7 +2833,7 @@ function tagMarks(b: Buffer): [number, number][] {
   const pair = pairs.find(p => p.some(t => hit(t, true))) ?? pairs.find(p => p.some(t => hit(t, false)));
   return pair ? pair.map(t => [t.nameStart, t.nameEnd] as [number, number]) : [];
 }
-function tagBoxes(b: Buffer, cw: number): HTMLElement[] {
+function tagBoxes(b: EditorBuffer, cw: number): HTMLElement[] {
   return tagMarks(b).map(([from, to]) => {
     const ln = lineAt(b.text, from), ls = lineStart(b.text, from);
     const lt = b.text.slice(ls, lineEnd(b.text, ls));
@@ -2681,9 +2856,9 @@ function gutterHtml(i: number, d: Diag | undefined): string {
 
 const OVERSCAN = 40;
 let winFirst = 0, winLast = 0, winTotal = 1;
-const hlCache = new WeakMap<Buffer, { text: string; lexer: string; lines: string[] }>();
+const hlCache = new WeakMap<EditorBuffer, { text: string; lexer: string; lines: string[] }>();
 // Re-lexes only when the text changed, so scrolling never re-highlights.
-function highlighted(b: Buffer): string[] {
+function highlighted(b: EditorBuffer): string[] {
   const lexer = langOf(b.path)[0];
   const c = hlCache.get(b);
   if (c && c.text === b.text && c.lexer === lexer) return c.lines;
@@ -2784,7 +2959,7 @@ function nextProblem(): void {
   b.ta.setSelectionRange(off, off);
   revealOffset(b, off);
 }
-function revealOffset(b: Buffer, off: number): void {
+function revealOffset(b: EditorBuffer, off: number): void {
   if (!b.ta) return;
   const top = lineAt(b.text, off) * LINE_H;
   const ta = b.ta;
@@ -3314,7 +3489,16 @@ termInput.addEventListener('keydown', e => {
   termGhost.innerHTML = '';
   void runCommand(cmd);
 });
-api.term.onData((id, chunk) => { if (id !== term.proc) return; if (id === term.runId) runOutput(chunk); else termWrite(chunk); });
+
+api.term.onData((id, chunk) => {
+  if (id !== term.proc) return;
+  if (id === term.runId) {
+    runOutput(chunk);
+  } else {
+    termWrite(chunk);
+  }
+});
+
 api.term.onExit((id, code) => {
   if (id !== term.proc) return;
   const runId = term.runId;
@@ -3399,8 +3583,8 @@ const EDITOR_WORDS: Record<string, string[]> = {
   json: ['true', 'false', 'null'],
 };
 // Word counts per open file, refreshed at most every second and a half while typing.
-const wordCache = new WeakMap<Buffer, { at: number; counts: Map<string, number> }>();
-function fileWords(b: Buffer): Map<string, number> {
+const wordCache = new WeakMap<EditorBuffer, { at: number; counts: Map<string, number> }>();
+function fileWords(b: EditorBuffer): Map<string, number> {
   const cached = wordCache.get(b);
   if (cached && Date.now() - cached.at < 1500) return cached.counts;
   const counts = new Map<string, number>();
@@ -3408,7 +3592,7 @@ function fileWords(b: Buffer): Map<string, number> {
   wordCache.set(b, { at: Date.now(), counts });
   return counts;
 }
-function editorCandidates(b: Buffer, prefix: string): Suggestion[] {
+function editorCandidates(b: EditorBuffer, prefix: string): Suggestion[] {
   const counts = fileWords(b);
   const lower = prefix.toLowerCase();
   const words = new Map<string, number>();
@@ -3429,7 +3613,7 @@ function wordBefore(ta: HTMLTextAreaElement): string {
   while (i < end && !/[A-Za-z_$]/.test(v[i])) i++; // words start with a letter, _ or $
   return v.slice(i, end);
 }
-function editorSuggest(b: Buffer, force = false): void {
+function editorSuggest(b: EditorBuffer, force = false): void {
   const ta = b.ta;
   if (!ta || ta.selectionStart !== ta.selectionEnd) { hideSuggest(); return; }
   const prefix = wordBefore(ta);
@@ -3859,7 +4043,7 @@ const EDITOR_ONLY = new Set(['edit.comment', 'sel.line', 'sel.dup', 'sel.up', 's
 /* ----- Menus: the bar opens on hover; the gear and right-clicks pop up ----- */
 let openMenuIdx = -1;      // bar menu index, -2 for a popup, -1 when closed
 let menuPinned = false;    // opened by a click or the keyboard: stays open when the pointer leaves
-let menuCloseTimer: number | undefined;
+let menuCloseTimer: TimeoutId | undefined;
 let kbIdx = -1;
 let menuItems: MenuItem[] = [];
 let menuOnClose: (() => void) | null = null;
@@ -4132,10 +4316,13 @@ function setAgent(k: AgentKey, status: AgentStatus, task: string, used?: number)
 }
 
 /* ----- Chat surfaces: the IDE's agent panel and Breeze Box share one conversation engine ----- */
-interface Surface { name: WorkMode; chat: HTMLElement; prompt: HTMLTextAreaElement; send: HTMLElement; mode: HTMLSelectElement; }
+interface ImageAttachment { id: string; name: string; dataUrl: string; fileUrl?: string; fileRel?: string; }
+const attachmentsMap: Record<WorkMode, ImageAttachment[]> = { ide: [], box: [] };
+
+interface Surface { name: WorkMode; chat: HTMLElement; prompt: HTMLTextAreaElement; send: HTMLElement; mode: HTMLSelectElement; attachmentsEl: HTMLElement; }
 const SURFACES: Record<WorkMode, Surface> = {
-  ide: { name: 'ide', chat: $('#chat'), prompt: $<HTMLTextAreaElement>('#prompt'), send: $('#send'), mode: $<HTMLSelectElement>('#agentMode') },
-  box: { name: 'box', chat: $('#boxChat'), prompt: $<HTMLTextAreaElement>('#boxPrompt'), send: $('#boxSend'), mode: $<HTMLSelectElement>('#boxMode') },
+  ide: { name: 'ide', chat: $('#chat'), prompt: $<HTMLTextAreaElement>('#prompt'), send: $('#send'), mode: $<HTMLSelectElement>('#agentMode'), attachmentsEl: $('#promptAttachments') },
+  box: { name: 'box', chat: $('#boxChat'), prompt: $<HTMLTextAreaElement>('#boxPrompt'), send: $('#boxSend'), mode: $<HTMLSelectElement>('#boxMode'), attachmentsEl: $('#boxPromptAttachments') },
 };
 let surface = SURFACES.ide;     // the one on screen
 let msgSurface = surface;       // the one messages go to: a running agent keeps writing where it started
@@ -4172,8 +4359,15 @@ function agentMsg(k: AgentKey, html: string): HTMLElement {
   const { name, letter, tint } = speaker(k);
   return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
 }
-function userMsg(text: string): void {
-  addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${esc(text)}</div></div>`);
+function userMsg(text: string, attachments?: ImageAttachment[]): void {
+  let imgHtml = '';
+  if (attachments && attachments.length) {
+    imgHtml = `<div class="msg-attachments">${attachments.map(a =>
+      `<div class="chat-img-wrap" title="Click to view full size"><img src="${escAttr(a.fileUrl || a.dataUrl)}" class="chat-img" alt="${escAttr(a.name)}" data-full="${escAttr(a.fileUrl || a.dataUrl)}"></div>`
+    ).join('')}</div>`;
+  }
+  const bodyText = text ? `<div>${esc(text).replaceAll('\n', '<br>')}</div>` : '';
+  addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${bodyText}${imgHtml}</div></div>`);
 }
 // Shown under the conversation while the agent works; never saved with the chat.
 function thinkingLabel(k: AgentKey): string {
@@ -4275,7 +4469,7 @@ function chatHtml(s: Surface): string {
   if (s.chat.querySelector('.empty')) return '';
   return [...s.chat.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
 }
-let chatTimer: number | undefined;
+let chatTimer: TimeoutId | undefined;
 function saveChat(): void {
   clearTimeout(chatTimer);
   const s = msgSurface;
@@ -4352,19 +4546,140 @@ $('#chatHistory').onclick = e => showHistory(SURFACES.ide, e.currentTarget as HT
 $('#boxHistory').onclick = e => showHistory(SURFACES.box, e.currentTarget as HTMLElement);
 commands['chat.history'] = () => showHistory(surface, surface.name === 'box' ? $('#boxHistory') : $('#chatHistory'));
 
+function renderAttachments(s: Surface): void {
+  const list = attachmentsMap[s.name] || [];
+  if (!list.length) {
+    s.attachmentsEl.classList.add('hidden');
+    s.attachmentsEl.innerHTML = '';
+    return;
+  }
+  s.attachmentsEl.classList.remove('hidden');
+  s.attachmentsEl.innerHTML = list.map(a => `
+    <div class="attachment-chip" data-att-id="${escAttr(a.id)}">
+      <img src="${escAttr(a.dataUrl)}" class="attachment-thumb" alt="${escAttr(a.name)}" title="Click to preview">
+      <span class="attachment-name" title="${escAttr(a.name)}">${esc(a.name)}</span>
+      <button class="attachment-del" type="button" title="Remove" data-del-id="${escAttr(a.id)}">✕</button>
+    </div>
+  `).join('');
+  $$('[data-del-id]', s.attachmentsEl).forEach(btn => {
+    btn.onclick = e => {
+      e.stopPropagation();
+      const id = btn.dataset.delId;
+      attachmentsMap[s.name] = (attachmentsMap[s.name] || []).filter(x => x.id !== id);
+      renderAttachments(s);
+    };
+  });
+}
+
+async function addPastedImage(file: File, s: Surface): Promise<void> {
+  const dataUrl = await new Promise<string>((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result as string);
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const ext = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : file.type === 'image/gif' ? 'gif' : 'png';
+  const now = new Date();
+  const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+  const name = file.name && file.name !== 'image.png' ? file.name : `image_${ts}.${ext}`;
+  let fileRel: string | undefined;
+  let fileUrl: string | undefined;
+  try {
+    fileRel = await api.fs.importFile('attachments', name, bytes);
+    if (fileRel) fileUrl = await api.fs.fileUrl(fileRel);
+  } catch {
+    // In browser demo or if import fails, keep dataUrl
+  }
+  const att: ImageAttachment = { id: Math.random().toString(36).slice(2), name, dataUrl, fileUrl, fileRel };
+  attachmentsMap[s.name].push(att);
+  renderAttachments(s);
+  s.prompt.focus();
+  toast(`Image attached · ${name}`);
+}
+
+
+
+
 interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; replied: boolean; announce: boolean; }
 let agentRun: Run | null = null;
 let lastRunFiles: string[] = [];
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
   s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
+  
+    const box = s.prompt.closest<HTMLElement>('.composer-box');
+  if (box) {
+    box.addEventListener('dragover', e => {
+      if (e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault();
+        box.classList.add('drag-over');
+      }
+    });
+    box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
+    box.addEventListener('drop', async e => {
+      box.classList.remove('drag-over');
+      const files = e.dataTransfer?.files;
+      if (!files || !files.length) return;
+      const imgs: File[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (f.type.startsWith('image/') || IMAGE_FILE.test(f.name)) {
+          imgs.push(f);
+        }
+      }
+      if (imgs.length > 0) {
+        e.preventDefault();
+        await Promise.all(imgs.map(f => addPastedImage(f, s)));
+      }
+    });
+  }
 }
+
+// Copy-paste image into agent tab (IDE aside/composer) or Breeze Box
+document.addEventListener('paste', async (e: ClipboardEvent) => {
+  const items = e.clipboardData?.items;
+  const filesList = e.clipboardData?.files;
+  const imgItem = items ? [...items].find(it => it.type.startsWith('image/')) : null;
+  const imgFile = !imgItem && filesList && filesList.length ? [...filesList].find(x => x.type.startsWith('image/') || IMAGE_FILE.test(x.name)) : null;
+
+  if (!imgItem && !imgFile) return;
+
+  const target = e.target as HTMLElement | null;
+  const activeEl = document.activeElement;
+  const inBox = !!(target?.closest('#box, .box-composer') || activeEl === SURFACES.box.prompt || appState.mode === 'box');
+  const inIde = !!(target?.closest('#agents, .composer') || activeEl === SURFACES.ide.prompt || (!inBox && appState.mode === 'ide'));
+
+  if (!inBox && !inIde) return;
+  if (activeEl?.classList.contains('ta') && !target?.closest('#agents, #box, .composer, .box-composer')) return;
+
+  const targetSurface = inBox ? SURFACES.box : SURFACES.ide;
+  const file = imgItem ? imgItem.getAsFile() : (imgFile || null);
+  if (!file) return;
+
+  e.preventDefault();
+  await addPastedImage(file, targetSurface);
+});
+
+// Click thumbnail or chat image to view full size modal
+document.addEventListener('click', e => {
+  const target = e.target as HTMLElement;
+  const img = target.closest<HTMLImageElement>('.chat-img, .attachment-thumb');
+  if (img && img.src) {
+    const full = img.dataset.full || img.src;
+    openModal(`<div class="img-modal-view"><img src="${escAttr(full)}" class="img-modal-img"><div class="row end w-full"><button class="btn btn-primary btn-sm" data-close>Close</button></div></div>`);
+  }
+});
+
 function newChat(): void {
   if (agentRun) stopAgent();
   archiveChat(surface);
   store.del(agentSessionKey(surface)); store.del(chatKey(surface)); store.del(chatIdKey(surface));
   emptyChat(surface);
   resetTeam();
+  attachmentsMap[surface.name] = [];
+  renderAttachments(surface);
   surface.prompt.focus();
 }
 $('#newChat').onclick = newChat;
@@ -4387,20 +4702,28 @@ const MODES: Record<string, AgentMode> = { build: 'build', ask: 'ask', plan: 'pl
 const phaseFor = (mode: AgentMode): AgentKey => ({ build: 'builder', plan: 'planner', ask: 'assistant' } as const)[mode];
 async function sendPrompt(): Promise<void> {
   const text = surface.prompt.value.trim();
-  if (!text || agentRun) return;
+  const attachments = [...(attachmentsMap[surface.name] || [])];
+  if ((!text && !attachments.length) || agentRun) return;
   const agent = selectedAgent();
   if (!agent) { openAgentPicker(); return; }
   if (surface.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
   msgSurface = surface;
   const uiMode = surface.mode.value;
   surface.prompt.value = '';
+  attachmentsMap[surface.name] = [];
+  renderAttachments(surface);
   if (surface.chat.querySelector('.empty')) surface.chat.innerHTML = '';
   // A new task: the cards from the last one go away until the agent has read this message.
   team = [];
   teamNeed = 0;
   renderAgents();
-  userMsg(text);
-  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', text, uiMode, true);
+  userMsg(text, attachments);
+  let agentPrompt = text;
+  if (attachments.length) {
+    const fileHeaders = attachments.map(a => `[Attached image: ${a.fileRel || a.name}]`).join('\n');
+    agentPrompt = fileHeaders + (text ? `\n\n${text}` : '\nPlease inspect the attached image(s).');
+  }
+  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', agentPrompt, uiMode, true);
 }
 
 async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string, announce = false): Promise<void> {
@@ -4526,12 +4849,19 @@ function finishRun(r: Run, ev: AgentEvent): void {
 function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
   if (btn.classList.contains('open')) { closeMenu(); return; }
   closeMenu();
+  const label = () => {
+    const text = sel.selectedOptions[0]?.text || sel.value || '';
+    btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+  };
   const items: MenuItem[] = [...sel.options].map(o => ({
     label: o.text,
     checked: () => o.value === sel.value,
     enabled: () => !o.disabled,
     run: () => {
-      if (sel.value !== o.value) { sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      sel.value = o.value;
+      label();
+      if (sel.onchange) void (sel.onchange as (e: Event) => void)(new Event('change'));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
       btn.focus();
     },
   }));
@@ -4551,15 +4881,19 @@ function enhanceSelect(sel: HTMLSelectElement): void {
   sel.dataset.dd = '1';
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'dd-btn';
+  btn.className = 'dd-btn' + (sel.classList.contains('hidden') ? ' hidden' : '');
   btn.setAttribute('aria-haspopup', 'menu');
   btn.setAttribute('aria-expanded', 'false');
   btn.setAttribute('aria-label', sel.getAttribute('aria-label') ?? 'Choose');
+  if (sel.id) btn.classList.add(`${sel.id}-btn`);
   sel.classList.add('dd-native');
   sel.tabIndex = -1;
   sel.setAttribute('aria-hidden', 'true');
   sel.after(btn);
-  const label = () => { btn.innerHTML = `<span class="dd-val">${esc(sel.selectedOptions[0]?.text ?? '')}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`; };
+  const label = () => {
+  const text = sel.selectedOptions[0]?.text || sel.value || '';
+  btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+  };
   label();
   sel.addEventListener('change', label);
   btn.onclick = () => openDropdown(sel, btn);
@@ -4568,7 +4902,13 @@ function enhanceSelect(sel: HTMLSelectElement): void {
     e.preventDefault();
     if (!btn.classList.contains('open')) openDropdown(sel, btn);
   };
+  
+    new MutationObserver(() => {
+    btn.classList.toggle('hidden', sel.classList.contains('hidden'));
+    label();
+  }).observe(sel, { childList: true, attributes: true, attributeFilter: ['class'] });
 }
+
 $$<HTMLSelectElement>('select.select').forEach(enhanceSelect);
 new MutationObserver(() => $$<HTMLSelectElement>('select.select:not([data-dd])').forEach(enhanceSelect)).observe(document.body, { childList: true, subtree: true });
 
@@ -4579,7 +4919,7 @@ let gitBusy = false;
 let openCommit: string | null = null;
 const commitDetails = new Map<string, GitCommitDetail>();
 const scmCollapsed = new Set<string>(store.get<string[]>('breeze.scmCollapsed', []));
-let gitTimer: number | undefined;
+let gitTimer: TimeoutId | undefined;
 function queueGitRefresh(): void { clearTimeout(gitTimer); gitTimer = setTimeout(() => void refreshGit(), 400); }
 window.addEventListener('focus', () => { if (rootInfo) queueGitRefresh(); });
 
@@ -4942,7 +5282,7 @@ function branchListHtml(branches: string[], q: string): string {
 const HOLD_MS =5000;//hold time duration
 // Fires onDone only if the button is held for the full 5 seconds; releasing, leaving the button or losing focus cancels.
 function holdToDelete(btn: HTMLElement, onDone: () => void): void {
-  let timer: number | undefined;
+  let timer: TimeoutId | undefined
   const stop = (early: boolean) => {
     if (timer == null) return;
     clearTimeout(timer); timer = undefined;
@@ -4952,9 +5292,22 @@ function holdToDelete(btn: HTMLElement, onDone: () => void): void {
   const start = () => {
     if (timer != null) return;
     btn.classList.add('holding');
-    timer = setTimeout(() => { timer = undefined; btn.classList.remove('holding'); if (btn.isConnected) onDone(); }, HOLD_MS);
+    timer = setTimeout(() => {
+      timer = undefined;
+      btn.classList.remove('holding');
+      if (btn.isConnected) {
+        onDone();
+      }
+    }, HOLD_MS);
   };
-  btn.onpointerdown = e => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); btn.setPointerCapture(e.pointerId); start(); };
+  btn.onpointerdown = e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    btn.setPointerCapture(e.pointerId);
+    start();
+  };
+  btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
   btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
   btn.onpointerup = () => stop(true);
   btn.onpointercancel = () => stop(false);
@@ -5024,12 +5377,24 @@ Object.assign(commands, {
 });
 
 /* ================= Views ================= */
+
+function updateActIndicator(): void {
+  const activeBtn = document.querySelector<HTMLElement>('.act-btn[data-view].on');
+  const ind = document.getElementById('actIndicator');
+  if (!activeBtn || !ind) return;
+  const top = activeBtn.offsetTop + (activeBtn.offsetHeight - 20) / 2;
+  ind.style.transform = `translateY(${top}px)`;
+  ind.style.opacity = '1';
+}
+window.addEventListener('resize', updateActIndicator);
+
 function showView(v: string, reveal = false): void {
   layout.view = v;
   if (reveal && !layout.sideOpen) layout.sideOpen = true;
   applyLayout();
   $$('.act-btn[data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === v));
   $$('[data-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== v));
+  updateActIndicator();
   if (v === 'git') void refreshGit();
 }
 // Clicking the active view's icon again collapses the side bar, like VS Code.
@@ -5100,8 +5465,8 @@ $('#boxFolder').onclick = e => {
 // In the desktop app main.js lays the live site exactly over #vibeFrame; the browser preview shows a placeholder.
 const VIBE_DELAY = 3000; // quick answers don't trigger it
 let vibeOn = false;
-let vibeTimer: number | undefined;
-let vibeClock: number | undefined;
+let vibeTimer: TimeoutId | undefined;
+let vibeClock: IntervalId | undefined;
 let vibeStarted = 0;
 let vibeMuted = false;
 let vibeSiteShown: string | null = null;
@@ -5249,7 +5614,7 @@ new ResizeObserver(() => { if (vibeOn && vibeSiteShown && isDesktop) background(
 /* ================= Discord ================= */
 // Rich Presence through the Discord app on this computer (main.js talks to it); updates are coalesced.
 const discordSince = Date.now();
-let discordTimer: number | undefined;
+let discordTimer: TimeoutId | undefined;
 let discordLive = false;   // connected and showing
 function discordActivity(): DiscordActivity {
   const working = Object.values(agentsDef).find(a => a.status === 'working');

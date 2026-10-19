@@ -16,7 +16,9 @@
 
 <body>
   <!-- Opening animation: a blue glow rises, then the logo fades up. It is pure CSS so it plays from the first frame. -->
-  <div class="splash" id="splash" aria-hidden="true"><img class="splash-logo" src="Agent.png" alt=""><div class="splash-loader"></div></div>
+  <div class="splash" id="splash" aria-hidden="true"><img class="splash-logo" src="Agent.png" alt="">
+   <div class="splash-loader"></div>
+  </div>
 
   <!-- Shared SVG symbols -->
   <svg class="sprite" width="0" height="0" aria-hidden="true">
@@ -184,9 +186,8 @@
           <button class="btn" data-signin="GitHub"><svg width="18" height="18">
               <use href="#i-gh" />
             </svg>Continue with GitHub</button>
-          <button class="btn" data-signin="Google"><svg width="18" height="18">
-              <use href="#i-google" />
-            </svg>Continue with Google</button>
+          <button class="btn" data-signin="Google"><img src="assets/icons/Google.png" width="18" height="18" alt="Google">Continue
+           with Google</button>
           <p class="signin-error hidden" data-si="error" role="alert"></p>
           <button class="btn btn-ghost btn-sm" id="signinSkip">Continue without signing in</button>
         </div>
@@ -293,6 +294,7 @@
 
     <div class="main" id="main">
       <nav class="activity" aria-label="Views">
+        <div class="act-indicator" id="actIndicator"></div>
         <button class="act-btn on" data-view="files" title="Explorer (Ctrl+Shift+E)"><svg width="20" height="20">
             <use href="#i-files" />
           </svg></button>
@@ -393,7 +395,8 @@
               <button class="icon-btn" title="Reload Preview" data-act="run.reload"><svg width="13" height="13">
                   <use href="#i-refresh" />
                 </svg></button>
-              <button class="icon-btn" title="Close Preview" data-act="view.togglePreview"><svg data-i="x"></svg></button>
+              <button class="icon-btn" title="Close Preview" data-act="view.togglePreview"><svg
+                  data-i="x"></svg></button>
             </div>
             <div class="empty" id="previewEmpty">
               <div>
@@ -411,9 +414,11 @@
         <div class="terminal" id="terminal">
           <div class="sash sash-h" data-sash="term"></div>
           <div class="term-head" id="termToggle">
-            <span id="termTitle"><svg data-i="chevronRight" data-size="14"></svg> Terminal</span><span class="spacer"></span>
+            <span id="termTitle"><svg data-i="chevronRight" data-size="14"></svg> Terminal</span><span
+              class="spacer"></span>
             <button class="icon-btn" data-act="term.clear" title="Clear"><svg data-i="backspace"></svg></button>
-            <button class="icon-btn" data-act="term.kill" title="Stop running command (Ctrl+C)"><svg data-i="stop"></svg></button>
+            <button class="icon-btn" data-act="term.kill" title="Stop running command (Ctrl+C)"><svg
+                data-i="stop"></svg></button>
             <span>Ctrl+`</span>
           </div>
           <div class="term-body" id="termBody">
@@ -432,14 +437,16 @@
               id="agentPill" title="Choose which AI agent to use">No agent</button><button class="icon-btn"
               id="chatHistory" title="Chat history" aria-haspopup="menu"><svg width="14" height="14">
                 <use href="#i-history" />
-              </svg></button><button class="icon-btn" id="newChat" title="New chat"><svg data-i="plus"></svg></button><button
-              class="icon-btn flip" data-act="view.toggleAgents" title="Hide Agents"><svg width="14" height="14">
+              </svg></button><button class="icon-btn" id="newChat" title="New chat"><svg
+                data-i="plus"></svg></button><button class="icon-btn flip" data-act="view.toggleAgents"
+              title="Hide Agents"><svg width="14" height="14">
                 <use href="#i-chev" />
               </svg></button></span></div>
         <div class="agent-cards hidden" id="agentCards"></div>
         <div class="chat" id="chat"></div>
         <div class="composer">
           <div class="composer-box">
+          <div class="composer-attachments hidden" id="promptAttachments"></div>
             <textarea id="prompt" rows="2" aria-label="Message to the agent"
               placeholder="Describe what you want to build…"></textarea>
             <div class="row">
@@ -448,7 +455,10 @@
                 <option value="build">Build directly</option>
                 <option value="ask">Ask (read-only)</option>
               </select>
-              <button class="btn btn-primary btn-sm" id="send"><svg data-i="send" data-size="14"></svg><span>Send</span></button>
+              <select class="select" id="agentModelSelect" aria-label="Select Model" title="Select model"></select>
+              <span class="flex-1"></span>
+              <button class="btn btn-primary btn-sm" id="send"><svg data-i="send"
+                  data-size="14"></svg><span>Send</span></button>
             </div>
           </div>
         </div>
@@ -456,12 +466,15 @@
     </div>
 
     <footer class="statusbar">
-      <button class="sb" id="sbBranch" title="Switch branch"><svg data-i="gitBranch" data-size="14"></svg><span>—</span></button>
+      <button class="sb" id="sbBranch" title="Switch branch"><svg data-i="gitBranch"
+          data-size="14"></svg><span>—</span></button>
       <span class="sb" id="sbTools"><span class="dot-ok"></span> Checking tools…</span>
       <button class="sb hidden" id="sbProblems" data-act="go.nextProblem" title="Go to the next problem (F8)"></button>
       <span class="spacer"></span>
-      <button class="sb" id="vibeArm" title="Vibe Mode: plays your feed while agents work"><svg data-i="circle" data-size="14"></svg><span>Vibe Code Mode off</span></button>
-      <button class="sb hidden" id="liveShare" title="Host index.html locally and open it in your browser"><svg data-i="play" data-size="14"></svg><span>Live Share</span></button>
+      <button class="sb" id="vibeArm" title="Vibe Mode: plays your feed while agents work"><svg data-i="circle"
+          data-size="14"></svg><span>Vibe Code Mode off</span></button>
+      <button class="sb hidden" id="liveShare" title="Host index.html locally and open it in your browser"><svg
+          data-i="play" data-size="14"></svg><span>Live Share</span></button>
       <button class="sb" id="discord" title="Discord presence">Discord: off</button>
       <button class="sb" id="sbPos" data-act="go.line">Ln 1, Col 1</button>
       <span class="sb" id="sbLang">Plain Text</span>
@@ -479,7 +492,8 @@
           class="btn-ico" width="14" height="14">
           <use href="#i-history" />
         </svg> History</button>
-      <button class="btn btn-sm btn-ghost" data-act="chat.new" title="Start a new chat"><svg class="btn-ico" data-i="plus" data-size="14"></svg> New chat</button>
+      <button class="btn btn-sm btn-ghost" data-act="chat.new" title="Start a new chat"><svg class="btn-ico"
+          data-i="plus" data-size="14"></svg> New chat</button>
       <button class="btn btn-sm" data-act="mode.ide" title="Switch to the full IDE">Open IDE</button>
       <button class="icon-btn box-gear" id="boxSettings" title="Settings" aria-haspopup="menu"><svg width="18"
           height="18">
@@ -492,6 +506,7 @@
     </main>
     <div class="box-composer">
       <div class="composer-box">
+        <div class="composer-attachments hidden" id="boxPromptAttachments"></div>
         <textarea id="boxPrompt" rows="2" aria-label="Message to the agent"
           placeholder="Ask Breeze anything…"></textarea>
         <div class="row">
@@ -505,7 +520,8 @@
           <button class="pill pill-btn box-folder" id="boxFolder" title="The folder the agent works in">No
             folder</button>
           <span class="flex-1"></span>
-          <button class="btn btn-primary btn-sm" id="boxSend"><svg data-i="send" data-size="14"></svg><span>Send</span></button>
+          <button class="btn btn-primary btn-sm" id="boxSend"><svg data-i="send"
+              data-size="14"></svg><span>Send</span></button>
         </div>
       </div>
     </div>

@@ -10,9 +10,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked } = require('./toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked } = require('./toolchains');
 const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
-const { autoUpdater } = require('electron-updater');
+
+let autoUpdater = null;
+try {
+  ({ autoUpdater } = require('electron-updater'));
+} catch {
+  // Available when installed; only needed for packaged application updates.
+}
 
 
 
@@ -40,6 +46,16 @@ function configureAutoUpdater() {
   if (!app.isPackaged) {
     console.info('[updater] Skipping update check in development.');
     return;
+  }
+
+
+  if (!autoUpdater) {
+    try {
+      ({ autoUpdater } = require('electron-updater'));
+    } catch (error) {
+      console.warn('[updater] Update check unavailable:', error?.message || error);
+      return;
+    }
   }
 
   autoUpdater.autoDownload = false;
@@ -434,7 +450,11 @@ handle('fs:trash', async (_e, rel) => {
   await shell.trashItem(resolveIn(rel));
 });
 
-handle('fs:fileUrl', (_e, rel) => pathToFileURL(resolveIn(rel)).href);
+handle('fs:fileUrl', (_e, rel) => {
+  const base = root || boxDir();
+  return pathToFileURL(resolveUnder(base, rel)).href;
+});
+
 handle('fs:previewUrl', (_e, rel) => {
   resolveIn(rel); // throws when no folder is open or the path leaves the project
   return `${PREVIEW_SCHEME}://project/${String(rel).split(/[\/]/).map(encodeURIComponent).join('/')}`;
@@ -455,13 +475,14 @@ const IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 handle('fs:import', async (_e, dirRel, name, data) => {
   if (!(data instanceof Uint8Array)) throw new Error('Nothing to save');
   if (data.byteLength > IMPORT_MAX_BYTES) throw new Error(`${path.basename(String(name))} is larger than 50 MB`);
-  const target = resolveIn(path.join(String(dirRel || ''), String(name)));
-  if (path.relative(root, target).split(path.sep).some(p => /^(?:\.git|git~1)[. ]*$/i.test(p))) throw new Error('Files can’t be dropped into the .git folder');
+  const base = root || boxDir();
+  const target = resolveUnder(base, path.join(String(dirRel || ''), String(name)));
+  if (path.relative(base, target).split(path.sep).some(p => /^(?:\.git|git~1)[. ]*$/i.test(p))) throw new Error('Files can’t be dropped into the .git folder');
   await fsp.mkdir(path.dirname(target), { recursive: true });
   const { dir, name: stem, ext } = path.parse(target);
   for (let n = 0; ; n++) {
     const candidate = n ? path.join(dir, `${stem} (${n})${ext}`) : target;
-    try { await fsp.writeFile(candidate, data, { flag: 'wx' }); return toRel(candidate); }
+    try { await fsp.writeFile(candidate, data, { flag: 'wx' }); return path.relative(base, candidate).split(path.sep).join('/'); }
     catch (err) { if (err.code !== 'EEXIST' || n > 999) throw err; }
   }
 });
@@ -800,7 +821,11 @@ handle('sys:detect', async () => {
   const agents = await Promise.all(AGENTS.map(async a => {
     const bin = await locate(a.commands, a.paths());
     if (bin) agentBins.set(a.id, bin); else agentBins.delete(a.id);
-    return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version: bin ? await versionOf(bin) : null };
+    const cm = a.id === 'codex' ? codexModels() : [];
+    const codexFallbackList = ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o3-mini', 'chatgpt-4o-latest'];
+    const models = a.id === 'codex' ? (cm.length ? cm : codexFallbackList) : [];
+    const version = a.id === 'codex' ? (loadState().codexModel || 'gpt-4o') : (bin ? await versionOf(bin) : null);
+    return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
   }));
   // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
   let llm = await llmConfig(true).catch(() => null);
@@ -813,13 +838,33 @@ handle('sys:detect', async () => {
   }));
   const found = (await getTools(true)).tools;
   for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py'], ['dotnet', 'C#', found.dotnet, 'cs']]) {
-    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform), url: t ? null : installUrl(kind, process.platform) });
+    tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform), cmd: t ? null : installCmd(kind, process.platform), url: t ? null : installUrl(kind, process.platform) });
   }
   return { agents, tools, platform: process.platform };
 });
 
 /* ================= Window & shell IPC ================= */
 handle('sys:openExternal', (_e, url) => openInBrowser(url));
+handle('sys:runCommand', async (_e, cmd) => {
+  if (typeof cmd !== 'string' || !cmd.trim()) return false;
+  const command = cmd.trim();
+  if (process.platform === 'win32') {
+    spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', command], { detached: true, stdio: 'ignore' }).unref();
+  } else if (process.platform === 'darwin') {
+    const escaped = command.replace(/"/g, '\\"');
+    spawn('osascript', ['-e', `tell application "Terminal" to do script "${escaped}"`], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    spawn('x-terminal-emulator', ['-e', command], { detached: true, stdio: 'ignore' }).unref();
+  }
+  return true;
+});
+handle('agent:setModel', async (_e, { agent, model }) => {
+  if (agent === 'codex') {
+    saveState({ codexModel: model || null });
+    return true;
+  }
+  return false;
+});
 handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: await liveIndexUrl() }));
 handle('live:start', () => startLiveServer());
 handle('win:reload', () => win?.webContents.reload());
