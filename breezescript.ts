@@ -397,11 +397,16 @@ function demoApi(): BreezeApi {
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
     },
     live: {
-      async status() { return { available: files.has('index.html'), running: false, url: 'http://127.0.0.1:2026/' }; },
+      async status() {
+        const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+        return { available: !!index, running: false, url: `http://127.0.0.1:2026/${index?.replace(/index\.html$/, '') ?? ''}` };
+      },
       async start() {
-        if (!files.has('index.html')) throw new Error('Live Share needs an index.html file in the project root');
-        window.open('http://127.0.0.1:2026/', '_blank', 'noopener');
-        return { available: true, running: true, url: 'http://127.0.0.1:2026/' };
+        const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+        if (!index) throw new Error('Live Share needs an index.html file in the project');
+        const url = `http://127.0.0.1:2026/${index.replace(/index\.html$/, '')}`;
+        window.open(url, '_blank', 'noopener');
+        return { available: true, running: true, url };
       },
     },
     // Browser preview only: canned answers so every panel can be tried without the desktop app.
@@ -1745,6 +1750,7 @@ const DROP_MAX_BYTES = 50 * 1024 * 1024;
 const DROP_SKIP = new Set(['.git', 'node_modules']);
 interface Dropped { rel: string; file: File; }
 let dropMark: HTMLElement | null = null;
+let draggedTreePath: string | null = null;
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
 function markDrop(el: HTMLElement | null): void {
   if (dropMark === el) return;
@@ -1759,6 +1765,13 @@ function dropTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
   const row = t.closest<HTMLElement>('#tree [data-path]');
   if (row) { const p = row.dataset.path as string; return { el: row, dir: row.dataset.dir ? p : dirName(p) }; }
   return t.closest('#tree') ? { el: $('#tree'), dir: '' } : null;
+}
+function moveTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
+  if (!draggedTreePath) return null;
+  const row = (e.target as HTMLElement).closest<HTMLElement>('#tree [data-dir][data-path]');
+  if (!row) return null;
+  const dir = row.dataset.path as string;
+  return dir === dirName(draggedTreePath) ? null : { el: row, dir };
 }
 const entryFile = (e: FileSystemFileEntry) => new Promise<File>((res, rej) => e.file(res, rej));
 async function entryChildren(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
@@ -1795,19 +1808,26 @@ async function importDropped(entries: FileSystemEntry[], dir: string): Promise<v
   toast(`Added ${plural(saved.length, 'file')}${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
 }
 document.addEventListener('dragover', e => {
-  if (!hasFiles(e)) return;
+  if (!hasFiles(e) && !draggedTreePath) return;
   e.preventDefault();
-  const t = dropTarget(e);
+  const t = hasFiles(e) ? dropTarget(e) : moveTarget(e);
   markDrop(t?.el ?? null);
-  if (e.dataTransfer) e.dataTransfer.dropEffect = t ? 'copy' : 'none';
+  if (e.dataTransfer) e.dataTransfer.dropEffect = t ? (hasFiles(e) ? 'copy' : 'move') : 'none';
 });
 document.addEventListener('dragleave', e => { if (!e.relatedTarget) markDrop(null); });
 document.addEventListener('drop', e => {
-  if (!hasFiles(e)) return;
+  if (!hasFiles(e) && !draggedTreePath) return;
   e.preventDefault();
-  const t = dropTarget(e);
+  const external = hasFiles(e);
+  const t = external ? dropTarget(e) : moveTarget(e);
   markDrop(null);
   if (!t) return;
+  if (!external) {
+    const from = draggedTreePath;
+    draggedTreePath = null;
+    if (from) background(moveEntry(from, joinPath(t.dir, baseName(from))));
+    return;
+  }
   // The item list is only readable during the event, so take the entries now and read them afterwards.
   const entries = [...(e.dataTransfer?.items ?? [])].map(i => i.webkitGetAsEntry()).filter((x): x is FileSystemEntry => !!x);
   background(importDropped(entries, t.dir));
@@ -2002,7 +2022,7 @@ function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
   const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, enter ? 'enter' : ''].filter(Boolean).join(' ');
   const icon = e.dir ? folderIcon(e.name, open) : fileIcon(e.name);
-  return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : ''} title="${escAttr(p)}">
+  return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : 'draggable="true"'} title="${escAttr(p)}">
     <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${esc(e.name)}</span>${lockTag}${gitTag}</div>`;
 }
 function renderTree(): void {
@@ -2042,6 +2062,19 @@ $('#tree').addEventListener('click', e => {
   if (t.dataset.recent) { void openRecentFolder(t.dataset.recent); return; }
   const p = t.dataset.path as string;
   if (t.dataset.dir) void toggleDir(p); else openFile(p);
+});
+$('#tree').addEventListener('dragstart', e => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>('[data-path][draggable="true"]');
+  if (!row) return;
+  draggedTreePath = row.dataset.path as string;
+  row.classList.add('dragging');
+  e.dataTransfer?.setData('text/plain', draggedTreePath);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+});
+$('#tree').addEventListener('dragend', e => {
+  (e.target as HTMLElement).closest<HTMLElement>('[data-path]')?.classList.remove('dragging');
+  draggedTreePath = null;
+  markDrop(null);
 });
 $('#tree').addEventListener('contextmenu', e => {
   e.preventDefault();
@@ -2123,6 +2156,10 @@ async function renameEntry(p: string): Promise<void> {
   if (!name || name === baseName(p)) return;
   if (/[\\/]/.test(name)) { toast('Names cannot contain slashes'); return; }
   const to = joinPath(dirName(p), name);
+  await moveEntry(p, to);
+}
+async function moveEntry(p: string, to: string): Promise<void> {
+  if (p === to) return;
   try { await api.fs.rename(p, to); } catch (e) { toast(errMsg(e)); return; }
   const move = (x: string) => {
     if (x === p) return to;
@@ -2186,7 +2223,7 @@ api.fs.onChange(paths => background((async () => {
     if (b.kind === 'image' && b.url?.startsWith('file:')) return reloadImage(b);
     return b.kind === 'text' && !isDirty(b) ? reloadText(b) : null;
   }));
-  if (paths.includes('index.html')) await refreshLiveShare();
+  if (paths.some(path => path === 'index.html' || path.endsWith('/index.html'))) await refreshLiveShare();
 })()));
 
 /* ================= Opening, tabs & saving ================= */

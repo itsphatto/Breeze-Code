@@ -880,6 +880,8 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .drop-over { outline: 2px dashed var(--blue); outline-offset: -3px; }
 /*drag and drop file*/
 .tree-item.drop-over { background: var(--blue-soft); }
+.tree-item[draggable="true"] { cursor: grab; }
+.tree-item.dragging { opacity: .45; cursor: grabbing; }
 
 /* Hold-to-delete branch button */
 .br-del { position: relative;

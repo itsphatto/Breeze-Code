@@ -26,6 +26,7 @@ let win = null;
 let root = null;          // absolute path of the open project folder
 let watcher = null;
 let liveServer = null;
+let liveRoot = null;      // project root used by the local share server
 const liveClients = new Set();
 let termCwd = os.homedir();
 const terms = new Map();  // id -> child process
@@ -95,7 +96,7 @@ const logError = where => err => {
 };
 // Opens an https link in the user's browser.
 function openInBrowser(url) {
-  if (typeof url === 'string' && (/^https:\/\//.test(url) || url === LIVE_URL)) shell.openExternal(url).catch(logError('openExternal'));
+  if (typeof url === 'string' && (/^https:\/\//.test(url) || url.startsWith(LIVE_URL))) shell.openExternal(url).catch(logError('openExternal'));
 }
 
 /* ================= Persisted main-process state ================= */
@@ -271,10 +272,28 @@ function stopLiveServer() {
   liveClients.clear();
   if (liveServer) liveServer.close();
   liveServer = null;
+  liveRoot = null;
+}
+async function findLiveIndex(dir = root) {
+  if (!dir) return null;
+  let entries;
+  try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return null; }
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const index = entries.find(entry => entry.isFile() && entry.name === 'index.html');
+  if (index) return path.join(dir, index.name);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || IGNORED_DIRS.has(entry.name)) continue;
+    const nested = await findLiveIndex(path.join(dir, entry.name));
+    if (nested) return nested;
+  }
+  return null;
+}
+async function liveIndexUrl() {
+  const index = await findLiveIndex();
+  return index ? new URL(`${relTo(root, index).replace(/index\.html$/, '')}`, LIVE_URL).href : LIVE_URL;
 }
 async function hasLiveIndex() {
-  if (!root) return false;
-  try { return (await fsp.stat(resolveIn('index.html'))).isFile(); } catch { return false; }
+  return !!(await findLiveIndex());
 }
 async function serveLive(req, res) {
   try {
@@ -288,8 +307,12 @@ async function serveLive(req, res) {
     }
     const decoded = decodeURIComponent(parsed.pathname);
     const rel = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
-    const abs = resolveIn(rel);
-    const st = await fsp.stat(abs);
+    let abs = resolveUnder(liveRoot, rel);
+    let st = await fsp.stat(abs);
+    if (st.isDirectory()) {
+      abs = resolveUnder(liveRoot, path.join(rel, 'index.html'));
+      st = await fsp.stat(abs);
+    }
     if (!st.isFile()) throw new Error('Not a file');
     const type = MIME_TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream';
     let body = await fsp.readFile(abs);
@@ -305,7 +328,10 @@ async function serveLive(req, res) {
   }
 }
 async function startLiveServer() {
-  if (!(await hasLiveIndex())) throw new Error('Live Share needs an index.html file in the project root');
+  const index = await findLiveIndex();
+  if (!index) throw new Error('Live Share needs an index.html file in the project');
+  liveRoot = root;
+  const url = await liveIndexUrl();
   if (!liveServer) {
     liveServer = http.createServer((req, res) => { void serveLive(req, res); });
     await new Promise((resolve, reject) => {
@@ -316,8 +342,8 @@ async function startLiveServer() {
       liveServer.listen(LIVE_PORT, '127.0.0.1');
     });
   }
-  openInBrowser(LIVE_URL);
-  return { url: LIVE_URL, running: true };
+  openInBrowser(url);
+  return { url, running: true };
 }
 
 /* ================= File system IPC ================= */
@@ -794,7 +820,7 @@ handle('sys:detect', async () => {
 
 /* ================= Window & shell IPC ================= */
 handle('sys:openExternal', (_e, url) => openInBrowser(url));
-handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: LIVE_URL }));
+handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: await liveIndexUrl() }));
 handle('live:start', () => startLiveServer());
 handle('win:reload', () => win?.webContents.reload());
 handle('win:devtools', () => win?.webContents.toggleDevTools());
