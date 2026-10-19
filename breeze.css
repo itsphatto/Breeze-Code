@@ -449,7 +449,7 @@ body.resizing-h .term-body { transition: none; }
 body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scale(.97); pointer-events: none; user-select: none; }
 .vibe-stage { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; animation: fade .5s ease; }
 /* The card is exactly as wide as the 9:16 frame, whatever else it holds; the tab row gives way instead. */
-.vibe-stage { --vf-h: min(76vh, calc((100vw - 56px) * 16 / 9)); --vf-w: calc(var(--vf-h) * 9 / 16); }
+.vibe-stage { --vf-h: min(88vh, calc((100vw - 56px) * 16 / 9)); --vf-w: calc(var(--vf-h) * 9 / 16); }
 .vibe-panel { display: grid; grid-template-columns: var(--vf-w); gap: 10px; padding: 12px; box-sizing: content-box; background: var(--glass); border: 1px solid var(--glass-line); border-radius: 22px; box-shadow: 0 30px 90px rgba(0,0,0,.6); backdrop-filter: var(--glass-blur); animation: modalIn .5s cubic-bezier(.2,.8,.2,1); }
 .vibe-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .vibe-top > .icon-btn, .vibe-top > .btn { flex: none; }
