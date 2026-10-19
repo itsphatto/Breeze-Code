@@ -48,6 +48,7 @@
       "breeze.css",
       "runtime/**",
       "*.png",
+      "*.svg",
       "assets/**",
       "package.json",
       "breeze.config.json"

@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('breeze', {
   sys: {
     detect: () => invoke('sys:detect'),
     openExternal: url => invoke('sys:openExternal', url),
+    runCommand: cmd => invoke('sys:runCommand', cmd),
   },
   live: {
     status: () => invoke('live:status'),
@@ -61,6 +62,7 @@ contextBridge.exposeInMainWorld('breeze', {
   agent: {
     run: opts => invoke('agent:run', opts),
     stop: runId => invoke('agent:stop', runId),
+    setModel: (agent, model) => invoke('agent:setModel', { agent, model }),
     onEvent: cb => listen('agent:event', cb),
   },
   git: {

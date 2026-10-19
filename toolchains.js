@@ -143,6 +143,7 @@ const download = (m) => (m.url ? `\n${m.cmd ? 'Or download it from' : 'Download 
 const missing = (kind, platform) => { const m = entry(kind, platform); return (m.cmd ? m.lead + '\n' + m.cmd : m.lead) + download(m); };
 // Short install hint for the tools list: the command, or the plain advice where there is none.
 const installHint = (kind, platform) => { const m = entry(kind, platform); return m.cmd || m.lead; };
+const installCmd = (kind, platform) => entry(kind, platform).cmd || null;
 // The download page for the tools list's "Get" button, if there is one.
 const installUrl = (kind, platform) => entry(kind, platform).url || null;
 
@@ -282,4 +283,4 @@ function ensureBuildIgnored(rootDir) {
   fs.appendFileSync(file, (text === '' || text.endsWith('\n') ? '' : '\n') + 'build/\n');
 }
 
-module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked };
+module.exports = { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked };
