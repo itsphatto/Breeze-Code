@@ -19,7 +19,7 @@
 
 </div>
 
-## Why Breeze IDE
+## Why Breeze Code
 
 - **Agents that show their work.** A Planner writes a plan, you approve it, and a Builder carries it out. Every file read, edit and command streams into the agents panel as it happens.
 - **Bring the agent you already use.** Breeze finds Codex on your computer, or connects to a local model through Ollama, LM Studio or any OpenAI-compatible server.
@@ -144,7 +144,7 @@ Environment variables override the config file. Both `breeze.config.json` and `.
 npm run dist
 ```
 
-This runs `scripts/write-config.js`, which writes `breeze.config.json` from your `.env` so the packaged app has its client ids, then builds `dist/Breeze IDE Setup <version>.exe` with electron-builder.
+This runs `scripts/write-config.js`, which writes `breeze.config.json` from your `.env` so the packaged app has its client ids, then builds `dist/Breeze Code Setup <version>.exe` with electron-builder.
 
 > [!WARNING]
 > The installer is unsigned, so Windows SmartScreen may warn on other machines. Values bundled into an installer can be extracted by anyone who has it, so only put public client ids (and Google's desktop-app secret, which is not confidential) in `.env` when building.
