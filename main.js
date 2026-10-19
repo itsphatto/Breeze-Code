@@ -1730,6 +1730,57 @@ function guardFeed(wc) {
   });
   wc.on('will-navigate', (e, url) => { if (!url.startsWith('https://')) e.preventDefault(); });
 }
+// Instagram's desktop Reels page sizes its cards to the media instead of the
+// embedded view.  In a phone-shaped Vibe frame that leaves enough space for a
+// second reel to peek through below the current one.  Keep the page's actual
+// reel cards viewport-sized and make its scroll areas snap between them.
+function keepInstagramReelsFullscreen(wc) {
+  wc.once('did-finish-load', () => {
+    if (!wc.getURL().startsWith('https://www.instagram.com/')) return;
+    wc.executeJavaScript(`(() => {
+      const viewport = () => Math.max(document.documentElement.clientHeight, window.innerHeight);
+      const containsOneVideo = el => el.querySelectorAll('video').length === 1;
+      const reelCard = video => {
+        let el = video.parentElement;
+        let fallback = null;
+        while (el && el !== document.body) {
+          if (containsOneVideo(el)) {
+            fallback = el;
+            if (el.matches('article')) return el;
+            const parent = el.parentElement;
+            if (parent && parent.querySelectorAll('video').length > 1) return el;
+          }
+          el = el.parentElement;
+        }
+        return fallback;
+      };
+      const apply = () => {
+        for (const video of document.querySelectorAll('video')) {
+          const card = reelCard(video);
+          if (!card) continue;
+          card.style.minHeight = viewport() + 'px';
+          card.style.scrollSnapAlign = 'start';
+          card.style.scrollSnapStop = 'always';
+          for (let el = card.parentElement; el && el !== document.body; el = el.parentElement) {
+            const style = getComputedStyle(el);
+            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+              el.style.scrollSnapType = 'y mandatory';
+              break;
+            }
+          }
+        }
+      };
+      apply();
+      let scheduled = false;
+      new MutationObserver(() => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => { scheduled = false; apply(); });
+      }).observe(document.documentElement, { childList: true, subtree: true });
+      addEventListener('resize', apply, { passive: true });
+    })()`).catch(logError('reels layout'));
+  });
+}
 async function signedIn(id) {
   const [domain, name] = vibeSite(id).cookie;
   const cookies = await vibeSession().cookies.get({ domain, name });
@@ -1770,6 +1821,7 @@ handle('vibe:show', (_e, id, bounds) => {
     win.contentView.addChildView(vibeView);
   }
   vibeView.setBounds(toBounds(bounds));
+  if (id === 'instagram') keepInstagramReelsFullscreen(vibeView.webContents);
   vibeView.webContents.loadURL(site.url).catch(logError('feed'));
 });
 handle('vibe:bounds', (_e, bounds) => vibeView?.setBounds(toBounds(bounds)));
