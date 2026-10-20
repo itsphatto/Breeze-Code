@@ -24,7 +24,7 @@ type AgentMode = 'plan' | 'build' | 'ask';
 interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; }
 interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
 interface GitFile { path: string; x: string; y: string; }
-interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; }
+interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; ignored?: string[]; }
 interface GitCommit { hash: string; parents: string[]; author: string; when: string; refs: string[]; subject: string; }
 interface GitCommitDetail { hash: string; author: string; email: string; when: string; message: string; files: { path: string; added: number; removed: number }[]; }
 
@@ -87,7 +87,7 @@ interface BreezeApi {
     run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null; box?: boolean }): Promise<number>;
 
     stop(runId: number): Promise<void>;
-    setModel(agent: string, model: string): Promise<boolean>;
+    setModel(agent: string, model: string, effort?: string): Promise<boolean>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
   };
   git: {
@@ -314,7 +314,7 @@ function demoApi(): BreezeApi {
         store.set('breeze.demoOpen', true);
         return info;
 
-        
+
       },
       async restore() { return store.get('breeze.demoOpen', false) ? info : null; },
       async closeFolder() { store.del('breeze.demoOpen'); },
@@ -373,7 +373,7 @@ function demoApi(): BreezeApi {
       // No file URLs in the browser: images get a drawn stand-in, everything else ''.
       async fileUrl(rel) { return binary.has(rel) && IMAGE_FILE.test(rel) ? DEMO_IMAGE : ''; },
       async previewUrl() { return ''; },
-      onChange() { return () => {}; },
+      onChange() { return () => { }; },
     },
     lint: { async check() { return null; } },
     term: {
@@ -385,8 +385,8 @@ function demoApi(): BreezeApi {
         const names = [...new Set([...files.keys(), ...dirs].map(p => p.split('/')[0]))];
         return names.filter(n => n.toLowerCase().startsWith(word.toLowerCase())).sort((a, b) => a.localeCompare(b)).map(n => ({ text: dirs.has(n) ? n + '/' : n, dir: dirs.has(n) }));
       },
-      onData() { return () => {}; },
-      onExit() { return () => {}; },
+      onData() { return () => { }; },
+      onExit() { return () => { }; },
     },
     run: { async file() { return { error: 'Programs run only in the Breeze desktop app (npm start).' }; } },
     sys: {
@@ -400,7 +400,7 @@ function demoApi(): BreezeApi {
             { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
-            { id: 'dotnet', name: 'C#', found: false, version: null, optional: true, hint: 'winget install Microsoft.DotNet.SDK.10', url: 'https://dotnet.microsoft.com/download' }],
+          { id: 'dotnet', name: 'C#', found: false, version: null, optional: true, hint: 'winget install Microsoft.DotNet.SDK.10', url: 'https://dotnet.microsoft.com/download' }],
         };
       },
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
@@ -437,20 +437,24 @@ function demoApi(): BreezeApi {
       },
       async stop() { /* demo runs finish on their own */ },
       async setModel() { return true; },
-      onEvent(cb) { agentListeners.push(cb); return () => {}; },
+      onEvent(cb) { agentListeners.push(cb); return () => { }; },
     },
     git: {
       async status() {
-        return { repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
-          files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }] };
+        return {
+          repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
+          files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }], ignored: []
+        };
       },
       async log() {
-        return { head: 'd4f0b19aa', commits: [
-          { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
-          { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
-          { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
-          { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
-        ] };
+        return {
+          head: 'd4f0b19aa', commits: [
+            { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
+            { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
+            { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
+            { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
+          ]
+        };
       },
       async show(hash) { return { hash, author: 'You', email: 'you@example.com', when: 'a few minutes ago', message: 'Demo checkpoint', files: [{ path: 'styles.css', added: 11, removed: 2 }] }; },
       async diff() { return '@@ -1,3 +1,3 @@\n /* Cozy, warm palette */\n-:root {\n+:root { /* demo change */\n   --bean: #2b1d12;'; },
@@ -489,7 +493,7 @@ function demoApi(): BreezeApi {
         current = accounts[0] ?? null;
         return current;
       },
-      onEvent(cb) { authListeners.push(cb); return () => {}; },
+      onEvent(cb) { authListeners.push(cb); return () => { }; },
     },
     // Browser preview: "connecting" opens the site in a new tab; the feed itself only plays in the desktop app.
     vibe: {
@@ -578,6 +582,7 @@ const LINE_ICONS: Record<string, IconNode> = {
   download: [['path', { d: 'M12 15V3' }], ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['path', { d: 'm7 10 5 5 5-5' }]],
   circleDot: [['circle', { cx: 12, cy: 12, r: 9 }], ['circle', { cx: 12, cy: 12, r: 3, fill: 'currentColor' }]],
   trash: [['path', { d: 'M3 6h18' }], ['path', { d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' }], ['path', { d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' }], ['path', { d: 'M10 11v6' }], ['path', { d: 'M14 11v6' }]],
+  folder: [['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }]],
 };
 const iconBody = (name: string): string =>
   (LINE_ICONS[name] ?? LINE_ICONS.dot).map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`).join('');
@@ -898,7 +903,7 @@ function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`
     : `<button class="get side" data-get="${escAttr(a.url)}">Get it ${svgIcon('external', 12)}</button>`;
   const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
-  const modelOptions = (a.found && a.models && a.models.length)
+  const modelOptions = (a.found && a.models && a.models.length && a.id !== 'codex')
     ? `<div class="key-row"><select class="select" data-agent-model="${a.id}" aria-label="Model">${a.models.map(m => `<option value="${escAttr(m)}"${m === a.version ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>`
     : '';
   return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
@@ -958,7 +963,7 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
     el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input, select')) pick(); };
     el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); pick(); } };
   });
-  
+
   $$('[data-agent-model]', root).forEach(sel => {
     (sel as HTMLSelectElement).onchange = async () => {
       const agId = (sel as HTMLElement).dataset.agentModel;
@@ -973,23 +978,23 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
       }
     };
   });
-  
+
   $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
   bindLocalLlm(root, onChange);
 }
 
 const TOOL_DOWNLOADS: Record<string, string> = { git: 'https://git-scm.com/downloads', node: 'https://nodejs.org/en/download' };
 function toolHtml(t: DetectedTool): string {
-  if (!t.found && t.optional) {
+  if (!t.found) {
     const cmd = t.cmd || (t.hint && /^(?:winget|brew|xcode-select)\b/.test(t.hint) ? t.hint : null);
-    const runBtn = cmd ? `<button class="btn btn-sm btn-primary" data-run-cmd="${escAttr(cmd)}" title="Run command in terminal">Run ▷</button>` : '';
-    const get = t.url ? `<button class="btn btn-sm" data-get="${escAttr(t.url)}">Get ${t.name} ${svgIcon('external', 12)}</button>` : '';
-    const hintHtml = t.hint ? `<span class="tool-hint-block"><code class="tool-hint-cmd">${esc(t.hint)}</code>${runBtn}${get}</span>` : get;
-    return `<span class="pill">${t.name} not found</span>${hintHtml}`;
+    const url = t.url || TOOL_DOWNLOADS[t.id] || null;
+    const label = t.optional ? `${t.name} not found` : `${t.name} missing`;
+    const title = cmd ? `Click to run: ${cmd}` : (url ? `Click to download ${t.name}` : label);
+    const cls = `pill pill-btn tool-pill-missing ${t.optional ? '' : 'warn'}`.trim();
+    return `<button type="button" class="${cls}" data-tool-id="${escAttr(t.id)}" ${cmd ? `data-run-cmd="${escAttr(cmd)}"` : ''} ${(!cmd && url) ? `data-get="${escAttr(url)}"` : ''} title="${escAttr(title)}">${esc(label)}</button>`;
   }
-  if (!t.found) return `<span class="pill warn">${t.name} missing</span><button class="btn btn-sm" data-get="${TOOL_DOWNLOADS[t.id] ?? ''}">Get ${t.name} ${svgIcon('external', 12)}</button>`;
   const version = t.version ? ' ' + esc(t.version) : '';
-  return `<span class="pill ok">${t.name}${version} ready</span>`;
+  return `<span class="pill ok">${esc(t.name)}${version} ready</span>`;
 }
 function renderDetection(): void {
   const d = appState.detect;
@@ -1044,6 +1049,57 @@ function modelLabel(a: DetectedAgent | null): string {
   return a.api && a.version ? a.version : a.name;
 }
 
+const EFFORTS = ['Low', 'Medium', 'High', 'Extra'] as const;
+type EffortLevel = typeof EFFORTS[number];
+
+function currentEffort(): EffortLevel {
+  const stored = store.get<string>('breeze.effort', 'Medium');
+  return (EFFORTS.find(e => e.toLowerCase() === stored.toLowerCase()) ?? 'Medium') as EffortLevel;
+}
+
+function setEffort(eff: EffortLevel): void {
+  store.set('breeze.effort', eff);
+}
+
+async function applyModelAndEffort(a: DetectedAgent, model: string, effort: EffortLevel): Promise<void> {
+  setEffort(effort);
+  if (a.id === 'codex') {
+    await api.agent.setModel('codex', model, effort.toLowerCase());
+    a.version = model;
+    saveApp();
+    renderAgentPill();
+    toast(`Codex model set to ${model} (${effort} effort)`);
+  } else if (a.api) {
+    await api.llm.setModel(model);
+    a.version = model;
+    saveApp();
+    renderAgentPill();
+    toast(`Local LLM model set to ${model} (${effort} effort)`);
+  }
+}
+
+function modelMenuItems(a: DetectedAgent, onSelect?: () => void): MenuItem[] {
+  return (a.models ?? []).map(m => ({
+    label: m,
+    checked: () => (a.version || a.models?.[0]) === m,
+    subClass: 'effort-menu',
+    sub: () => EFFORTS.map(eff => ({
+      label: eff,
+      checked: () => (a.version || a.models?.[0]) === m && currentEffort() === eff,
+      run: () => {
+        background(applyModelAndEffort(a, m, eff).then(() => {
+          onSelect?.();
+        }));
+      }
+    })),
+    run: () => {
+      background(applyModelAndEffort(a, m, currentEffort()).then(() => {
+        onSelect?.();
+      }));
+    }
+  }));
+}
+
 function updateComposerModelSelect(a: DetectedAgent | null): void {
   const sel = $('#agentModelSelect') as HTMLSelectElement | null;
   if (!sel) return;
@@ -1057,28 +1113,19 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
   sel.classList.remove('hidden');
   if (btn) btn.classList.remove('hidden');
   const current = a.version || a.models[0];
+  const eff = currentEffort();
   sel.innerHTML = a.models.map(m => `<option value="${escAttr(m)}"${m === current ? ' selected' : ''}>${esc(m)}</option>`).join('');
   sel.value = current;
   if (btn) {
-    btn.innerHTML = `<span class="dd-val">${esc(current)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.innerHTML = `<span class="dd-val">${esc(current)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.title = `${current} (${eff} effort)`;
   }
   sel.onchange = async () => {
     const chosen = sel.value;
+    await applyModelAndEffort(a, chosen, currentEffort());
     if (btn) {
-      btn.innerHTML = `<span class="dd-val">${esc(chosen)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-    }
-    if (a.id === 'codex') {
-      await api.agent.setModel('codex', chosen);
-      a.version = chosen;
-      saveApp();
-      renderAgentPill();
-      toast(`Codex model set to ${chosen}`);
-    } else if (a.api) {
-      await api.llm.setModel(chosen);
-      a.version = chosen;
-      saveApp();
-      renderAgentPill();
-      toast(`Local LLM model set to ${chosen}`);
+      btn.innerHTML = `<span class="dd-val">${esc(chosen)}<small class="dd-eff"> · ${esc(currentEffort())}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+      btn.title = `${chosen} (${currentEffort()} effort)`;
     }
   };
 }
@@ -1087,29 +1134,7 @@ function agentPillMenuItems(): MenuItem[] {
   const items: MenuItem[] = [];
   if (a && a.found && a.models && a.models.length) {
     items.push({ label: `${a.name} Models:`, enabled: () => false });
-    for (const m of a.models) {
-      items.push({
-        label: m,
-        checked: () => (a.version || a.models?.[0]) === m,
-        run: () => {
-          if (a.id === 'codex') {
-            background(api.agent.setModel('codex', m).then(() => {
-              a.version = m;
-              saveApp();
-              renderAgentPill();
-              toast(`Codex model set to ${m}`);
-            }));
-          } else if (a.api) {
-            background(api.llm.setModel(m).then(() => {
-              a.version = m;
-              saveApp();
-              renderAgentPill();
-              toast(`Local LLM model set to ${m}`);
-            }));
-          }
-        }
-      });
-    }
+    items.push(...modelMenuItems(a));
     items.push({ sep: true });
   }
   items.push({ label: 'Switch Agent:', enabled: () => false });
@@ -1143,8 +1168,11 @@ function renderAgentPill(): void {
 }
 
 $('#agentPill').onclick = e => {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  popupMenu(r.left, r.bottom + 4, agentPillMenuItems());
+  const btn = e.currentTarget as HTMLElement;
+  if (btn.classList.contains('open')) { closeMenu(); return; }
+  btn.classList.add('open');
+  const r = btn.getBoundingClientRect();
+  popupMenu(r.left, r.bottom + 4, agentPillMenuItems(), () => btn.classList.remove('open'));
 };
 
 function openAgentPicker(): void {
@@ -1201,17 +1229,17 @@ function swapScreen(to: string): void {
     }
     return;
   }
-  
+
   const prev = screens.find(el => el !== next && !el.classList.contains('hidden') && !el.classList.contains('screen-out'));
   clearTimeout(swapTimer);
-  
+
   for (const el of screens) {
     if (el !== next && el !== prev) {
       el.classList.remove('screen-out');
       el.classList.add('hidden');
     }
   }
-  
+
   if (!next.classList.contains('hidden') && !next.classList.contains('screen-out')) return; // already showing
   next.classList.remove('hidden', 'screen-out', 'screen-in');
   const _ = next.offsetWidth; // restart the entrance animation
@@ -1232,6 +1260,7 @@ function showIde(): void {
   renderUser();
   applyLayout();
   renderEditor();
+  updateActIndicator(true);
 }
 
 /* ================= Agents (data) ================= */
@@ -1517,7 +1546,7 @@ class JsonChecker {
   private list(close: string, item: () => void): void {
     this.i++; this.ws();
     if (this.t[this.i] === close) { this.i++; return; }
-    for (;;) {
+    for (; ;) {
       item(); this.ws();
       if (this.t[this.i] === close) { this.i++; return; }
       if (this.t[this.i] !== ',') this.fail(this.ended ? `Expected '${close}' but the file ended` : `Expected ',' or '${close}'`);
@@ -1942,7 +1971,7 @@ function moveTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
 const entryFile = (e: FileSystemFileEntry) => new Promise<File>((res, rej) => e.file(res, rej));
 async function entryChildren(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
   const reader = dir.createReader(), all: FileSystemEntry[] = [];
-  for (;;) { // readEntries returns at most ~100 at a time
+  for (; ;) { // readEntries returns at most ~100 at a time
     const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej));
     if (!batch.length) return all;
     all.push(...batch);
@@ -2180,13 +2209,23 @@ function chevClass(e: DirEntry, open: boolean): string {
   if (!e.dir) return 'none';
   return open ? 'open' : '';
 }
+function isIgnoredPath(p: string, ignored: Set<string>): boolean {
+  if (ignored.has(p) || p === '.git' || p.startsWith('.git/')) return true;
+  let cur = p;
+  while (cur.includes('/')) {
+    cur = cur.slice(0, cur.lastIndexOf('/'));
+    if (ignored.has(cur)) return true;
+  }
+  return false;
+}
 function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof gitDecor>, enter: boolean): string {
   const open = e.dir && expanded.has(p);
   const lock = locks[p];
   const lockTag = lock ? `<span class="lock tint-${lock}">${agentsDef[lock].name}</span>` : '';
   const g = e.dir ? (decor.dirs.has(p) && 'has-changes') || '' : decor.files.get(p) ?? '';
+  const isIgnored = isIgnoredPath(p, decor.ignored);
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
-  const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, enter ? 'enter' : ''].filter(Boolean).join(' ');
+  const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, isIgnored ? 'git-ignored' : '', enter ? 'enter' : ''].filter(Boolean).join(' ');
   const icon = e.dir ? folderIcon(e.name, open) : fileIcon(e.name);
   return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : 'draggable="true"'} title="${escAttr(p)}">
     <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${esc(e.name)}</span>${lockTag}${gitTag}</div>`;
@@ -2446,7 +2485,10 @@ function tabHtml(n: string): string {
 function renderTabs(): void {
   // Re-rendering mid-drag would drop the tab being dragged; catch up when it lands.
   if (tabDrag?.moved) { tabDrag.stale = true; return; }
-  $('#tabs').innerHTML = openTabs.map(tabHtml).join('') + (runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '');
+  const tabsEl = $('#tabs');
+  const hasTabs = openTabs.length > 0;
+  tabsEl.classList.toggle('hidden', !hasTabs);
+  tabsEl.innerHTML = hasTabs ? openTabs.map(tabHtml).join('') + (runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '') : '';
   placeTabInk();
 }
 // The blue line under the open tab is one element that glides from the last tab to the new one.
@@ -3758,6 +3800,7 @@ function applyLayout(): void {
   icon('tglSide', 'left', layout.sideOpen); icon('tglTerm', 'bottom', layout.termOpen); icon('tglAgents', 'right', layout.agentsOpen);
   store.set('breeze.layout', layout);
   syncScroll();
+  updateActIndicator();
 }
 window.addEventListener('resize', applyLayout);
 // Dragging below a threshold collapses the panel; dragging back out reopens it.
@@ -3797,6 +3840,7 @@ interface MenuItem {
   label?: string; act?: string; run?: () => void; key?: string; sep?: boolean; checked?: () => boolean; enabled?: () => boolean; native?: boolean;
   header?: User;              // a "who is signed in" row
   sub?: () => MenuItem[];     // opens a submenu on hover
+  subClass?: string;          // custom css class for submenu
 }
 const hasFile = () => !!activeText();
 function searchSelection(): void {
@@ -3930,88 +3974,104 @@ function confirmDiscard(): Promise<boolean> {
 
 interface Menu { name: string; items: MenuItem[]; }
 const MENUS: Menu[] = [
-  { name: 'File', items: [
-    { label: 'New File…', act: 'file.newFile', key: 'Ctrl+N' },
-    { label: 'New Folder…', act: 'file.newFolder' },
-    { sep: true },
-    { label: 'Open Folder…', act: 'file.openFolder', key: 'Ctrl+O' },
-    { label: 'Open Recent…', act: 'file.openRecent' },
-    { sep: true },
-    { label: 'Save', act: 'file.save', key: 'Ctrl+S', enabled: hasFile },
-    { label: 'Save All', act: 'file.saveAll', key: 'Ctrl+Alt+S', enabled: () => [...buffers.values()].some(isDirty) },
-    { sep: true },
-    { label: 'Close Editor', act: 'file.closeEditor', key: 'Ctrl+W', enabled: () => !!active },
-    { label: 'Close Folder', act: 'file.closeFolder', enabled: () => !!rootInfo },
-    { sep: true },
-    { label: 'Exit', act: 'file.exit' },
-  ] },
-  { name: 'Edit', items: [
-    { label: 'Undo', act: 'edit.undo', key: 'Ctrl+Z', native: true },
-    { label: 'Redo', act: 'edit.redo', key: 'Ctrl+Y', native: true },
-    { sep: true },
-    { label: 'Cut', act: 'edit.cut', key: 'Ctrl+X', native: true },
-    { label: 'Copy', act: 'edit.copy', key: 'Ctrl+C', native: true },
-    { label: 'Paste', act: 'edit.paste', key: 'Ctrl+V', native: true },
-    { sep: true },
-    { label: 'Find', act: 'edit.find', key: 'Ctrl+F', enabled: hasFile },
-    { label: 'Find in Files', act: 'view.search', key: 'Ctrl+Shift+F' },
-    { sep: true },
-    { label: 'Toggle Line Comment', act: 'edit.comment', key: 'Ctrl+/', enabled: hasFile },
-  ] },
-  { name: 'Selection', items: [
-    { label: 'Select All', act: 'edit.selectAll', key: 'Ctrl+A', native: true },
-    { label: 'Select Line', act: 'sel.line', key: 'Ctrl+L', enabled: hasFile },
-    { sep: true },
-    { label: 'Copy Line Down', act: 'sel.dup', key: 'Shift+Alt+Down', enabled: hasFile },
-    { label: 'Move Line Up', act: 'sel.up', key: 'Alt+Up', enabled: hasFile },
-    { label: 'Move Line Down', act: 'sel.down', key: 'Alt+Down', enabled: hasFile },
-  ] },
-  { name: 'View', items: [
-    { label: 'Explorer', act: 'view.files', key: 'Ctrl+Shift+E' },
-    { label: 'Search', act: 'view.search', key: 'Ctrl+Shift+F' },
-    { label: 'Checkpoints', act: 'view.git', key: 'Ctrl+Shift+G' },
-    { sep: true },
-    { label: 'Primary Side Bar', act: 'view.toggleSide', key: 'Ctrl+B', checked: () => layout.sideOpen },
-    { label: 'Agents Panel', act: 'view.toggleAgents', key: 'Ctrl+Alt+B', checked: () => layout.agentsOpen },
-    { label: 'Terminal', act: 'term.toggle', key: 'Ctrl+`', checked: () => layout.termOpen },
-    { label: 'Preview', act: 'view.togglePreview', checked: () => layout.previewOpen },
-    { label: 'Reset Layout', act: 'view.resetLayout' },
-    { sep: true },
-    { label: 'Reload Window', act: 'win.reload', key: 'Ctrl+R' },
-    { label: 'Toggle Developer Tools', act: 'win.devtools', key: 'Ctrl+Shift+I' },
-  ] },
-  { name: 'Go', items: [
-    { label: 'Go to File…', act: 'go.file', key: 'Ctrl+P' },
-    { label: 'Go to Line…', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
-    { label: 'Next Problem', act: 'go.nextProblem', key: 'F8', enabled: hasFile },
-    { sep: true },
-    { label: 'Next Editor', act: 'go.nextEditor', key: 'Ctrl+Tab' },
-    { label: 'Previous Editor', act: 'go.prevEditor', key: 'Ctrl+Shift+Tab' },
-  ] },
-  { name: 'Run', items: [
-    { label: 'Run File', act: 'run.file', enabled: () => runnable(active) },
-    { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
-    { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
-    { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
-  ] },
-  { name: 'Terminal', items: [
-    { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
-    { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
-    { sep: true },
-    { label: 'Clear Terminal', act: 'term.clear' },
-    { label: 'Stop Running Command', act: 'term.kill', enabled: () => term.proc != null },
-  ] },
-  { name: 'Help', items: [
-    { label: 'Keyboard Shortcuts', act: 'help.keys' },
-    { label: 'Run Setup Again', act: 'help.setup' },
-    { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
-    { sep: true },
-    { label: 'IDE', act: 'mode.ide', checked: () => appState.mode === 'ide' },
-    { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
-    { sep: true },
-    { label: 'Add Account…', act: 'account.signIn' },
-    { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
-  ] },
+  {
+    name: 'File', items: [
+      { label: 'New File…', act: 'file.newFile', key: 'Ctrl+N' },
+      { label: 'New Folder…', act: 'file.newFolder' },
+      { sep: true },
+      { label: 'Open Folder…', act: 'file.openFolder', key: 'Ctrl+O' },
+      { label: 'Open Recent…', act: 'file.openRecent' },
+      { sep: true },
+      { label: 'Save', act: 'file.save', key: 'Ctrl+S', enabled: hasFile },
+      { label: 'Save All', act: 'file.saveAll', key: 'Ctrl+Alt+S', enabled: () => [...buffers.values()].some(isDirty) },
+      { sep: true },
+      { label: 'Close Editor', act: 'file.closeEditor', key: 'Ctrl+W', enabled: () => !!active },
+      { label: 'Close Folder', act: 'file.closeFolder', enabled: () => !!rootInfo },
+      { sep: true },
+      { label: 'Exit', act: 'file.exit' },
+    ]
+  },
+  {
+    name: 'Edit', items: [
+      { label: 'Undo', act: 'edit.undo', key: 'Ctrl+Z', native: true },
+      { label: 'Redo', act: 'edit.redo', key: 'Ctrl+Y', native: true },
+      { sep: true },
+      { label: 'Cut', act: 'edit.cut', key: 'Ctrl+X', native: true },
+      { label: 'Copy', act: 'edit.copy', key: 'Ctrl+C', native: true },
+      { label: 'Paste', act: 'edit.paste', key: 'Ctrl+V', native: true },
+      { sep: true },
+      { label: 'Find', act: 'edit.find', key: 'Ctrl+F', enabled: hasFile },
+      { label: 'Find in Files', act: 'view.search', key: 'Ctrl+Shift+F' },
+      { sep: true },
+      { label: 'Toggle Line Comment', act: 'edit.comment', key: 'Ctrl+/', enabled: hasFile },
+    ]
+  },
+  {
+    name: 'Selection', items: [
+      { label: 'Select All', act: 'edit.selectAll', key: 'Ctrl+A', native: true },
+      { label: 'Select Line', act: 'sel.line', key: 'Ctrl+L', enabled: hasFile },
+      { sep: true },
+      { label: 'Copy Line Down', act: 'sel.dup', key: 'Shift+Alt+Down', enabled: hasFile },
+      { label: 'Move Line Up', act: 'sel.up', key: 'Alt+Up', enabled: hasFile },
+      { label: 'Move Line Down', act: 'sel.down', key: 'Alt+Down', enabled: hasFile },
+    ]
+  },
+  {
+    name: 'View', items: [
+      { label: 'Explorer', act: 'view.files', key: 'Ctrl+Shift+E' },
+      { label: 'Search', act: 'view.search', key: 'Ctrl+Shift+F' },
+      { label: 'Checkpoints', act: 'view.git', key: 'Ctrl+Shift+G' },
+      { sep: true },
+      { label: 'Primary Side Bar', act: 'view.toggleSide', key: 'Ctrl+B', checked: () => layout.sideOpen },
+      { label: 'Agents Panel', act: 'view.toggleAgents', key: 'Ctrl+Alt+B', checked: () => layout.agentsOpen },
+      { label: 'Terminal', act: 'term.toggle', key: 'Ctrl+`', checked: () => layout.termOpen },
+      { label: 'Preview', act: 'view.togglePreview', checked: () => layout.previewOpen },
+      { label: 'Reset Layout', act: 'view.resetLayout' },
+      { sep: true },
+      { label: 'Reload Window', act: 'win.reload', key: 'Ctrl+R' },
+      { label: 'Toggle Developer Tools', act: 'win.devtools', key: 'Ctrl+Shift+I' },
+    ]
+  },
+  {
+    name: 'Go', items: [
+      { label: 'Go to File…', act: 'go.file', key: 'Ctrl+P' },
+      { label: 'Go to Line…', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
+      { label: 'Next Problem', act: 'go.nextProblem', key: 'F8', enabled: hasFile },
+      { sep: true },
+      { label: 'Next Editor', act: 'go.nextEditor', key: 'Ctrl+Tab' },
+      { label: 'Previous Editor', act: 'go.prevEditor', key: 'Ctrl+Shift+Tab' },
+    ]
+  },
+  {
+    name: 'Run', items: [
+      { label: 'Run File', act: 'run.file', enabled: () => runnable(active) },
+      { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
+      { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
+      { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
+    ]
+  },
+  {
+    name: 'Terminal', items: [
+      { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
+      { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
+      { sep: true },
+      { label: 'Clear Terminal', act: 'term.clear' },
+      { label: 'Stop Running Command', act: 'term.kill', enabled: () => term.proc != null },
+    ]
+  },
+  {
+    name: 'Help', items: [
+      { label: 'Keyboard Shortcuts', act: 'help.keys' },
+      { label: 'Run Setup Again', act: 'help.setup' },
+      { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
+      { sep: true },
+      { label: 'Breeze Code', act: 'mode.ide', checked: () => appState.mode === 'ide' },
+      { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
+      { sep: true },
+      { label: 'Add Account', act: 'account.signIn' },
+      { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
+    ]
+  },
 ];
 // Go, Run and Help stay out of the menu bar; their shortcuts still work and Help lives under the gear button.
 const BAR_MENUS = MENUS.filter(m => !['Go', 'Run', 'Help'].includes(m.name));
@@ -4146,7 +4206,11 @@ function openSubmenu(btn: HTMLElement, it: MenuItem): void {
   closeSubmenu();
   btn.classList.add('sub-open');
   const r = btn.getBoundingClientRect();
-  const sub = renderMenu(r.right + 4, r.top - 5, it.sub?.() ?? [], 'menu sub');
+  const cls = 'menu sub' + (it.subClass ? ` ${it.subClass}` : '');
+  const sub = renderMenu(r.right + 4, r.top - 5, it.sub?.() ?? [], cls);
+  if (btn.closest('.menu.up')) {
+    sub.style.top = `${Math.max(8, r.bottom - sub.offsetHeight + 5)}px`;
+  }
   if (sub.getBoundingClientRect().left < r.right) sub.style.left = `${Math.max(8, r.left - sub.offsetWidth - 4)}px`; // no room on the right
 }
 function closeSubmenu(): void {
@@ -4186,7 +4250,7 @@ function closeMenu(): void {
   const cb = menuOnClose; menuOnClose = null; cb?.();
 }
 document.addEventListener('mousedown', e => {
-  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory')) closeMenu();
+  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, #agentPill')) closeMenu();
 });
 window.addEventListener('blur', closeMenu);
 function moveKbSelection(down: boolean): void {
@@ -4250,10 +4314,41 @@ $('#settingsBtn').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r 
 $('#boxSettings').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right - 260, r.bottom + 6]);
 
 function showShortcuts(): void {
-  const rows: string[] = [];
-  for (const { name, items } of MENUS) for (const it of items) if (it.key) rows.push(`<span>${esc(name)} › ${esc(it.label ?? '')}</span><kbd>${it.key}</kbd>`);
-  rows.push('<span>Editor › Indent / outdent</span><kbd>Tab / Shift+Tab</kbd>', '<span>Explorer › Rename file</span><kbd>F2</kbd>', '<span>Menu bar</span><kbd>Alt</kbd>', '<span>Tabs › Reorder</span><kbd>Drag a tab</kbd>');
-  openModal(`<h3>Keyboard shortcuts</h3><p class="sub">Drag any panel edge to resize it; drag it closed to hide it.</p><div class="kbd-table">${rows.join('')}</div><div class="row end"><button class="btn btn-primary" data-close>Close</button></div>`);
+  interface ShortcutItem { label: string; key: string; }
+  const all: ShortcutItem[] = [];
+  for (const { items } of MENUS) {
+    for (const it of items) {
+      if (it.key && it.label) all.push({ label: it.label, key: it.key });
+    }
+  }
+  all.push(
+    { label: 'Indent / outdent', key: 'Tab / Shift+Tab' },
+    { label: 'Rename file', key: 'F2' },
+    { label: 'Menu bar', key: 'Alt' },
+    { label: 'Reorder tabs', key: 'Drag a tab' }
+  );
+
+  openModal(`<h3>Keyboard shortcuts</h3><p class="sub">Drag any panel edge to resize it; drag it closed to hide it.</p>
+    <input class="input w-full mb-12" id="shortcutSearch" placeholder="Search keyboard shortcuts…" spellcheck="false" autocomplete="off">
+    <div class="kbd-table" id="shortcutList"></div>
+    <div class="row end"><button class="btn btn-primary" data-close>Close</button></div>`, m => {
+    const input = $<HTMLInputElement>('#shortcutSearch', m);
+    const list = $('#shortcutList', m);
+    input?.focus();
+    const render = () => {
+      const q = (input?.value || '').toLowerCase().trim();
+      const filtered = q
+        ? all.filter(s => s.label.toLowerCase().includes(q) || s.key.toLowerCase().includes(q))
+        : all;
+      if (!filtered.length) {
+        list.innerHTML = '<div class="side-note" style="grid-column: 1 / -1; text-align: center; padding: 20px 0;">No matching shortcuts</div>';
+      } else {
+        list.innerHTML = filtered.map(s => `<span>${esc(s.label)}</span><kbd>${esc(s.key)}</kbd>`).join('');
+      }
+    };
+    render();
+    if (input) input.oninput = render;
+  });
 }
 
 // Buttons with data-act anywhere in the page run the matching command.
@@ -4608,8 +4703,8 @@ let lastRunFiles: string[] = [];
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
   s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
-  
-    const box = s.prompt.closest<HTMLElement>('.composer-box');
+
+  const box = s.prompt.closest<HTMLElement>('.composer-box');
   if (box) {
     box.addEventListener('dragover', e => {
       if (e.dataTransfer?.types.includes('Files')) {
@@ -4690,7 +4785,8 @@ function setBusy(on: boolean): void {
   for (const { send, prompt } of Object.values(SURFACES)) {
     send.classList.toggle('stop', on);
     void setIcon(send, on ? 'stop' : 'send');
-    $('span', send).textContent = on ? 'Stop' : 'Send';
+    const span = $('span', send);
+    if (span) span.textContent = on ? 'Stop' : 'Send';
     send.title = on ? 'Stop the agent' : 'Send (Enter)';
     prompt.closest('.composer-box')?.classList.toggle('busy', on);
   }
@@ -4851,20 +4947,33 @@ function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
   closeMenu();
   const label = () => {
     const text = sel.selectedOptions[0]?.text || sel.value || '';
+    if (sel.id === 'agentModelSelect') {
+      const eff = currentEffort();
+      btn.innerHTML = `<span class="dd-val">${esc(text)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+      btn.title = `${text} (${eff} effort)`;
+      return;
+    }
     btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
   };
-  const items: MenuItem[] = [...sel.options].map(o => ({
-    label: o.text,
-    checked: () => o.value === sel.value,
-    enabled: () => !o.disabled,
-    run: () => {
-      sel.value = o.value;
-      label();
-      if (sel.onchange) void (sel.onchange as (e: Event) => void)(new Event('change'));
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      btn.focus();
-    },
-  }));
+  const a = sel.id === 'agentModelSelect' ? selectedAgent() : null;
+  const items: MenuItem[] = (a && a.found && a.models && a.models.length)
+    ? modelMenuItems(a, () => {
+        sel.value = a.version || a.models?.[0] || '';
+        label();
+        btn.focus();
+      })
+    : [...sel.options].map(o => ({
+        label: o.text,
+        checked: () => o.value === sel.value,
+        enabled: () => !o.disabled,
+        run: () => {
+          sel.value = o.value;
+          label();
+          if (sel.onchange) void (sel.onchange as (e: Event) => void)(new Event('change'));
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          btn.focus();
+        },
+      }));
   const r = btn.getBoundingClientRect();
   btn.classList.add('open');
   btn.setAttribute('aria-expanded', 'true');
@@ -4891,8 +5000,14 @@ function enhanceSelect(sel: HTMLSelectElement): void {
   sel.setAttribute('aria-hidden', 'true');
   sel.after(btn);
   const label = () => {
-  const text = sel.selectedOptions[0]?.text || sel.value || '';
-  btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    const text = sel.selectedOptions[0]?.text || sel.value || '';
+    if (sel.id === 'agentModelSelect') {
+      const eff = currentEffort();
+      btn.innerHTML = `<span class="dd-val">${esc(text)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+      btn.title = `${text} (${eff} effort)`;
+      return;
+    }
+    btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
   };
   label();
   sel.addEventListener('change', label);
@@ -4902,8 +5017,8 @@ function enhanceSelect(sel: HTMLSelectElement): void {
     e.preventDefault();
     if (!btn.classList.contains('open')) openDropdown(sel, btn);
   };
-  
-    new MutationObserver(() => {
+
+  new MutationObserver(() => {
     btn.classList.toggle('hidden', sel.classList.contains('hidden'));
     label();
   }).observe(sel, { childList: true, attributes: true, attributeFilter: ['class'] });
@@ -4944,13 +5059,14 @@ function renderBranch(): void {
   badge.classList.toggle('hidden', !n);
 }
 // Explorer decorations: path -> status class, plus every folder that contains a change.
-function gitDecor(): { files: Map<string, string>; dirs: Set<string> } {
+function gitDecor(): { files: Map<string, string>; dirs: Set<string>; ignored: Set<string> } {
   const files = new Map<string, string>(), dirs = new Set<string>();
+  const ignored = new Set<string>(gitState.ignored ?? []);
   for (const f of gitState.files ?? []) {
     files.set(f.path, statusOf(f).cls);
     for (let d = dirName(f.path); d; d = dirName(d)) dirs.add(d);
   }
-  return { files, dirs };
+  return { files, dirs, ignored };
 }
 const GIT_STATUS: Record<string, { letter: string; cls: string; title: string }> = {
   A: { letter: 'A', cls: 'git-a', title: 'Added' },
@@ -5186,23 +5302,38 @@ function renderGraphRows(): string {
     </div>${detail}`;
   }).join('');
 }
+function splitFilePath(p: string): { name: string; ext: string } {
+  const slash = p.lastIndexOf('/');
+  const dot = p.lastIndexOf('.');
+  if (dot > slash + 1) {
+    return { name: p.slice(0, dot), ext: p.slice(dot) };
+  }
+  return { name: p, ext: '' };
+}
 function commitDetailHtml(d?: GitCommitDetail): string {
   if (!d) return '<div class="commit-detail"><div class="side-note">Loading…</div></div>';
-  const files = d.files.map(f => `<div class="file" data-open-file="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp">${esc(f.path)}</span><span><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`);
+  const files = d.files.map(f => {
+    const { name, ext } = splitFilePath(f.path);
+    return `<div class="file" data-open-file="${escAttr(f.path)}" title="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp"><span class="fp-name">${esc(name)}</span><span class="fp-ext">${esc(ext)}</span></span><span class="file-stats"><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`;
+  });
   return `<div class="commit-detail">
     <div class="cd-msg">${esc(d.message)}</div>
     <div class="cd-meta">${esc(d.author)} · ${esc(d.when)} · <code>${d.hash.slice(0, 8)}</code></div>
     ${files.join('')}
-    <div class="row mt-8"><button class="btn btn-sm" data-branch-from="${d.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${d.hash}">Copy id</button></div>
+    <div class="row mt-8 commit-actions"><button class="btn btn-sm" data-branch-from="${d.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${d.hash}">Copy id</button></div>
   </div>`;
 }
 // Opens or closes one checkpoint's details in place; the rest of the panel is left alone.
 const commitRow = (hash: string) => $(`#scm .commit[data-commit="${hash}"]`);
 function closeCommitDetail(hash: string): void {
   const row = commitRow(hash);
-  row?.classList.remove('on')
-  const d = row?.nextElementSibling;
-  if (d?.classList.contains('commit-detail')) d.remove();
+  row?.classList.remove('on');
+  const d = row?.nextElementSibling as HTMLElement | null;
+  if (d?.classList.contains('commit-detail')) {
+    d.classList.remove('enter');
+    d.classList.add('exit');
+    setTimeout(() => { if (d.classList.contains('exit')) d.remove(); }, 180);
+  }
 }
 function placeCommitDetail(hash: string): void {
   const row = commitRow(hash);
@@ -5210,10 +5341,15 @@ function placeCommitDetail(hash: string): void {
   const holder = document.createElement('div');
   holder.innerHTML = commitDetailHtml(commitDetails.get(hash));
   const fresh = holder.firstElementChild as HTMLElement;
-  const old = row.nextElementSibling;
+  const old = row.nextElementSibling as HTMLElement | null;
   // Loading → loaded swaps the contents only, so the box doesn't animate in twice.
-  if (old?.classList.contains('commit-detail')) old.innerHTML = fresh.innerHTML;
-  else { fresh.classList.add('enter'); row.after(fresh); }
+  if (old?.classList.contains('commit-detail') && !old.classList.contains('exit')) old.innerHTML = fresh.innerHTML;
+  else {
+    if (old?.classList.contains('commit-detail')) old.remove();
+    fresh.classList.add('enter');
+    fresh.addEventListener('animationend', () => fresh.classList.remove('enter'), { once: true });
+    row.after(fresh);
+  }
   row.classList.add('on');
 }
 async function toggleCommit(hash: string): Promise<void> {
@@ -5266,20 +5402,23 @@ async function newBranch(from?: string): Promise<void> {
   await gitOp(() => api.git.switchTo(name, true, from), `Switched to new branch ${name}`);
 }
 function branchListHtml(branches: string[], q: string): string {
-  const create = q && !branches.includes(q) ? `<div class="qo-item" data-new="1"><span>＋ Create branch “${esc(q)}”</span></div>` : '';
+  const create = q && !branches.includes(q)
+    ? `<div class="qo-item" data-new="1"><span class="qo-title">${svgIcon('plus', 14)} <span>Create branch “${esc(q)}”</span></span></div>`
+    : '';
 
   const rows = branches.filter(b => b.toLowerCase().includes(q.toLowerCase())).map(b => {
-
-  const current = b === gitState.branch;
-  const del = current ? '' : `<button class="br-del" data-del="${escAttr(b)}" title="Hold for 5 seconds to delete" aria-label="Hold for 5 seconds to delete ${escAttr(b)}">${svgIcon('trash', 14)}</button>`;
-  return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span>${svgIcon('gitBranch', 14)} ${esc(b)}</span>${current ? '<small>current</small>' : ''}${del}</div>`;
+    const current = b === gitState.branch;
+    const del = current
+      ? ''
+      : `<button class="br-del" data-del="${escAttr(b)}" title="Hold for 5 seconds to delete" aria-label="Hold for 5 seconds to delete ${escAttr(b)}">${svgIcon('trash', 14)}</button>`;
+    return `<div class="qo-item ${current ? 'on' : ''}" data-br="${escAttr(b)}"><span class="qo-title">${svgIcon('gitBranch', 14)} <span>${esc(b)}</span></span>${current ? '<small class="qo-badge">current</small>' : ''}${del}</div>`;
   });
 
   return create + rows.join('');
 }
 
 
-const HOLD_MS =5000;//hold time duration
+const HOLD_MS = 5000;//hold time duration
 // Fires onDone only if the button is held for the full 5 seconds; releasing, leaving the button or losing focus cancels.
 function holdToDelete(btn: HTMLElement, onDone: () => void): void {
   let timer: TimeoutId | undefined
@@ -5307,7 +5446,6 @@ function holdToDelete(btn: HTMLElement, onDone: () => void): void {
     btn.setPointerCapture(e.pointerId);
     start();
   };
-  btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
   btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
   btn.onpointerup = () => stop(true);
   btn.onpointercancel = () => stop(false);
@@ -5378,15 +5516,28 @@ Object.assign(commands, {
 
 /* ================= Views ================= */
 
-function updateActIndicator(): void {
+function updateActIndicator(immediate = false): void {
   const activeBtn = document.querySelector<HTMLElement>('.act-btn[data-view].on');
   const ind = document.getElementById('actIndicator');
-  if (!activeBtn || !ind) return;
+  if (!ind) return;
+  if (!activeBtn || !layout.sideOpen || !activeBtn.offsetParent) {
+    ind.style.opacity = '0';
+    return;
+  }
   const top = activeBtn.offsetTop + (activeBtn.offsetHeight - 20) / 2;
-  ind.style.transform = `translateY(${top}px)`;
-  ind.style.opacity = '1';
+  if (immediate || !ind.classList.contains('ready')) {
+    ind.style.transition = 'none';
+    ind.style.transform = `translateY(${top}px)`;
+    ind.style.opacity = '1';
+    void ind.offsetHeight;
+    ind.style.transition = '';
+    ind.classList.add('ready');
+  } else {
+    ind.style.transform = `translateY(${top}px)`;
+    ind.style.opacity = '1';
+  }
 }
-window.addEventListener('resize', updateActIndicator);
+window.addEventListener('resize', () => updateActIndicator(true));
 
 function showView(v: string, reveal = false): void {
   layout.view = v;
@@ -5421,42 +5572,60 @@ function enterMode(mode: WorkMode): void {
 }
 function renderBoxFolder(): void {
   const chip = $('#boxFolder');
-  chip.textContent = rootInfo ? `📁 ${rootInfo.name}` : '📁 Breeze Box folder';
+  const name = rootInfo ? rootInfo.name : 'Breeze Box folder';
+  chip.innerHTML = `${svgIcon('folder', 13)}<span>${esc(name)}</span>`;
   chip.title = rootInfo ? `Agents work in ${rootInfo.root}` : 'No project open: agents work in Documents/Breeze Box';
 }
-// Every agent Breeze found, to pick from without leaving the chat.
 function boxAgentItems(): MenuItem[] {
+  const a = selectedAgent();
+  const items: MenuItem[] = [];
+  if (a && a.found && a.models && a.models.length) {
+    items.push({ label: `${a.name} Models:`, enabled: () => false });
+    items.push(...modelMenuItems(a));
+    items.push({ sep: true });
+  }
+  items.push({ label: 'Switch Agent:', enabled: () => false });
   const agents = appState.detect?.agents ?? [];
-  const items: MenuItem[] = agents.map(a => ({
-    label: a.api && a.version ? `${a.name} · ${a.version}` : a.name,
-    key: a.found ? undefined : 'not set up',
-    checked: () => a.id === appState.agent,
-    enabled: () => a.found,
-    run: () => {
-      appState.agent = a.id;
-      saveApp();
-      renderAgentPill();
-      if (SURFACES.box.chat.querySelector('.empty')) emptyChat(SURFACES.box);
-      toast(`Breeze Box now uses ${a.name}`);
-    },
-  }));
+  for (const ag of agents) {
+    items.push({
+      label: ag.api && ag.version ? `${ag.name} · ${ag.version}` : ag.name,
+      key: ag.found ? undefined : 'not set up',
+      checked: () => ag.id === appState.agent,
+      enabled: () => ag.found,
+      run: () => {
+        appState.agent = ag.id;
+        saveApp();
+        renderAgentPill();
+        if (SURFACES.box.chat.querySelector('.empty')) emptyChat(SURFACES.box);
+        toast(`Breeze Box now uses ${ag.name}`);
+      },
+    });
+  }
   return [...items, { sep: true }, { label: 'Manage agents…', run: openAgentPicker }];
 }
 $('#boxModel').onclick = e => {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  popupMenu(r.left, r.top - 8, boxAgentItems());
+  const btn = e.currentTarget as HTMLElement;
+  if (btn.classList.contains('open')) { closeMenu(); return; }
+  btn.classList.add('open');
+  const r = btn.getBoundingClientRect();
+  popupMenu(r.left, r.top - 8, boxAgentItems(), () => btn.classList.remove('open'));
   const m = $('#menuRoot .menu');
+  m.classList.add('up');
   m.style.top = `${Math.max(8, r.top - m.offsetHeight - 6)}px`; // open upwards, above the composer
 };
 $('#boxFolder').onclick = e => {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const btn = e.currentTarget as HTMLElement;
+  if (btn.classList.contains('open')) { closeMenu(); return; }
+  btn.classList.add('open');
+  const r = btn.getBoundingClientRect();
   const choose = (create: boolean) => background(chooseProject(create).then(renderBoxFolder));
-  popupMenu(r.left, r.top, [
+  popupMenu(r.left, r.top - 8, [
     { label: 'Open Folder…', run: () => choose(false) },
     { label: 'Create New Project…', run: () => choose(true) },
     ...(rootInfo ? [{ sep: true }, { label: 'Close Folder', run: () => background(closeFolderCmd().then(renderBoxFolder)) }] : []),
-  ]);
+  ], () => btn.classList.remove('open'));
   const m = $('#menuRoot .menu');
+  m.classList.add('up');
   m.style.top = `${Math.max(8, r.top - m.offsetHeight - 6)}px`;
 };
 
@@ -5490,7 +5659,7 @@ $('#vibeArm').onclick = () => {
 function openFeedPicker(): void {
   openModal(`<h3>Vibe Mode feeds</h3><p class="sub">Pick what plays while your agents work. Connecting opens the site so you can sign in.</p>
     <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`,
-  m => void renderFeedChoices($('#feedPick', m)), () => { if (connectedSites().length && !appState.vibeArmed) setVibeArmed(true); });
+    m => void renderFeedChoices($('#feedPick', m)), () => { if (connectedSites().length && !appState.vibeArmed) setVibeArmed(true); });
 }
 commands['vibe.feeds'] = openFeedPicker;
 
@@ -5682,16 +5851,16 @@ $('#discord').onclick = () => {
     <label class="check-row mb-12"><input type="checkbox" id="dDetails" ${appState.discordDetails ? 'checked' : ''}> Show project and file names</label>
     <p class="sub fs-12">Project and file names can include client or employer names. The Discord app must be running on this computer.</p>
     <div class="row end"><button class="btn" data-close>Not now</button><button class="btn btn-primary" id="dOn">Turn on</button></div>`,
-  m => {
-    const box = $<HTMLInputElement>('#dDetails', m);
-    box.onchange = () => { appState.discordDetails = box.checked; $('#dPreview', m).innerHTML = preview(); };
-    const on = $<HTMLButtonElement>('#dOn', m);
-    on.onclick = async () => {
-      on.disabled = true; on.textContent = 'Connecting…';
-      if (await discordOn(box.checked)) closeModal();
-      else { on.disabled = false; on.textContent = 'Turn on'; }
-    };
-  });
+    m => {
+      const box = $<HTMLInputElement>('#dDetails', m);
+      box.onchange = () => { appState.discordDetails = box.checked; $('#dPreview', m).innerHTML = preview(); };
+      const on = $<HTMLButtonElement>('#dOn', m);
+      on.onclick = async () => {
+        on.disabled = true; on.textContent = 'Connecting…';
+        if (await discordOn(box.checked)) closeModal();
+        else { on.disabled = false; on.textContent = 'Turn on'; }
+      };
+    });
 };
 
 /* ================= Modal & misc ================= */
@@ -5738,6 +5907,7 @@ async function boot(): Promise<void> {
   if (appState.onboarded) enterMode(appState.mode);
   else goStep(step);
   booted = true;
+  updateActIndicator(true);
   const info = await api.fs.restore().catch(() => null);
   if (info) await loadWorkspace(info);
   else { term.cwd = await api.term.cwd(); renderPs(); }

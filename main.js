@@ -858,9 +858,11 @@ handle('sys:runCommand', async (_e, cmd) => {
   }
   return true;
 });
-handle('agent:setModel', async (_e, { agent, model }) => {
+handle('agent:setModel', async (_e, { agent, model, effort }) => {
   if (agent === 'codex') {
-    saveState({ codexModel: model || null });
+    const nextState = { codexModel: model || null };
+    if (effort !== undefined) nextState.codexEffort = effort || null;
+    saveState(nextState);
     return true;
   }
   return false;
@@ -998,8 +1000,13 @@ handle('agent:stop', (_e, runId) => {
 function cliArgs(agent, mode, prompt, session) {
   const build = mode === 'build';
   const args = ['exec', '--json', '-s', build ? 'workspace-write' : 'read-only', '--skip-git-repo-check'];
-  const model = loadState().codexModel;
+  const st = loadState();
+  const model = st.codexModel;
   if (model && SAFE_MODEL.test(model)) args.push('-m', model);
+  const effort = st.codexEffort;
+  if (effort && /^(low|medium|high|extra)$/i.test(effort)) {
+    args.push('-c', `model_reasoning_effort="${effort.toLowerCase()}"`);
+  }
   if (session) args.push('resume', session);
   args.push('-');
   if (build) return { args, prompt };
@@ -1398,10 +1405,10 @@ handle('git:status', async () => {
   let top;
   try { top = (await git(['rev-parse', '--show-toplevel'])).trim(); } catch { return { repo: false }; } // not a repository
   const [out, remotes] = await Promise.all([
-    git(['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all']),
+    git(['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all', '--ignored=matching']),
     git(['remote']).catch(() => ''),
   ]);
-  const res = { repo: true, branch: '', upstream: '', ahead: 0, behind: 0, hasCommits: true, hasRemote: !!remotes.trim(), files: [] };
+  const res = { repo: true, branch: '', upstream: '', ahead: 0, behind: 0, hasCommits: true, hasRemote: !!remotes.trim(), files: [], ignored: [] };
   const parts = out.split('\0');
   for (let i = 0; i < parts.length; i++) {
     const e = parts[i];
@@ -1409,8 +1416,15 @@ handle('git:status', async () => {
     else if (e) {
       const x = e[0], y = e[1];
       const rel = path.relative(root, path.join(top, e.slice(3)));
-      if (x === 'R' || x === 'C') i++; // the next entry is the original path
-      if (!rel.startsWith('..')) res.files.push({ path: rel.split(path.sep).join('/'), x, y }); // skip files outside the open folder
+      if (x === '!' && y === '!') {
+        if (!rel.startsWith('..')) {
+          const clean = rel.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+          if (clean) res.ignored.push(clean);
+        }
+      } else {
+        if (x === 'R' || x === 'C') i++; // the next entry is the original path
+        if (!rel.startsWith('..')) res.files.push({ path: rel.split(path.sep).join('/'), x, y }); // skip files outside the open folder
+      }
     }
   }
   return res;
