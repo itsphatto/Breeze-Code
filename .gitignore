@@ -3,3 +3,4 @@ node_modules/
 breeze.config.json
 dist
 breezescript.js
+.vscode

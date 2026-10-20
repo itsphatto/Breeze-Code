@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('breeze', {
   agent: {
     run: opts => invoke('agent:run', opts),
     stop: runId => invoke('agent:stop', runId),
-    setModel: (agent, model) => invoke('agent:setModel', { agent, model }),
+    setModel: (agent, model, effort) => invoke('agent:setModel', { agent, model, effort }),
     onEvent: cb => listen('agent:event', cb),
   },
   git: {

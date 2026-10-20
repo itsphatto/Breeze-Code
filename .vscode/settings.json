@@ -1,3 +1,7 @@
 {
-    "discord.enabled": false
+    "discord.enabled": false,
+    "sonarlint.connectedMode.project": {
+        "connectionId": "sapfire151",
+        "projectKey": "Sapfire151_BreezeIDE-Web"
+    }
 }
