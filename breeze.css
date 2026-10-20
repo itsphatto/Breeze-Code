@@ -224,6 +224,7 @@ body.resizing iframe, body.resizing-h iframe { pointer-events: none; }
 .act-btn { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; border: none; background: none; color: var(--text-3); position: relative; }
 .act-btn:hover { color: var(--text); background: var(--bg-3); }
 .act-btn.on { color: var(--text); }
+
 /* The gear turns while its menu is open and turns back when it closes. */
 #settingsBtn svg { transition: transform .5s cubic-bezier(.3,1.3,.5,1); }
 #settingsBtn.open { color: var(--text); background: var(--bg-3); }
@@ -449,7 +450,7 @@ body.resizing-h .term-body { transition: none; }
 body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scale(.97); pointer-events: none; user-select: none; }
 .vibe-stage { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; animation: fade .5s ease; }
 /* The card is exactly as wide as the 9:16 frame, whatever else it holds; the tab row gives way instead. */
-.vibe-stage { --vf-h: min(76vh, calc((100vw - 56px) * 16 / 9)); --vf-w: calc(var(--vf-h) * 9 / 16); }
+.vibe-stage { --vf-h: min(88vh, calc((100vw - 56px) * 16 / 9)); --vf-w: calc(var(--vf-h) * 9 / 16); }
 .vibe-panel { display: grid; grid-template-columns: var(--vf-w); gap: 10px; padding: 12px; box-sizing: content-box; background: var(--glass); border: 1px solid var(--glass-line); border-radius: 22px; box-shadow: 0 30px 90px rgba(0,0,0,.6); backdrop-filter: var(--glass-blur); animation: modalIn .5s cubic-bezier(.2,.8,.2,1); }
 .vibe-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .vibe-top > .icon-btn, .vibe-top > .btn { flex: none; }
@@ -672,18 +673,22 @@ body.vibing .ide { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 @keyframes sink { to { opacity: 0; transform: translateY(6px) scale(.98); } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(.97); } }
 @keyframes menuIn { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+
 @keyframes dropIn { from { opacity: 0; transform: translateY(-6px); } }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 10px) scale(.96); } }
 @keyframes toastOut { to { opacity: 0; transform: translate(-50%, 8px); } }
-@keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } }
+
 @keyframes treeRowIn {
   from { opacity: 0; transform: translateY(-4px); max-height: 0; }
   to { opacity: 1; transform: translateY(0); max-height: 32px; }
 }
+
 @keyframes treeRowOut {
   from { opacity: 1; transform: translateY(0); max-height: 32px; }
   to { opacity: 0; transform: translateY(-4px); max-height: 0; }
 }
+
+@keyframes rowIn { from { opacity: 0; transform: translateX(-6px); } }
 @keyframes tabIn { from { opacity: 0; max-width: 0; } to { max-width: 260px; } }
 @keyframes pop { 0% { transform: scale(.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 /* Overflowing tabs scroll sideways with the mouse wheel instead of showing a scrollbar. */
@@ -891,6 +896,8 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
 .drop-over { outline: 2px dashed var(--blue); outline-offset: -3px; }
 /*drag and drop file*/
 .tree-item.drop-over { background: var(--blue-soft); }
+.tree-item[draggable="true"] { cursor: grab; }
+.tree-item.dragging { opacity: .45; cursor: grabbing; }
 
 /* Hold-to-delete branch button */
 .br-del { position: relative;
@@ -922,6 +929,7 @@ body.vibing .box { filter: blur(18px) saturate(.7); opacity: .4; transform: scal
  }
 .qo-item:has(.br-del.holding) { transform: none; } /* no row shrink while holding */
 @keyframes holdFill { to { transform: scaleY(1); } }
+
 
 /* Tool hints with direct run command button */
 .tool-hint-block { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; margin: 4px 0; }

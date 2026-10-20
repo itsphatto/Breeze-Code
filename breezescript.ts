@@ -9,6 +9,7 @@ type IntervalId = ReturnType<typeof setInterval>;
 type AgentKey = 'assistant' | 'planner' | 'builder';
 type AgentStatus = 'idle' | 'working' | 'waiting' | 'done';
 
+
 interface Agent {
   name: string;
   letter: string;
@@ -84,6 +85,7 @@ interface BreezeApi {
   discord: { set(activity: DiscordActivity): Promise<{ user: string | null }>; clear(): Promise<void>; };
   agent: {
     run(opts: { agent: string; mode: AgentMode; prompt: string; session: string | null; box?: boolean }): Promise<number>;
+
     stop(runId: number): Promise<void>;
     setModel(agent: string, model: string): Promise<boolean>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
@@ -405,11 +407,16 @@ function demoApi(): BreezeApi {
       async runCommand(cmd) { window.open('https://www.google.com/search?q=' + encodeURIComponent(cmd)); return true; },
     },
     live: {
-      async status() { return { available: files.has('index.html'), running: false, url: 'http://127.0.0.1:2026/' }; },
+      async status() {
+        const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+        return { available: !!index, running: false, url: `http://127.0.0.1:2026/${index?.replace(/index\.html$/, '') ?? ''}` };
+      },
       async start() {
-        if (!files.has('index.html')) throw new Error('Live Share needs an index.html file in the project root');
-        window.open('http://127.0.0.1:2026/', '_blank', 'noopener');
-        return { available: true, running: true, url: 'http://127.0.0.1:2026/' };
+        const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+        if (!index) throw new Error('Live Share needs an index.html file in the project');
+        const url = `http://127.0.0.1:2026/${index.replace(/index\.html$/, '')}`;
+        window.open(url, '_blank', 'noopener');
+        return { available: true, running: true, url };
       },
     },
     // Browser preview only: canned answers so every panel can be tried without the desktop app.
@@ -708,7 +715,7 @@ for (const id of ['#avatars', '#boxAvatar']) {
 // The onboarding step and the "Add account" dialog share this panel; signinRoot is the one in use.
 const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
     <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
-    <button class="btn" data-signin="Google"><img src="Google.png" width="18" height="18" alt="Google">Continue with Google</button>
+    <button class="btn" data-signin="Google"><img src="assets/icons/Google.png" width="18" height="18" alt="Google">Continue with Google</button>
     <p class="signin-error hidden" data-si="error" role="alert"></p>
   </div>
   <div class="waiting hidden" data-si="wait">
@@ -951,6 +958,7 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
     el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input, select')) pick(); };
     el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); pick(); } };
   });
+  
   $$('[data-agent-model]', root).forEach(sel => {
     (sel as HTMLSelectElement).onchange = async () => {
       const agId = (sel as HTMLElement).dataset.agentModel;
@@ -965,6 +973,7 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
       }
     };
   });
+  
   $$('[data-get]', root).forEach(b => b.onclick = e => { e.stopPropagation(); background(api.sys.openExternal(b.dataset.get ?? '')); });
   bindLocalLlm(root, onChange);
 }
@@ -1034,6 +1043,7 @@ function modelLabel(a: DetectedAgent | null): string {
   if (!a) return 'no agent';
   return a.api && a.version ? a.version : a.name;
 }
+
 function updateComposerModelSelect(a: DetectedAgent | null): void {
   const sel = $('#agentModelSelect') as HTMLSelectElement | null;
   if (!sel) return;
@@ -1120,21 +1130,23 @@ function agentPillMenuItems(): MenuItem[] {
   items.push({ label: 'Manage agents…', run: openAgentPicker });
   return items;
 }
+
+
 function renderAgentPill(): void {
   const a = selectedAgent();
-  const currentModel = a?.version || (a?.models && a.models[0]) || '';
-  const modelText = currentModel ? ` · ${currentModel}` : '';
-  const displayText = a ? `${a.name}${modelText}` : 'Choose an agent';
-  $('#agentPill').textContent = displayText;
-  $('#boxModel').innerHTML = `${esc(displayText)}${svgIcon('chevronDown', 12)}`;
+  $('#agentPill').textContent = a ? a.name : 'Choose an agent';
+  const model = a?.api && a.version ? ' · ' + a.version : '';
+  $('#boxModel').innerHTML = `${esc(a ? `${a.name}${model}` : 'Choose an agent')}${svgIcon('chevronDown', 12)}`;
   for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
   updateComposerModelSelect(a);
 }
+
 $('#agentPill').onclick = e => {
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
   popupMenu(r.left, r.bottom + 4, agentPillMenuItems());
 };
+
 function openAgentPicker(): void {
   openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. A local LLM connects by its server address.</p>
     <div class="agent-list" id="pickList"></div>
@@ -1189,14 +1201,17 @@ function swapScreen(to: string): void {
     }
     return;
   }
+  
   const prev = screens.find(el => el !== next && !el.classList.contains('hidden') && !el.classList.contains('screen-out'));
   clearTimeout(swapTimer);
+  
   for (const el of screens) {
     if (el !== next && el !== prev) {
       el.classList.remove('screen-out');
       el.classList.add('hidden');
     }
   }
+  
   if (!next.classList.contains('hidden') && !next.classList.contains('screen-out')) return; // already showing
   next.classList.remove('hidden', 'screen-out', 'screen-in');
   const _ = next.offsetWidth; // restart the entrance animation
@@ -1210,6 +1225,7 @@ function swapScreen(to: string): void {
     prev.classList.add('hidden');
   }, 260);
 }
+
 function showIde(): void {
   swapScreen('#ide');
   useSurface('ide');
@@ -1847,6 +1863,8 @@ const dirCache = new Map<string, DirEntry[]>();
 const expanded = new Set<string>();
 const buffers = new Map<string, EditorBuffer>();
 const textareaOwner = new WeakMap<HTMLTextAreaElement, EditorBuffer>();
+const isDirty = (b?: EditorBuffer) => !!b && b.kind === 'text' && b.text !== b.saved;
+let sessionTimer: TimeoutId | undefined;
 let openTabs: string[] = [];
 let active: string | null = null;
 const locks: Record<string, AgentKey> = {};
@@ -1872,8 +1890,7 @@ $('#liveShare').onclick = () => background((async () => {
 
 const sessionKey = () => `breeze.session:${rootInfo?.root ?? ''}`;
 const hotExitKey = () => `breeze.dirty:${rootInfo?.root ?? ''}`;
-const isDirty = (b?: EditorBuffer) => !!b && b.kind === 'text' && b.text !== b.saved;
-let sessionTimer: TimeoutId | undefined;
+
 function saveSession(): void {
   if (!rootInfo) return;
   clearTimeout(sessionTimer);
@@ -1899,6 +1916,7 @@ const DROP_MAX_BYTES = 50 * 1024 * 1024;
 const DROP_SKIP = new Set(['.git', 'node_modules']);
 interface Dropped { rel: string; file: File; }
 let dropMark: HTMLElement | null = null;
+let draggedTreePath: string | null = null;
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
 function markDrop(el: HTMLElement | null): void {
   if (dropMark === el) return;
@@ -1913,6 +1931,13 @@ function dropTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
   const row = t.closest<HTMLElement>('#tree [data-path]');
   if (row) { const p = row.dataset.path as string; return { el: row, dir: row.dataset.dir ? p : dirName(p) }; }
   return t.closest('#tree') ? { el: $('#tree'), dir: '' } : null;
+}
+function moveTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
+  if (!draggedTreePath) return null;
+  const row = (e.target as HTMLElement).closest<HTMLElement>('#tree [data-dir][data-path]');
+  if (!row) return null;
+  const dir = row.dataset.path as string;
+  return dir === dirName(draggedTreePath) ? null : { el: row, dir };
 }
 const entryFile = (e: FileSystemFileEntry) => new Promise<File>((res, rej) => e.file(res, rej));
 async function entryChildren(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
@@ -1949,19 +1974,26 @@ async function importDropped(entries: FileSystemEntry[], dir: string): Promise<v
   toast(`Added ${plural(saved.length, 'file')}${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
 }
 document.addEventListener('dragover', e => {
-  if (!hasFiles(e)) return;
+  if (!hasFiles(e) && !draggedTreePath) return;
   e.preventDefault();
-  const t = dropTarget(e);
+  const t = hasFiles(e) ? dropTarget(e) : moveTarget(e);
   markDrop(t?.el ?? null);
-  if (e.dataTransfer) e.dataTransfer.dropEffect = t ? 'copy' : 'none';
+  if (e.dataTransfer) e.dataTransfer.dropEffect = t ? (hasFiles(e) ? 'copy' : 'move') : 'none';
 });
 document.addEventListener('dragleave', e => { if (!e.relatedTarget) markDrop(null); });
 document.addEventListener('drop', e => {
-  if (!hasFiles(e)) return;
+  if (!hasFiles(e) && !draggedTreePath) return;
   e.preventDefault();
-  const t = dropTarget(e);
+  const external = hasFiles(e);
+  const t = external ? dropTarget(e) : moveTarget(e);
   markDrop(null);
   if (!t) return;
+  if (!external) {
+    const from = draggedTreePath;
+    draggedTreePath = null;
+    if (from) background(moveEntry(from, joinPath(t.dir, baseName(from))));
+    return;
+  }
   // The item list is only readable during the event, so take the entries now and read them afterwards.
   const entries = [...(e.dataTransfer?.items ?? [])].map(i => i.webkitGetAsEntry()).filter((x): x is FileSystemEntry => !!x);
   background(importDropped(entries, t.dir));
@@ -2156,7 +2188,7 @@ function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
   const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, enter ? 'enter' : ''].filter(Boolean).join(' ');
   const icon = e.dir ? folderIcon(e.name, open) : fileIcon(e.name);
-  return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : ''} title="${escAttr(p)}">
+  return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : 'draggable="true"'} title="${escAttr(p)}">
     <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${esc(e.name)}</span>${lockTag}${gitTag}</div>`;
 }
 function renderTree(): void {
@@ -2197,6 +2229,19 @@ $('#tree').addEventListener('click', e => {
   if (t.dataset.recent) { void openRecentFolder(t.dataset.recent); return; }
   const p = t.dataset.path as string;
   if (t.dataset.dir) void toggleDir(p); else openFile(p);
+});
+$('#tree').addEventListener('dragstart', e => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>('[data-path][draggable="true"]');
+  if (!row) return;
+  draggedTreePath = row.dataset.path as string;
+  row.classList.add('dragging');
+  e.dataTransfer?.setData('text/plain', draggedTreePath);
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+});
+$('#tree').addEventListener('dragend', e => {
+  (e.target as HTMLElement).closest<HTMLElement>('[data-path]')?.classList.remove('dragging');
+  draggedTreePath = null;
+  markDrop(null);
 });
 $('#tree').addEventListener('contextmenu', e => {
   e.preventDefault();
@@ -2285,6 +2330,10 @@ async function renameEntry(p: string): Promise<void> {
   if (!name || name === baseName(p)) return;
   if (/[\\/]/.test(name)) { toast('Names cannot contain slashes'); return; }
   const to = joinPath(dirName(p), name);
+  await moveEntry(p, to);
+}
+async function moveEntry(p: string, to: string): Promise<void> {
+  if (p === to) return;
   try { await api.fs.rename(p, to); } catch (e) { toast(errMsg(e)); return; }
   const move = (x: string) => {
     if (x === p) return to;
@@ -2349,7 +2398,7 @@ api.fs.onChange(paths => background((async () => {
     if (b.kind === 'text' && !isDirty(b)) return reloadText(b);
     return Promise.resolve();
   }));
-  if (paths.includes('index.html')) await refreshLiveShare();
+  if (paths.some(path => path === 'index.html' || path.endsWith('/index.html'))) await refreshLiveShare();
 })()));
 
 /* ================= Opening, tabs & saving ================= */
@@ -3440,6 +3489,7 @@ termInput.addEventListener('keydown', e => {
   termGhost.innerHTML = '';
   void runCommand(cmd);
 });
+
 api.term.onData((id, chunk) => {
   if (id !== term.proc) return;
   if (id === term.runId) {
@@ -3448,6 +3498,7 @@ api.term.onData((id, chunk) => {
     termWrite(chunk);
   }
 });
+
 api.term.onExit((id, code) => {
   if (id !== term.proc) return;
   const runId = term.runId;
@@ -4548,14 +4599,17 @@ async function addPastedImage(file: File, s: Surface): Promise<void> {
   toast(`Image attached · ${name}`);
 }
 
+
+
+
 interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; replied: boolean; announce: boolean; }
 let agentRun: Run | null = null;
 let lastRunFiles: string[] = [];
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
   s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
-
-  const box = s.prompt.closest<HTMLElement>('.composer-box');
+  
+    const box = s.prompt.closest<HTMLElement>('.composer-box');
   if (box) {
     box.addEventListener('dragover', e => {
       if (e.dataTransfer?.types.includes('Files')) {
@@ -4617,6 +4671,7 @@ document.addEventListener('click', e => {
     openModal(`<div class="img-modal-view"><img src="${escAttr(full)}" class="img-modal-img"><div class="row end w-full"><button class="btn btn-primary btn-sm" data-close>Close</button></div></div>`);
   }
 });
+
 function newChat(): void {
   if (agentRun) stopAgent();
   archiveChat(surface);
@@ -4836,8 +4891,8 @@ function enhanceSelect(sel: HTMLSelectElement): void {
   sel.setAttribute('aria-hidden', 'true');
   sel.after(btn);
   const label = () => {
-    const text = sel.selectedOptions[0]?.text || sel.value || '';
-    btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+  const text = sel.selectedOptions[0]?.text || sel.value || '';
+  btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
   };
   label();
   sel.addEventListener('change', label);
@@ -4847,11 +4902,13 @@ function enhanceSelect(sel: HTMLSelectElement): void {
     e.preventDefault();
     if (!btn.classList.contains('open')) openDropdown(sel, btn);
   };
-  new MutationObserver(() => {
+  
+    new MutationObserver(() => {
     btn.classList.toggle('hidden', sel.classList.contains('hidden'));
     label();
   }).observe(sel, { childList: true, attributes: true, attributeFilter: ['class'] });
 }
+
 $$<HTMLSelectElement>('select.select').forEach(enhanceSelect);
 new MutationObserver(() => $$<HTMLSelectElement>('select.select:not([data-dd])').forEach(enhanceSelect)).observe(document.body, { childList: true, subtree: true });
 
@@ -5225,7 +5282,7 @@ function branchListHtml(branches: string[], q: string): string {
 const HOLD_MS =5000;//hold time duration
 // Fires onDone only if the button is held for the full 5 seconds; releasing, leaving the button or losing focus cancels.
 function holdToDelete(btn: HTMLElement, onDone: () => void): void {
-  let timer: TimeoutId | undefined;
+  let timer: TimeoutId | undefined
   const stop = (early: boolean) => {
     if (timer == null) return;
     clearTimeout(timer); timer = undefined;
@@ -5250,6 +5307,7 @@ function holdToDelete(btn: HTMLElement, onDone: () => void): void {
     btn.setPointerCapture(e.pointerId);
     start();
   };
+  btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
   btn.onpointermove = e => { const r = btn.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) stop(false); };
   btn.onpointerup = () => stop(true);
   btn.onpointercancel = () => stop(false);
@@ -5319,6 +5377,7 @@ Object.assign(commands, {
 });
 
 /* ================= Views ================= */
+
 function updateActIndicator(): void {
   const activeBtn = document.querySelector<HTMLElement>('.act-btn[data-view].on');
   const ind = document.getElementById('actIndicator');

@@ -12,6 +12,7 @@ const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked } = require('./toolchains');
 const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
+
 let autoUpdater = null;
 try {
   ({ autoUpdater } = require('electron-updater'));
@@ -31,6 +32,7 @@ let win = null;
 let root = null;          // absolute path of the open project folder
 let watcher = null;
 let liveServer = null;
+let liveRoot = null;      // project root used by the local share server
 const liveClients = new Set();
 let termCwd = os.homedir();
 const terms = new Map();  // id -> child process
@@ -45,6 +47,7 @@ function configureAutoUpdater() {
     console.info('[updater] Skipping update check in development.');
     return;
   }
+
 
   if (!autoUpdater) {
     try {
@@ -109,7 +112,7 @@ const logError = where => err => {
 };
 // Opens an https link in the user's browser.
 function openInBrowser(url) {
-  if (typeof url === 'string' && (/^https:\/\//.test(url) || url === LIVE_URL)) shell.openExternal(url).catch(logError('openExternal'));
+  if (typeof url === 'string' && (/^https:\/\//.test(url) || url.startsWith(LIVE_URL))) shell.openExternal(url).catch(logError('openExternal'));
 }
 
 /* ================= Persisted main-process state ================= */
@@ -285,10 +288,28 @@ function stopLiveServer() {
   liveClients.clear();
   if (liveServer) liveServer.close();
   liveServer = null;
+  liveRoot = null;
+}
+async function findLiveIndex(dir = root) {
+  if (!dir) return null;
+  let entries;
+  try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return null; }
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  const index = entries.find(entry => entry.isFile() && entry.name === 'index.html');
+  if (index) return path.join(dir, index.name);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || IGNORED_DIRS.has(entry.name)) continue;
+    const nested = await findLiveIndex(path.join(dir, entry.name));
+    if (nested) return nested;
+  }
+  return null;
+}
+async function liveIndexUrl() {
+  const index = await findLiveIndex();
+  return index ? new URL(`${relTo(root, index).replace(/index\.html$/, '')}`, LIVE_URL).href : LIVE_URL;
 }
 async function hasLiveIndex() {
-  if (!root) return false;
-  try { return (await fsp.stat(resolveIn('index.html'))).isFile(); } catch { return false; }
+  return !!(await findLiveIndex());
 }
 async function serveLive(req, res) {
   try {
@@ -302,8 +323,12 @@ async function serveLive(req, res) {
     }
     const decoded = decodeURIComponent(parsed.pathname);
     const rel = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
-    const abs = resolveIn(rel);
-    const st = await fsp.stat(abs);
+    let abs = resolveUnder(liveRoot, rel);
+    let st = await fsp.stat(abs);
+    if (st.isDirectory()) {
+      abs = resolveUnder(liveRoot, path.join(rel, 'index.html'));
+      st = await fsp.stat(abs);
+    }
     if (!st.isFile()) throw new Error('Not a file');
     const type = MIME_TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream';
     let body = await fsp.readFile(abs);
@@ -319,7 +344,10 @@ async function serveLive(req, res) {
   }
 }
 async function startLiveServer() {
-  if (!(await hasLiveIndex())) throw new Error('Live Share needs an index.html file in the project root');
+  const index = await findLiveIndex();
+  if (!index) throw new Error('Live Share needs an index.html file in the project');
+  liveRoot = root;
+  const url = await liveIndexUrl();
   if (!liveServer) {
     liveServer = http.createServer((req, res) => { void serveLive(req, res); });
     await new Promise((resolve, reject) => {
@@ -330,8 +358,8 @@ async function startLiveServer() {
       liveServer.listen(LIVE_PORT, '127.0.0.1');
     });
   }
-  openInBrowser(LIVE_URL);
-  return { url: LIVE_URL, running: true };
+  openInBrowser(url);
+  return { url, running: true };
 }
 
 /* ================= File system IPC ================= */
@@ -426,6 +454,7 @@ handle('fs:fileUrl', (_e, rel) => {
   const base = root || boxDir();
   return pathToFileURL(resolveUnder(base, rel)).href;
 });
+
 handle('fs:previewUrl', (_e, rel) => {
   resolveIn(rel); // throws when no folder is open or the path leaves the project
   return `${PREVIEW_SCHEME}://project/${String(rel).split(/[\/]/).map(encodeURIComponent).join('/')}`;
@@ -836,7 +865,7 @@ handle('agent:setModel', async (_e, { agent, model }) => {
   }
   return false;
 });
-handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: LIVE_URL }));
+handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: await liveIndexUrl() }));
 handle('live:start', () => startLiveServer());
 handle('win:reload', () => win?.webContents.reload());
 handle('win:devtools', () => win?.webContents.toggleDevTools());
@@ -1701,6 +1730,57 @@ function guardFeed(wc) {
   });
   wc.on('will-navigate', (e, url) => { if (!url.startsWith('https://')) e.preventDefault(); });
 }
+// Instagram's desktop Reels page sizes its cards to the media instead of the
+// embedded view.  In a phone-shaped Vibe frame that leaves enough space for a
+// second reel to peek through below the current one.  Keep the page's actual
+// reel cards viewport-sized and make its scroll areas snap between them.
+function keepInstagramReelsFullscreen(wc) {
+  wc.once('did-finish-load', () => {
+    if (!wc.getURL().startsWith('https://www.instagram.com/')) return;
+    wc.executeJavaScript(`(() => {
+      const viewport = () => Math.max(document.documentElement.clientHeight, window.innerHeight);
+      const containsOneVideo = el => el.querySelectorAll('video').length === 1;
+      const reelCard = video => {
+        let el = video.parentElement;
+        let fallback = null;
+        while (el && el !== document.body) {
+          if (containsOneVideo(el)) {
+            fallback = el;
+            if (el.matches('article')) return el;
+            const parent = el.parentElement;
+            if (parent && parent.querySelectorAll('video').length > 1) return el;
+          }
+          el = el.parentElement;
+        }
+        return fallback;
+      };
+      const apply = () => {
+        for (const video of document.querySelectorAll('video')) {
+          const card = reelCard(video);
+          if (!card) continue;
+          card.style.minHeight = viewport() + 'px';
+          card.style.scrollSnapAlign = 'start';
+          card.style.scrollSnapStop = 'always';
+          for (let el = card.parentElement; el && el !== document.body; el = el.parentElement) {
+            const style = getComputedStyle(el);
+            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+              el.style.scrollSnapType = 'y mandatory';
+              break;
+            }
+          }
+        }
+      };
+      apply();
+      let scheduled = false;
+      new MutationObserver(() => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => { scheduled = false; apply(); });
+      }).observe(document.documentElement, { childList: true, subtree: true });
+      addEventListener('resize', apply, { passive: true });
+    })()`).catch(logError('reels layout'));
+  });
+}
 async function signedIn(id) {
   const [domain, name] = vibeSite(id).cookie;
   const cookies = await vibeSession().cookies.get({ domain, name });
@@ -1741,6 +1821,7 @@ handle('vibe:show', (_e, id, bounds) => {
     win.contentView.addChildView(vibeView);
   }
   vibeView.setBounds(toBounds(bounds));
+  if (id === 'instagram') keepInstagramReelsFullscreen(vibeView.webContents);
   vibeView.webContents.loadURL(site.url).catch(logError('feed'));
 });
 handle('vibe:bounds', (_e, bounds) => vibeView?.setBounds(toBounds(bounds)));
