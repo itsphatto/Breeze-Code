@@ -12,6 +12,7 @@ const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked } = require('./toolchains');
 const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
+const { AntigravityAgentService } = require('./antigravityAgentService.js');
 
 let autoUpdater = null;
 try {
@@ -779,6 +780,24 @@ const isWin = process.platform === 'win32';
 
 const AGENTS = [
   {
+    id: 'antigravity', name: 'Antigravity', vendor: 'Google DeepMind', commands: ['agy', 'antigravity'],
+    url: 'https://antigravity.google/',
+    paths: () => isWin ? [
+      path.join(LOCALAPPDATA, 'agy', 'bin', 'agy.exe'),
+      path.join(HOME, '.gemini', 'antigravity-cli', 'bin', 'agy.cmd'),
+      path.join(APPDATA, 'npm', 'agy.cmd'),
+      path.join(LOCALAPPDATA, 'Programs', 'Antigravity IDE', 'bin', 'antigravity-ide.cmd'),
+      path.join(HOME, '.gemini', 'antigravity-ide', 'bin', 'agentapi.bat'),
+      path.join(LOCALAPPDATA, 'Programs', 'Antigravity IDE', 'Antigravity IDE.exe'),
+    ] : [
+      path.join(HOME, '.gemini', 'antigravity-cli', 'bin', 'agy'),
+      '/usr/local/bin/agy',
+      '/opt/homebrew/bin/agy',
+      path.join(HOME, '.gemini', 'antigravity-ide', 'bin', 'agentapi'),
+      '/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity IDE',
+    ],
+  },
+  {
     id: 'codex', name: 'Codex', vendor: 'OpenAI', commands: ['codex'],
     url: 'https://developers.openai.com/codex/cli',
     paths: () => isWin ? [path.join(APPDATA, 'npm', 'codex.cmd')] : ['/usr/local/bin/codex', '/opt/homebrew/bin/codex'],
@@ -787,6 +806,24 @@ const AGENTS = [
 const agentBins = new Map(); // agent id -> executable found by the last scan
 // Folders of the agents found off PATH, so the Terminal panel can run them by name.
 const agentDirs = () => [...new Set([...agentBins.values()].filter(b => !b.endsWith('.app')).map(b => path.dirname(b)))];
+
+let cachedAntigravityModels = null;
+function antigravityModels(bin) {
+  if (cachedAntigravityModels && cachedAntigravityModels.length) return cachedAntigravityModels;
+  try {
+    cachedAntigravityModels = AntigravityAgentService.getAvailableModels(bin);
+    return cachedAntigravityModels;
+  } catch {
+    return [
+      'claude-sonnet-4-6',
+      'gemini-3.8-flash-high',
+      'claude-opus-4-6-thinking',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'gpt-oss-120b-medium',
+    ];
+  }
+}
 
 function which(cmd) {
   return new Promise(res => {
@@ -822,16 +859,29 @@ handle('sys:detect', async () => {
     const bin = await locate(a.commands, a.paths());
     if (bin) agentBins.set(a.id, bin); else agentBins.delete(a.id);
     const cm = a.id === 'codex' ? codexModels() : [];
+    const am = a.id === 'antigravity' ? antigravityModels(bin) : [];
     const codexFallbackList = ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o3-mini', 'chatgpt-4o-latest'];
-    const models = a.id === 'codex' ? (cm.length ? cm : codexFallbackList) : [];
-    const version = a.id === 'codex' ? (loadState().codexModel || 'gpt-4o') : (bin ? await versionOf(bin) : null);
+    const antigravityFallbackList = [
+      'claude-sonnet-4-6',
+      'gemini-3.8-flash-high',
+      'claude-opus-4-6-thinking',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'gpt-oss-120b-medium',
+    ];
+    const models = a.id === 'codex'
+      ? (cm.length ? cm : codexFallbackList)
+      : (a.id === 'antigravity' ? (am.length ? am : antigravityFallbackList) : []);
+    const version = a.id === 'codex'
+      ? (loadState().codexModel || 'gpt-4o')
+      : (a.id === 'antigravity' ? (loadState().antigravityModel || models[0] || 'claude-sonnet-4-6') : (bin ? await versionOf(bin) : null));
     return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
   }));
   // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
   let llm = await llmConfig(true).catch(() => null);
   // A saved server may have been closed since: it only counts as found while it answers and still has the model.
   if (llm) llm = await llmReachable(llm).then(() => llm, () => null);
-  agents.push({ id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [] });
+  agents.push({ id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [] });
   const tools = await Promise.all([['git', 'Git'], ['node', 'Node.js']].map(async ([cmd, name]) => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
@@ -862,6 +912,12 @@ handle('agent:setModel', async (_e, { agent, model, effort }) => {
   if (agent === 'codex') {
     const nextState = { codexModel: model || null };
     if (effort !== undefined) nextState.codexEffort = effort || null;
+    saveState(nextState);
+    return true;
+  }
+  if (agent === 'antigravity') {
+    const nextState = { antigravityModel: model || null };
+    if (effort !== undefined) nextState.antigravityEffort = effort || null;
     saveState(nextState);
     return true;
   }
@@ -993,9 +1049,95 @@ handle('agent:stop', (_e, runId) => {
   const r = runs.get(runId);
   if (!r) return;
   r.stopped = true;
+  if (r.service) r.service.stop();
   if (r.child) killTree(r.child);
   r.abort?.abort();
 });
+
+async function runAntigravity(runId, run, { mode, prompt, session, base }) {
+  const bin = agentBins.get('antigravity');
+  const st = loadState();
+  const model = st.antigravityModel || 'claude-sonnet-4-6';
+  const effort = st.antigravityEffort || 'high';
+
+  const service = new AntigravityAgentService({
+    executablePath: bin || undefined,
+    cwd: base,
+    mode,
+    model,
+    effort,
+    sessionId: session,
+    prompt,
+    autoOpenAuth: false,
+  });
+
+  run.service = service;
+  let lastText = '';
+  let doneEmitted = false;
+
+  service.on('output', ev => {
+    if (run.stopped) return;
+    if (ev.type === 'auth-required') {
+      emit(runId, { t: 'auth', text: ev.text, url: ev.raw?.url, command: ev.raw?.command });
+      service.triggerExternalAuth();
+      return;
+    }
+    if (ev.type === 'text' && ev.text) {
+      lastText = ev.text;
+    }
+    if (ev.type === 'plan' && ev.text) {
+      lastText = ev.text;
+    }
+    if (ev.type === 'done') {
+      doneEmitted = true;
+      if (mode === 'plan' && lastText) {
+        emit(runId, { t: 'plan', text: lastText });
+      }
+    }
+    emit(runId, {
+      t: ev.type,
+      text: ev.text,
+      kind: ev.kind,
+      label: ev.label,
+      path: ev.path ? relOut(ev.path) : undefined,
+      ok: ev.ok,
+    });
+  });
+
+  service.on('auth-required', auth => {
+    if (run.stopped) return;
+    emit(runId, { t: 'auth', text: auth.rawText, url: auth.url, command: auth.command });
+    service.triggerExternalAuth(auth.url);
+  });
+
+  service.on('error', err => {
+    if (run.stopped) return;
+    emit(runId, { t: 'error', text: err.message });
+  });
+
+  service.on('exit', (code, signal) => {
+    runs.delete(runId);
+    if (run.stopped) {
+      emit(runId, { t: 'done', ok: false, stopped: true });
+    } else if (!doneEmitted) {
+      if (mode === 'plan' && lastText) {
+        emit(runId, { t: 'plan', text: lastText });
+      }
+      emit(runId, { t: 'done', ok: code === 0 });
+    }
+  });
+
+  try {
+    await service.start();
+    run.child = service.getChildProcess();
+  } catch (err) {
+    if (!run.stopped) {
+      emit(runId, { t: 'error', text: err.message });
+      emit(runId, { t: 'done', ok: false });
+    }
+    runs.delete(runId);
+  }
+}
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
 function cliArgs(agent, mode, prompt, session) {
   const build = mode === 'build';
@@ -1038,6 +1180,7 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
   const run = { child: null, abort: null, stopped: false };
   runs.set(runId, run);
   if (agent === 'local') return runLocal(runId, run, { mode, prompt, session, base });
+  if (agent === 'antigravity') return runAntigravity(runId, run, { mode, prompt, session, base });
   const bin = agentBins.get(agent);
   if (!bin) throw new Error('That agent was not found on this computer. Rescan from Settings → Run Setup Again.');
   const launch = () => {
@@ -1432,14 +1575,40 @@ handle('git:status', async () => {
 
 handle('git:log', async () => {
   let out;
-  try { out = await git(['log', '--all', '--topo-order', '-n', '150', '-z', '--pretty=format:%H%x1f%P%x1f%an%x1f%ar%x1f%D%x1f%s']); }
-  catch { return { head: null, commits: [] }; } // no commits yet
+  try {
+    out = await git(['log', '--all', '--topo-order', '-n', '150', '--numstat', '--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%ar%x1f%D%x1f%s%x1f%B%x1f']);
+  } catch {
+    return { head: null, commits: [], details: [] };
+  }
   const head = (await git(['rev-parse', 'HEAD']).catch(() => '')).trim();
-  const commits = out.split('\0').filter(Boolean).map(rec => {
-    const [hash, parents, author, when, refs, subject] = rec.split('\x1f');
-    return { hash, parents: parents ? parents.split(' ') : [], author, when, refs: refs ? refs.split(', ') : [], subject };
-  });
-  return { head, commits };
+  const commits = [];
+  const details = [];
+  const records = out.split('\x1e').filter(Boolean);
+  for (const r of records) {
+    const [hash, parents, author, email, when, refs, subject, body, stats = ''] = r.split('\x1f');
+    if (!hash) continue;
+    const files = stats.trim().split('\n').filter(Boolean).map(l => {
+      const [a, d, ...p] = l.split('\t');
+      return { path: p.join('\t'), added: a === '-' ? 0 : Number(a), removed: d === '-' ? 0 : Number(d) };
+    });
+    commits.push({
+      hash,
+      parents: parents ? parents.trim().split(' ').filter(Boolean) : [],
+      author,
+      when,
+      refs: refs ? refs.trim().split(', ').filter(Boolean) : [],
+      subject: subject || ''
+    });
+    details.push({
+      hash,
+      author,
+      email: email || '',
+      when,
+      message: (body || subject || '').trim(),
+      files
+    });
+  }
+  return { head, commits, details };
 });
 
 handle('git:show', async (_e, hash) => {
@@ -1502,6 +1671,111 @@ handle('git:sync', async (_e, op) => {
     return git(upstream ? ['push'] : ['push', '-u', 'origin', 'HEAD'], opts);
   }
   throw new Error('Unknown sync operation');
+});
+
+handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
+  const base = root;
+  if (!base) throw new Error('Open a folder first');
+
+  if (agent === 'antigravity') {
+    const bin = agentBins.get('antigravity');
+    const targetModel = model || 'gemini-3.8-flash-low';
+    const service = new AntigravityAgentService({
+      executablePath: bin || undefined,
+      cwd: base,
+      mode: 'ask',
+      model: targetModel,
+      effort: effort || 'low',
+      prompt,
+      autoOpenAuth: false,
+    });
+    return new Promise((resolve, reject) => {
+      let resultText = '';
+      service.on('output', ev => {
+        if (ev.type === 'text' && ev.text) resultText = ev.text;
+      });
+      service.on('error', reject);
+      service.on('exit', code => {
+        let clean = resultText.trim();
+        if (clean.startsWith('```') && clean.endsWith('```')) {
+          clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+        }
+        if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
+          clean = clean.slice(1, -1).trim();
+        }
+        if (clean) resolve(clean);
+        else if (code === 0) resolve('chore: update project');
+        else reject(new Error(`Antigravity exited with code ${code}`));
+      });
+      service.start().catch(reject);
+    });
+  }
+
+  if (agent === 'local') {
+    const cfg = await llmConfig(true).catch(() => null);
+    if (!cfg) throw new Error('No Ollama server is connected');
+    const targetModel = model || cfg.model;
+    const body = {
+      model: targetModel,
+      messages: [
+        { role: 'system', content: 'You are a git commit message generator. Output only a short conventional commit message (e.g. feat: ..., fix: ..., chore: ...). No explanations, code fences, or quotes.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2,
+      stream: false
+    };
+    const j = await llmRequest({ base, cfg }, body);
+    let text = withoutThinking(j.choices?.[0]?.message?.content || '').trim();
+    if (text.startsWith('```') && text.endsWith('```')) {
+      text = text.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+    if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+      text = text.slice(1, -1).trim();
+    }
+    return text || 'chore: update files';
+  }
+
+  if (agent === 'codex') {
+    const bin = agentBins.get('codex');
+    if (!bin) throw new Error('Codex was not found');
+    const targetModel = model || 'gpt-4o-mini';
+    const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', '-m', targetModel, '-c', 'model_reasoning_effort="low"'];
+    return new Promise((resolve, reject) => {
+      const child = /\.(?:cmd|bat)$/i.test(bin)
+        ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
+        : spawn(bin, args, { cwd: base, windowsHide: true, env: process.env });
+      let outText = '';
+      let buf = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', chunk => {
+        buf += chunk;
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const l of lines) {
+          try {
+            const ev = JSON.parse(l);
+            if (ev.type === 'item.completed' && ev.item?.type === 'agent_message' && ev.item?.text) {
+              outText = ev.item.text;
+            }
+          } catch {}
+        }
+      });
+      child.stdin.end(prompt);
+      child.on('close', () => {
+        let clean = outText.trim();
+        if (clean.startsWith('```') && clean.endsWith('```')) {
+          clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+        }
+        if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
+          clean = clean.slice(1, -1).trim();
+        }
+        resolve(clean || 'chore: update project');
+      });
+      child.on('error', reject);
+    });
+  }
+
+  throw new Error(`Unsupported agent: ${agent}`);
 });
 
 /* ================= Sign in with GitHub / Google ================= */

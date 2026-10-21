@@ -21,7 +21,7 @@ interface Agent {
 }
 interface User { name: string; provider: string; login?: string; email?: string | null; avatar?: string | null; }
 type AgentMode = 'plan' | 'build' | 'ask';
-interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; }
+interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done' | 'auth' | 'auth-required'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; url?: string; command?: string; }
 interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
 interface GitFile { path: string; x: string; y: string; }
 interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; ignored?: string[]; }
@@ -92,9 +92,9 @@ interface BreezeApi {
   };
   git: {
     status(): Promise<GitStatus>;
-    log(): Promise<{ head: string | null; commits: GitCommit[] }>;
+    log(): Promise<{ head: string | null; commits: GitCommit[]; details?: GitCommitDetail[] }>;
     show(hash: string): Promise<GitCommitDetail>;
-    diff(rel: string, staged: boolean): Promise<string>;
+    diff(rel: string | string[], staged: boolean): Promise<string>;
     init(): Promise<unknown>;
     stage(paths: string[]): Promise<unknown>;
     unstage(paths: string[], hasCommits: boolean): Promise<unknown>;
@@ -104,6 +104,7 @@ interface BreezeApi {
     switchTo(name: string, create: boolean, from?: string): Promise<unknown>;
     sync(op: 'fetch' | 'pull' | 'push'): Promise<unknown>;
     deleteBranch(name: string): Promise<unknown>;
+    genCommitMsg(opts: { agent: string; prompt: string; model?: string; effort?: string }): Promise<string>;
   };
   auth: {
     user(): Promise<User | null>;
@@ -396,8 +397,9 @@ function demoApi(): BreezeApi {
         return {
           demo: true, platform: 'browser',
           agents: [
+            { id: 'antigravity', name: 'Antigravity', vendor: 'Google DeepMind', url: 'https://antigravity.google/', found: false, path: null, version: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'claude-opus-4-6-thinking', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gpt-oss-120b-medium'] },
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
-            { id: 'local', name: 'Local LLM', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
+            { id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
           { id: 'dotnet', name: 'C#', found: false, version: null, optional: true, hint: 'winget install Microsoft.DotNet.SDK.10', url: 'https://dotnet.microsoft.com/download' }],
@@ -447,13 +449,18 @@ function demoApi(): BreezeApi {
         };
       },
       async log() {
+        const commits = [
+          { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
+          { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
+          { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
+          { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
+        ];
         return {
-          head: 'd4f0b19aa', commits: [
-            { hash: 'd4f0b19aa', parents: ['b72e1d0aa'], author: 'You', when: '3 minutes ago', refs: ['HEAD -> main'], subject: 'Greeting script' },
-            { hash: 'c3d5a8eaa', parents: ['b72e1d0aa'], author: 'You', when: '6 minutes ago', refs: ['try-dark-menu'], subject: 'Try dark menu' },
-            { hash: 'b72e1d0aa', parents: ['a91f3c2aa'], author: 'You', when: '9 minutes ago', refs: [], subject: 'Add base styles' },
-            { hash: 'a91f3c2aa', parents: [], author: 'You', when: '12 minutes ago', refs: ['origin/main'], subject: 'Start project' },
-          ]
+          head: 'd4f0b19aa',
+          commits,
+          details: commits.map(c => ({
+            hash: c.hash, author: c.author, email: 'you@example.com', when: c.when, message: c.subject, files: [{ path: 'styles.css', added: 11, removed: 2 }]
+          }))
         };
       },
       async show(hash) { return { hash, author: 'You', email: 'you@example.com', when: 'a few minutes ago', message: 'Demo checkpoint', files: [{ path: 'styles.css', added: 11, removed: 2 }] }; },
@@ -467,6 +474,7 @@ function demoApi(): BreezeApi {
       async switchTo() { throw new Error('Switching branches works in the desktop app.'); },
       async deleteBranch() { throw new Error('Deleting branches works in the desktop app.'); },
       async sync() { throw new Error('Push and pull work in the desktop app.'); },
+      async genCommitMsg() { return 'feat: demo change'; },
     },
     auth: {
       async user() { return current; },
@@ -533,8 +541,10 @@ const SOCIAL_SITES: SocialSite[] = [
 // Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
 const BRAND_ICONS: Record<string, string> = {
   codex: 'codex.png',
-  instagram: 'instagram.webp', facebook: 'facebook.png',
+  antigravity: 'antigravity.png',
+  instagram: 'instagram.png', facebook: 'facebook.png',
   local: 'ollama.svg',
+  ollama: 'ollama.svg',
 };
 // Logos that are a shape rather than a square tile; they show whole instead of clipped to the tile's corners.
 const BARE_ICONS = new Set(['facebook']);
@@ -562,6 +572,7 @@ const LINE_ICONS: Record<string, IconNode> = {
   down: [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]],
   chevronRight: [['path', { d: 'm9 18 6-6-6-6' }]],
   chevronDown: [['path', { d: 'm6 9 6 6 6-6' }]],
+  sparkles: [['path', { d: 'm12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z' }], ['path', { d: 'M5 3v4' }], ['path', { d: 'M19 17v4' }], ['path', { d: 'M3 5h4' }], ['path', { d: 'M17 19h4' }]],
   backspace: [['path', { d: 'M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }], ['path', { d: 'm12 9 6 6' }], ['path', { d: 'm18 9-6 6' }]],
   volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
   volumeOff: [['path', { d: SPEAKER }], ['path', { d: 'm22 9-6 6' }], ['path', { d: 'm16 9 6 6' }]],
@@ -702,16 +713,30 @@ function accountItems(): MenuItem[] {
 }
 // Clicking your picture: who you are, your other accounts (in a submenu) and signing out.
 function openAccountMenu(anchor: HTMLElement): void {
+  if (anchor.classList.contains('open') || (justClosedTrigger === anchor && Date.now() - justClosedAt < 350)) {
+    closeMenu();
+    return;
+  }
+  closeMenu();
+  anchor.classList.add('open');
   const r = anchor.getBoundingClientRect();
   const items: MenuItem[] = user
     ? [{ header: user }, { label: 'Accounts', sub: accountItems }, { sep: true }, { label: 'Sign Out', run: () => background(signOut()) }]
-    : [{ label: 'Sign In…', run: addAccount }, ...(accounts.accounts.length ? [{ label: 'Accounts', sub: accountItems }] : [])];
-  popupMenu(r.right - 260, r.bottom + 6, items);
+    : [{ label: 'Sign in', run: addAccount }, ...(accounts.accounts.length ? [{ label: 'Accounts', sub: accountItems }] : [])];
+  popupMenu(r.right, r.bottom + 6, items, () => anchor.classList.remove('open'), anchor);
+  const m = $('#menuRoot .menu');
+  if (m) {
+    m.classList.add('account-menu');
+    m.style.left = `${Math.max(8, r.right - m.offsetWidth)}px`;
+  }
 }
 for (const id of ['#avatars', '#boxAvatar']) {
   $(id).onclick = e => {
-    if (openMenuIdx === -2) { closeMenu(); return; }
-    const anchor = e.currentTarget as HTMLElement; // gone from the event once we've awaited
+    const anchor = e.currentTarget as HTMLElement;
+    if (anchor.classList.contains('open') || (justClosedTrigger === anchor && Date.now() - justClosedAt < 350)) {
+      closeMenu();
+      return;
+    }
     background(refreshAccounts().then(() => openAccountMenu(anchor)));
   };
 }
@@ -847,7 +872,9 @@ async function toggleFeed(id: string): Promise<void> {
 /* ----- AI agent detection ----- */
 const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
   codex: { letter: 'Cx', tint: 'codex' },
-  local: { letter: 'L', tint: 'local' },
+  antigravity: { letter: 'Ag', tint: 'antigravity' },
+  local: { letter: 'Ol', tint: 'local' },
+  ollama: { letter: 'Ol', tint: 'local' },
 };
 let detecting: Promise<Detection> | null = null;
 
@@ -903,7 +930,7 @@ function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`
     : `<button class="get side" data-get="${escAttr(a.url)}">Get it ${svgIcon('external', 12)}</button>`;
   const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
-  const modelOptions = (a.found && a.models && a.models.length && a.id !== 'codex')
+  const modelOptions = (a.found && a.models && a.models.length && a.id !== 'codex' && a.id !== 'antigravity')
     ? `<div class="key-row"><select class="select" data-agent-model="${a.id}" aria-label="Model">${a.models.map(m => `<option value="${escAttr(m)}"${m === a.version ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>`
     : '';
   return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
@@ -946,7 +973,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
     Object.assign(local() ?? {}, { version: model.value });
     saveApp();
     renderAgentPill();
-    toast(`Local LLM model · ${model.value}`);
+    toast(`Ollama model · ${model.value}`);
   }));
   root.querySelector<HTMLElement>('[data-llm-off]')?.addEventListener('click', e => {
     e.stopPropagation();
@@ -959,7 +986,14 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
 }
 function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
   $$('[data-agent]', root).forEach(el => {
-    const pick = () => { appState.agent = el.dataset.agent ?? null; saveApp(); onChange(); };
+    const pick = () => {
+      appState.agent = el.dataset.agent ?? null;
+      const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
+      if (curTab && appState.agent) curTab.agentId = appState.agent;
+      saveApp();
+      onChange();
+      updateScmGenBtn();
+    };
     el.onclick = e => { if (!(e.target as HTMLElement).closest('button, input, select')) pick(); };
     el.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); pick(); } };
   });
@@ -975,6 +1009,12 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
         saveApp();
         renderAgentPill();
         toast(`Codex model · ${modelVal}`);
+      } else if (agId === 'antigravity') {
+        await api.agent.setModel('antigravity', modelVal);
+        if (targetAgent) targetAgent.version = modelVal;
+        saveApp();
+        renderAgentPill();
+        toast(`Antigravity model · ${modelVal}`);
       }
     };
   });
@@ -989,9 +1029,8 @@ function toolHtml(t: DetectedTool): string {
     const cmd = t.cmd || (t.hint && /^(?:winget|brew|xcode-select)\b/.test(t.hint) ? t.hint : null);
     const url = t.url || TOOL_DOWNLOADS[t.id] || null;
     const label = t.optional ? `${t.name} not found` : `${t.name} missing`;
-    const title = cmd ? `Click to run: ${cmd}` : (url ? `Click to download ${t.name}` : label);
     const cls = `pill pill-btn tool-pill-missing ${t.optional ? '' : 'warn'}`.trim();
-    return `<button type="button" class="${cls}" data-tool-id="${escAttr(t.id)}" ${cmd ? `data-run-cmd="${escAttr(cmd)}"` : ''} ${(!cmd && url) ? `data-get="${escAttr(url)}"` : ''} title="${escAttr(title)}">${esc(label)}</button>`;
+    return `<button type="button" class="${cls}" data-tool-id="${escAttr(t.id)}" ${cmd ? `data-run-cmd="${escAttr(cmd)}"` : ''} ${(!cmd && url) ? `data-get="${escAttr(url)}"` : ''}>${esc(label)}</button>`;
   }
   const version = t.version ? ' ' + esc(t.version) : '';
   return `<span class="pill ok">${esc(t.name)}${version} ready</span>`;
@@ -1069,12 +1108,18 @@ async function applyModelAndEffort(a: DetectedAgent, model: string, effort: Effo
     saveApp();
     renderAgentPill();
     toast(`Codex model set to ${model} (${effort} effort)`);
+  } else if (a.id === 'antigravity') {
+    await api.agent.setModel('antigravity', model, effort.toLowerCase());
+    a.version = model;
+    saveApp();
+    renderAgentPill();
+    toast(`Antigravity model set to ${model} (${effort} effort)`);
   } else if (a.api) {
     await api.llm.setModel(model);
     a.version = model;
     saveApp();
     renderAgentPill();
-    toast(`Local LLM model set to ${model} (${effort} effort)`);
+    toast(`Ollama model set to ${model} (${effort} effort)`);
   }
 }
 
@@ -1111,7 +1156,12 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
     return;
   }
   sel.classList.remove('hidden');
-  if (btn) btn.classList.remove('hidden');
+  if (btn) {
+    btn.classList.remove('hidden');
+    btn.classList.remove('model-swap');
+    void btn.offsetWidth;
+    btn.classList.add('model-swap');
+  }
   const current = a.version || a.models[0];
   const eff = currentEffort();
   sel.innerHTML = a.models.map(m => `<option value="${escAttr(m)}"${m === current ? ' selected' : ''}>${esc(m)}</option>`).join('');
@@ -1130,13 +1180,7 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
   };
 }
 function agentPillMenuItems(): MenuItem[] {
-  const a = selectedAgent();
   const items: MenuItem[] = [];
-  if (a && a.found && a.models && a.models.length) {
-    items.push({ label: `${a.name} Models:`, enabled: () => false });
-    items.push(...modelMenuItems(a));
-    items.push({ sep: true });
-  }
   items.push({ label: 'Switch Agent:', enabled: () => false });
   for (const ag of appState.detect?.agents ?? []) {
     items.push({
@@ -1145,8 +1189,11 @@ function agentPillMenuItems(): MenuItem[] {
       enabled: () => ag.found,
       run: () => {
         appState.agent = ag.id;
+        const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
+        if (curTab) curTab.agentId = ag.id;
         saveApp();
         renderAgentPill();
+        updateScmGenBtn();
         toast(`Active agent: ${ag.name}`);
       }
     });
@@ -1159,20 +1206,28 @@ function agentPillMenuItems(): MenuItem[] {
 
 function renderAgentPill(): void {
   const a = selectedAgent();
-  $('#agentPill').textContent = a ? a.name : 'Choose an agent';
+  const pill = $('#agentPill');
+  pill.textContent = a ? a.name : 'Choose an agent';
+  pill.removeAttribute('title');
+  delete pill.dataset.tooltip;
   const model = a?.api && a.version ? ' · ' + a.version : '';
   $('#boxModel').innerHTML = `${esc(a ? `${a.name}${model}` : 'Choose an agent')}${svgIcon('chevronDown', 12)}`;
   for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
   updateComposerModelSelect(a);
+  updateScmGenBtn();
 }
 
 $('#agentPill').onclick = e => {
   const btn = e.currentTarget as HTMLElement;
-  if (btn.classList.contains('open')) { closeMenu(); return; }
+  if (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350)) {
+    closeMenu();
+    return;
+  }
+  closeMenu();
   btn.classList.add('open');
   const r = btn.getBoundingClientRect();
-  popupMenu(r.left, r.bottom + 4, agentPillMenuItems(), () => btn.classList.remove('open'));
+  popupMenu(r.left, r.bottom + 4, agentPillMenuItems(), () => btn.classList.remove('open'), btn);
 };
 
 function openAgentPicker(): void {
@@ -2218,6 +2273,20 @@ function isIgnoredPath(p: string, ignored: Set<string>): boolean {
   }
   return false;
 }
+function splitFileName(filename: string): { base: string; ext: string } {
+  const dot = filename.lastIndexOf('.');
+  if (dot > 0 && dot < filename.length - 1) {
+    return { base: filename.slice(0, dot), ext: filename.slice(dot) };
+  }
+  return { base: filename, ext: '' };
+}
+
+function fileNameHtml(filename: string): string {
+  const { base, ext } = splitFileName(filename);
+  if (!ext) return `<span class="nm-base">${esc(base)}</span>`;
+  return `<span class="nm-base">${esc(base)}</span><span class="nm-ext">${esc(ext)}</span>`;
+}
+
 function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof gitDecor>, enter: boolean): string {
   const open = e.dir && expanded.has(p);
   const lock = locks[p];
@@ -2227,8 +2296,9 @@ function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
   const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, isIgnored ? 'git-ignored' : '', enter ? 'enter' : ''].filter(Boolean).join(' ');
   const icon = e.dir ? folderIcon(e.name, open) : fileIcon(e.name);
+  const nameHtml = e.dir ? `<span class="nm-base">${esc(e.name)}</span>` : fileNameHtml(e.name);
   return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : 'draggable="true"'} title="${escAttr(p)}">
-    <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${esc(e.name)}</span>${lockTag}${gitTag}</div>`;
+    <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${nameHtml}</span>${lockTag}${gitTag}</div>`;
 }
 function renderTree(): void {
   const el = $('#tree');
@@ -2304,7 +2374,19 @@ $('#tree').addEventListener('contextmenu', e => {
   ], () => { ctxPath = null; renderTree(); });
 });
 async function toggleDir(p: string): Promise<void> {
-  if (expanded.has(p)) {
+  const rowEl = $(`#tree .tree-item[data-path="${escAttr(p)}"]`);
+  const isClosing = expanded.has(p);
+  if (rowEl) {
+    const chevEl = rowEl.querySelector('.chev');
+    const icoEl = rowEl.querySelector('.ico');
+    if (chevEl) chevEl.classList.toggle('open', !isClosing);
+    if (icoEl) {
+      const name = p.split('/').pop() || p;
+      icoEl.innerHTML = folderIcon(name, !isClosing);
+    }
+  }
+
+  if (isClosing) {
     const prefix = p + '/';
     const childRows = $$<HTMLElement>('#tree .tree-item', $('#tree')).filter(r => (r.dataset.path ?? '').startsWith(prefix));
     if (childRows.length > 0) {
@@ -2480,7 +2562,8 @@ function tabHtml(n: string): string {
   const f = gitState.files?.find(x => x.path === n);
   const st = f && statusOf(f);
   const gitTag = st ? `<span class="gst ${st.cls}" title="${st.title}">${st.letter}</span>` : '';
-  return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span>${esc(baseName(n))}${gitTag}<span class="x" data-close-tab="1" title="Close (Ctrl+W)">${svgIcon('x', 12)}</span></div>`;
+  const nameHtml = fileNameHtml(baseName(n));
+  return `<div class="${cls}" data-tab="${escAttr(n)}" title="${escAttr(n)}">${dot}<span class="ico">${fileIcon(baseName(n))}</span><span class="nm">${nameHtml}</span>${gitTag}<span class="x" data-close-tab="1" title="Close (Ctrl+W)">${svgIcon('x', 12)}</span></div>`;
 }
 function renderTabs(): void {
   // Re-rendering mid-drag would drop the tab being dragged; catch up when it lands.
@@ -2533,8 +2616,36 @@ $('#tabs').addEventListener('auxclick', e => {
 function closeTabs(paths: string[]): void {
   const dirty = paths.map(p => buffers.get(p)).filter((b): b is EditorBuffer => isDirty(b));
   const finish = () => {
-    for (const p of paths) dropTab(p);
-    renderTabs(); renderEditor(); renderTree(); saveSession();
+    const tabEls = paths.map(p => $(`#tabs [data-tab="${CSS.escape(p)}"]`)).filter((el): el is HTMLElement => !!el);
+    const isClosingAll = paths.length >= openTabs.length;
+    if (tabEls.length) {
+      tabEls.forEach(el => {
+        if (el.classList.contains('closing')) return;
+        const w = el.getBoundingClientRect().width;
+        el.style.width = `${w}px`;
+        el.style.maxWidth = `${w}px`;
+        void el.offsetWidth;
+        el.classList.add('closing');
+      });
+      if (isClosingAll) {
+        const ink = $('#tabs .tab-ink');
+        if (ink) {
+          ink.style.opacity = '0';
+          ink.style.transition = 'opacity .12s ease-out';
+        }
+        $$('#editor .gutter, #editor .code').forEach(el => el.classList.add('editor-blur-out'));
+        const empty = $('#editorEmpty');
+        if (empty && !empty.classList.contains('hidden')) empty.classList.add('editor-blur-out');
+      }
+      setTimeout(() => {
+        $$('#editor .gutter, #editor .code, #editorEmpty').forEach(el => el.classList.remove('editor-blur-out'));
+        for (const p of paths) dropTab(p);
+        renderTabs(); renderEditor(); renderTree(); saveSession();
+      }, 190);
+    } else {
+      for (const p of paths) dropTab(p);
+      renderTabs(); renderEditor(); renderTree(); saveSession();
+    }
   };
   if (!dirty.length) { finish(); return; }
   openModal(`<h3>Save changes to ${plural(dirty.length, 'file')}?</h3><p class="sub">${dirty.map(b => esc(b.path)).join('<br>')}</p>
@@ -2639,7 +2750,36 @@ function dropTab(path: string): void {
 }
 function closeTab(path: string): void {
   const b = buffers.get(path);
-  const finish = () => { dropTab(path); renderTabs(); renderEditor(); renderTree(); saveSession(); };
+  const finish = () => {
+    const tabEl = $(`#tabs [data-tab="${CSS.escape(path)}"]`);
+    const isLastTab = openTabs.length <= 1;
+    if (tabEl) {
+      if (tabEl.classList.contains('closing')) return;
+      const w = tabEl.getBoundingClientRect().width;
+      tabEl.style.width = `${w}px`;
+      tabEl.style.maxWidth = `${w}px`;
+      void tabEl.offsetWidth;
+      tabEl.classList.add('closing');
+      if (isLastTab) {
+        const ink = $('#tabs .tab-ink');
+        if (ink) {
+          ink.style.opacity = '0';
+          ink.style.transition = 'opacity .12s ease-out';
+        }
+        $$('#editor .gutter, #editor .code').forEach(el => el.classList.add('editor-blur-out'));
+        const empty = $('#editorEmpty');
+        if (empty && !empty.classList.contains('hidden')) empty.classList.add('editor-blur-out');
+      }
+      setTimeout(() => {
+        $$('#editor .gutter, #editor .code, #editorEmpty').forEach(el => el.classList.remove('editor-blur-out'));
+        dropTab(path);
+        renderTabs(); renderEditor(); renderTree(); saveSession();
+      }, 190);
+    } else {
+      dropTab(path);
+      renderTabs(); renderEditor(); renderTree(); saveSession();
+    }
+  };
   if (!isDirty(b)) { finish(); return; }
   openModal(`<h3>Save changes to ${esc(baseName(path))}?</h3><p class="sub">Your changes will be lost if you don't save them.</p>
     <div class="row end"><button class="btn" data-close>Cancel</button><button class="btn" id="dontSave">Don't Save</button><button class="btn btn-primary" id="doSave">Save</button></div>`, m => {
@@ -2735,6 +2875,7 @@ function renderEditor(): void {
   for (const x of buffers.values()) x.ta?.classList.toggle('hidden', x !== b);
   const empty = $('#editorEmpty');
   if (b?.kind !== 'text') {
+    const wasHidden = empty.classList.contains('hidden');
     empty.classList.remove('hidden');
     if (b?.kind === 'image' && b.url) showImage(empty, b);
     else {
@@ -2742,12 +2883,19 @@ function renderEditor(): void {
       delete empty.dataset.img;
       empty.innerHTML = b ? fileNoteHtml(b.path, editorNote(b)) : welcomeHtml();
     }
+    if (wasHidden || !b) {
+      empty.classList.remove('enter');
+      void empty.offsetWidth;
+      empty.classList.add('enter');
+      empty.addEventListener('animationend', () => empty.classList.remove('enter'), { once: true });
+    }
     hlLines.replaceChildren(); hlBoxes.replaceChildren(); gutLines.replaceChildren();
     closeFind();
     updateStatus();
     return;
   }
   empty.classList.add('hidden');
+  empty.classList.remove('enter');
   if (findOpen) runFind(false);
   renderCode();
   if (document.activeElement === document.body || document.activeElement?.classList.contains('ta')) b.ta?.focus({ preventScroll: true });
@@ -3348,7 +3496,9 @@ function stopPreview(): void { running = false; previewPath = null; renderPrevie
 
 /* ================= Terminal ================= */
 const term = {
-  cwd: '', proc: null as number | null, runId: null as number | null, history: [] as string[], hIdx: 0,
+  cwd: '', proc: null as number | null, runId: null as number | null,
+  history: store.get<string[]>('breeze.termHistory', []),
+  hIdx: 0,
   runCwd: '',                                  // folder of the file being run: relative paths in its output resolve here
   pending: null as { el: HTMLElement; text: string } | null, // the run's unfinished last line, shown as plain text until it ends
   refs: [] as ErrorRef[],                      // the project errors the run has printed so far
@@ -3484,11 +3634,32 @@ function killCommand(): void {
   background(api.term.kill(term.proc));
   termWrite('^C\n');
 }
+function termWriteCommand(cmd: string): void {
+  const span = document.createElement('span');
+  span.className = 'cmd';
+  const trimmed = cmd.trimStart();
+  const leading = cmd.slice(0, cmd.length - trimmed.length);
+  const spaceIdx = trimmed.indexOf(' ');
+  if (spaceIdx === -1) {
+    span.innerHTML = `${esc(leading)}<span class="term-cmd-name">${esc(trimmed)}</span>\n`;
+  } else {
+    const cmdName = trimmed.slice(0, spaceIdx);
+    const rest = trimmed.slice(spaceIdx);
+    span.innerHTML = `${esc(leading)}<span class="term-cmd-name">${esc(cmdName)}</span><span class="term-cmd-args">${esc(rest)}</span>\n`;
+  }
+  termAppend(span);
+}
 async function runCommand(cmd: string): Promise<void> {
   if (term.proc != null) { background(api.term.write(term.proc, cmd + '\n')); termWrite(cmd + '\n', 'cmd'); return; }
-  termWrite(`${term.cwd}> `, 'ps'); termWrite(cmd + '\n', 'cmd');
+  termWrite(`${term.cwd}> `, 'ps');
+  termWriteCommand(cmd);
   if (!cmd.trim()) return;
-  term.history.push(cmd); term.hIdx = term.history.length;
+  if (!term.history.length || term.history[term.history.length - 1] !== cmd) {
+    term.history.push(cmd);
+    if (term.history.length > 200) term.history.shift();
+    store.set('breeze.termHistory', term.history);
+  }
+  term.hIdx = term.history.length;
   if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { termOut.innerHTML = ''; return; }
   const r = await api.term.run(cmd).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; cwd?: string; error?: string });
   if (r.error) termWrite(r.error + '\n', 'err');
@@ -3523,6 +3694,7 @@ termInput.addEventListener('keydown', e => {
     e.preventDefault();
     term.hIdx = clamp(term.hIdx + (e.key === 'ArrowUp' ? -1 : 1), 0, term.history.length);
     termInput.value = term.history[term.hIdx] ?? '';
+    updateGhost();
     return;
   }
   if (e.key !== 'Enter') return;
@@ -3718,9 +3890,31 @@ function ghostMatch(value: string): string {
   return word ? value + word.slice(token.length) : '';
 }
 function updateGhost(): void {
-  if (term.proc != null) { termGhost.innerHTML = ''; return; }
-  const v = termInput.value, match = ghostMatch(v);
-  termGhost.innerHTML = match ? `<span class="typed">${esc(v)}</span>${esc(match.slice(v.length))}` : '';
+  if (term.proc != null) {
+    termGhost.innerHTML = '';
+    termInput.classList.add('raw-input');
+    return;
+  }
+  termInput.classList.remove('raw-input');
+  const v = termInput.value;
+  if (!v) {
+    termGhost.innerHTML = '';
+    return;
+  }
+  const match = ghostMatch(v);
+  const trimmed = v.trimStart();
+  const leading = v.slice(0, v.length - trimmed.length);
+  const spaceIdx = trimmed.indexOf(' ');
+  let highlightedTyped = '';
+  if (spaceIdx === -1) {
+    highlightedTyped = `${esc(leading)}<span class="term-cmd-name">${esc(trimmed)}</span>`;
+  } else {
+    const cmdName = trimmed.slice(0, spaceIdx);
+    const rest = trimmed.slice(spaceIdx);
+    highlightedTyped = `${esc(leading)}<span class="term-cmd-name">${esc(cmdName)}</span><span class="term-cmd-args">${esc(rest)}</span>`;
+  }
+  const ghostTail = match && match.startsWith(v) ? match.slice(v.length) : '';
+  termGhost.innerHTML = `${highlightedTyped}${ghostTail ? `<span class="term-ghost-text">${esc(ghostTail)}</span>` : ''}`;
 }
 // Width of text in an input's own font.
 const measureCtx = document.createElement('canvas').getContext('2d');
@@ -3769,10 +3963,18 @@ async function completeTerminal(): Promise<void> {
 function terminalAutofillKeys(e: KeyboardEvent): boolean {
   if (term.proc != null) return false;
   if (suggestKeys(e, termInput)) return true;
-  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) { e.preventDefault(); void completeTerminal(); return true; }
-  const atEnd = termInput.selectionStart === termInput.value.length;
   const match = ghostMatch(termInput.value);
-  if (e.key === 'ArrowRight' && atEnd && match) { e.preventDefault(); termInput.value = match; updateGhost(); return true; }
+  if ((e.key === 'Tab' || e.key === 'ArrowRight') && match && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    termInput.value = match;
+    updateGhost();
+    return true;
+  }
+  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    void completeTerminal();
+    return true;
+  }
   return false;
 }
 termInput.addEventListener('input', () => { updateGhost(); if (suggest?.owner === termInput) hideSuggest(); });
@@ -4144,6 +4346,9 @@ function openMenu(i: number, viaKeyboard = false, pinned = viaKeyboard): void {
 /* ----- Popups grow out of the icon that opened them and shrink back into it ----- */
 let popTrigger: { el: HTMLElement; at: number } | null = null;
 let menuOwner: HTMLElement | null = null; // the button whose menu is (or was just) open, for modals its items open
+let activeMenuTrigger: HTMLElement | null = null;
+let justClosedTrigger: HTMLElement | null = null;
+let justClosedAt = 0;
 const noteTrigger = (e: Event) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>('button, [role="button"]');
   if (el) popTrigger = { el, at: Date.now() };
@@ -4163,11 +4368,23 @@ function growFrom(pop: HTMLElement, owner: HTMLElement, at?: { left: number; top
   pop.style.transformOrigin = `${i.left + i.width / 2 - p.left}px ${i.top + i.height / 2 - p.top}px`;
   pop.classList.add('from-icon');
 }
-function popupMenu(x: number, y: number, items: MenuItem[], onClose?: () => void): void {
+function popupMenu(x: number, y: number, items: MenuItem[], onClose?: () => void, trigger?: HTMLElement): void {
+  const trig = trigger || popOwner() || popTrigger?.el || null;
+  activeMenuTrigger = trig;
+  if (trig) {
+    trig.classList.add('open');
+    trig.setAttribute('aria-expanded', 'true');
+  }
   showMenu(x, y, items, false);
   openMenuIdx = -2;
   menuPinned = true;
-  menuOnClose = onClose ?? null;
+  menuOnClose = () => {
+    if (trig) {
+      trig.classList.remove('open');
+      trig.setAttribute('aria-expanded', 'false');
+    }
+    onClose?.();
+  };
 }
 // A non-clickable row showing who is signed in.
 function menuHeaderHtml(u: User): string {
@@ -4236,6 +4453,13 @@ function activateMenuItem(it: MenuItem): void {
 function closeMenu(): void {
   cancelMenuClose();
   if (openMenuIdx === -1) return;
+  if (activeMenuTrigger) {
+    justClosedTrigger = activeMenuTrigger;
+    justClosedAt = Date.now();
+    activeMenuTrigger.classList.remove('open');
+    activeMenuTrigger.setAttribute('aria-expanded', 'false');
+    activeMenuTrigger = null;
+  }
   openMenuIdx = -1; kbIdx = -1; menuPinned = false;
   // Menus fade out before they are removed; opening another menu clears the root straight away.
   const root = $('#menuRoot');
@@ -4250,7 +4474,19 @@ function closeMenu(): void {
   const cb = menuOnClose; menuOnClose = null; cb?.();
 }
 document.addEventListener('mousedown', e => {
-  if (openMenuIdx !== -1 && !(e.target as HTMLElement).closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, #agentPill')) closeMenu();
+  const target = e.target as HTMLElement;
+  if (openMenuIdx !== -1) {
+    const trig = activeMenuTrigger;
+    if (trig && (trig === target || trig.contains(target))) {
+      justClosedTrigger = trig;
+      justClosedAt = Date.now();
+      closeMenu();
+      return;
+    }
+    if (!target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, #agentPill, [data-act="git.more"]')) {
+      closeMenu();
+    }
+  }
 });
 window.addEventListener('blur', closeMenu);
 function moveKbSelection(down: boolean): void {
@@ -4300,7 +4536,7 @@ document.addEventListener('keyup', e => {
 
 // The gear turns while its menu is open and turns back when it closes (in the IDE and in Breeze Box).
 function settingsMenu(gear: HTMLElement, place: (r: DOMRect) => [number, number]): void {
-  if (gear.classList.contains('open')) { closeMenu(); return; }
+  if (gear.classList.contains('open') || (justClosedTrigger === gear && Date.now() - justClosedAt < 350)) { closeMenu(); return; }
   closeMenu();
   const [x, y] = place(gear.getBoundingClientRect());
   gear.classList.add('open');
@@ -4308,7 +4544,7 @@ function settingsMenu(gear: HTMLElement, place: (r: DOMRect) => [number, number]
   popupMenu(x, y, MENUS.find(m => m.name === 'Help')?.items ?? [], () => {
     gear.classList.remove('open');
     gear.setAttribute('aria-expanded', 'false');
-  });
+  }, gear);
 }
 $('#settingsBtn').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right + 6, r.top]);
 $('#boxSettings').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right - 260, r.bottom + 6]);
@@ -4368,6 +4604,14 @@ const TEAM_LINE: Record<string, string> = {
   build: '1 agent on this: <b>Builder</b> makes the changes',
   plan: '2 agents on this: <b>Planner</b> writes a plan, then <b>Builder</b> builds it once you approve',
 };
+function teamLineHtml(mode: string): string {
+  const chosen = selectedAgent();
+  const agentName = chosen?.name ?? 'Assistant';
+  if (mode === 'ask') {
+    return `1 agent on this: <b>${esc(agentName)}</b> answers without changing files`;
+  }
+  return TEAM_LINE[mode] ?? '';
+}
 function renderAgents(): void {
   const cards = $('#agentCards');
   const shown = new Set($$('[data-agent-card]', cards).map(el => el.dataset.agentCard));
@@ -4407,10 +4651,11 @@ function setAgent(k: AgentKey, status: AgentStatus, task: string, used?: number)
   Object.assign(agentsDef[k], { status, task });
   if (used != null) agentsDef[k].used = used;
   renderAgents(); vibeTick(); queueDiscord();
-  if (status === 'working' && agentRun?.phase === k) showThinking(thinkingLabel(k), k);
+  const curTab = surfaceTabs[surface.name]?.find(t => t.id === activeTabId[surface.name]);
+  if (status === 'working' && curTab?.run?.phase === k) showThinking(thinkingLabel(k), k, curTab);
 }
 
-/* ----- Chat surfaces: the IDE's agent panel and Breeze Box share one conversation engine ----- */
+/* ----- Chat surfaces & Multi-Tab Agent system ----- */
 interface ImageAttachment { id: string; name: string; dataUrl: string; fileUrl?: string; fileRel?: string; }
 const attachmentsMap: Record<WorkMode, ImageAttachment[]> = { ide: [], box: [] };
 
@@ -4420,41 +4665,359 @@ const SURFACES: Record<WorkMode, Surface> = {
   box: { name: 'box', chat: $('#boxChat'), prompt: $<HTMLTextAreaElement>('#boxPrompt'), send: $('#boxSend'), mode: $<HTMLSelectElement>('#boxMode'), attachmentsEl: $('#boxPromptAttachments') },
 };
 let surface = SURFACES.ide;     // the one on screen
-let msgSurface = surface;       // the one messages go to: a running agent keeps writing where it started
+let msgSurface = surface;       // fallback surface
+
+interface Run {
+  id: number;
+  tabId: string;
+  surfaceName: WorkMode;
+  agent: string;
+  mode: AgentMode;
+  uiMode: string;
+  phase: AgentKey;
+  tools: number;
+  files: Set<string>;
+  plan: string | null;
+  lastText: string;
+  lastMsg?: HTMLElement;
+  replied: boolean;
+  announce: boolean;
+}
+let agentRun: Run | null = null;
+let lastRunFiles: string[] = [];
+
+interface AgentTabState {
+  id: string;
+  surfaceName: WorkMode;
+  title: string;
+  panel: HTMLElement;
+  runId: number | null;
+  run: Run | null;
+  session: string | null;
+  agentId: string;
+  uiMode: string;
+  promptDraft: string;
+  attachments: ImageAttachment[];
+  historyId?: string;
+  unreadDone?: boolean;
+}
+
+const surfaceTabs: Record<WorkMode, AgentTabState[]> = { ide: [], box: [] };
+const activeTabId: Record<WorkMode, string> = { ide: '', box: '' };
+const createdTabIds = new Set<string>();
+
+function hasAnyActiveRun(): boolean {
+  for (const list of Object.values(surfaceTabs)) {
+    if (list.some(t => t.runId != null)) return true;
+  }
+  return false;
+}
+
+function getActiveTab(s: Surface = surface): AgentTabState {
+  const list = surfaceTabs[s.name];
+  if (!list.length) {
+    const initial = createAgentTab(s);
+    activeTabId[s.name] = initial.id;
+    initial.panel.classList.add('active');
+    renderAgentTabs(s);
+    return initial;
+  }
+  let tab = list.find(t => t.id === activeTabId[s.name]);
+  if (!tab) {
+    tab = list[0];
+    activeTabId[s.name] = tab.id;
+    tab.panel.classList.add('active');
+    renderAgentTabs(s);
+  }
+  return tab;
+}
+
+function createAgentTab(s: Surface, title?: string, initialHtml?: string, session?: string | null, markNew = false): AgentTabState {
+  const count = surfaceTabs[s.name].length + 1;
+  const tab: AgentTabState = {
+    id: 'atab_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    surfaceName: s.name,
+    title: title || `Chat ${count}`,
+    panel: document.createElement('div'),
+    runId: null,
+    run: null,
+    session: session ?? null,
+    agentId: appState.agent || 'antigravity',
+    uiMode: s.mode?.value || 'plan',
+    promptDraft: '',
+    attachments: [],
+  };
+  tab.panel.className = 'agent-tab-panel';
+  if (initialHtml) {
+    tab.panel.innerHTML = initialHtml;
+  } else {
+    if (s.name === 'box') {
+      const agent = selectedAgent();
+      const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
+      tab.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
+    } else {
+      tab.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
+    }
+  }
+  s.chat.appendChild(tab.panel);
+  surfaceTabs[s.name].push(tab);
+  if (markNew) createdTabIds.add(tab.id);
+  renderAgentTabs(s);
+  return tab;
+}
+
+function renderAgentTabs(s: Surface): void {
+  const tabsList = s.name === 'box' ? $('#boxAgentTabsList') : $('#agentTabsList');
+  if (!tabsList) return;
+  const list = surfaceTabs[s.name];
+  const curId = activeTabId[s.name];
+  const isMulti = list.length > 1;
+
+  const currentTabIds = new Set(list.map(t => t.id));
+  tabsList.querySelectorAll<HTMLElement>('.agent-tab').forEach(el => {
+    const tid = el.dataset.agentTab;
+    if (tid && !currentTabIds.has(tid) && !el.classList.contains('leaving')) {
+      el.remove();
+    }
+  });
+
+  list.forEach(t => {
+    const isActive = t.id === curId;
+    const isRunning = t.runId != null;
+    let el = tabsList.querySelector<HTMLElement>(`[data-agent-tab="${t.id}"]`);
+
+    if (!el) {
+      const newEl = document.createElement('div');
+      newEl.dataset.agentTab = t.id;
+      newEl.className = `agent-tab ${isActive ? 'active' : ''} ${isRunning ? 'running' : 'idle'} ${isMulti ? 'closable' : 'single'}`;
+      newEl.innerHTML = `
+        <span class="tab-status"></span>
+        <span class="tab-title">${esc(t.title)}</span>
+        <button class="tab-close" type="button" data-close-tab="${escAttr(t.id)}">✕</button>
+      `;
+
+      if (createdTabIds.has(t.id)) {
+        newEl.classList.add('enter');
+        newEl.addEventListener('animationend', () => newEl.classList.remove('enter'), { once: true });
+        createdTabIds.delete(t.id);
+      }
+
+      newEl.onclick = (e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest('[data-close-tab]') || newEl.classList.contains('leaving')) return;
+        switchAgentTab(s, t.id);
+      };
+
+      const closeBtn = newEl.querySelector<HTMLButtonElement>('[data-close-tab]');
+      if (closeBtn) {
+        closeBtn.onclick = (e) => {
+          e.stopPropagation();
+          closeAgentTab(s, t.id);
+        };
+      }
+
+      tabsList.appendChild(newEl);
+    } else {
+      el.classList.toggle('active', isActive);
+      el.classList.toggle('running', isRunning);
+      el.classList.toggle('idle', !isRunning);
+      el.classList.remove('unread');
+      el.classList.toggle('closable', isMulti);
+      el.classList.toggle('single', !isMulti);
+      el.removeAttribute('title');
+
+      const titleSpan = el.querySelector('.tab-title');
+      if (titleSpan && titleSpan.textContent !== t.title) {
+        titleSpan.textContent = t.title;
+      }
+      const statusSpan = el.querySelector<HTMLElement>('.tab-status');
+      if (statusSpan) {
+        statusSpan.title = isRunning ? 'Working...' : '';
+      }
+      tabsList.appendChild(el);
+    }
+  });
+}
+
+function switchAgentTab(s: Surface, tid: string): void {
+  const current = getActiveTab(s);
+  if (current && current.id !== tid) {
+    current.promptDraft = s.prompt.value;
+    current.uiMode = s.mode.value;
+    current.attachments = [...(attachmentsMap[s.name] || [])];
+    current.panel.classList.remove('active');
+  }
+  const next = surfaceTabs[s.name].find(t => t.id === tid);
+  if (!next) return;
+  activeTabId[s.name] = next.id;
+  next.unreadDone = false;
+  next.panel.classList.add('active');
+
+  if (s.name === 'ide' && next.agentId && appState.agent !== next.agentId) {
+    appState.agent = next.agentId;
+    saveApp();
+    renderAgentPill();
+  }
+
+  s.prompt.value = next.promptDraft || '';
+  s.mode.value = next.uiMode || 'plan';
+  attachmentsMap[s.name] = next.attachments || [];
+  renderAttachments(s);
+
+  updateTabBusyState(s, next);
+  renderAgentTabs(s);
+  scrollChat(s);
+  s.prompt.focus();
+  updateScmGenBtn();
+}
+
+function closeAgentTab(s: Surface, tid: string): void {
+  const idx = surfaceTabs[s.name].findIndex(t => t.id === tid);
+  if (idx === -1) return;
+  const tab = surfaceTabs[s.name][idx];
+  archiveChatTab(s, tab);
+  if (tab.runId != null) {
+    background(api.agent.stop(tab.runId));
+  }
+
+  const tabsList = s.name === 'box' ? $('#boxAgentTabsList') : $('#agentTabsList');
+  const tabEl = tabsList?.querySelector<HTMLElement>(`[data-agent-tab="${tid}"]`);
+
+  const finalize = () => {
+    tab.panel.remove();
+    const curIdx = surfaceTabs[s.name].findIndex(t => t.id === tid);
+    if (curIdx !== -1) surfaceTabs[s.name].splice(curIdx, 1);
+    tabEl?.remove();
+    if (surfaceTabs[s.name].length === 0) {
+      const newTab = createAgentTab(s);
+      activeTabId[s.name] = newTab.id;
+      newTab.panel.classList.add('active');
+      updateTabBusyState(s, newTab);
+    } else if (activeTabId[s.name] === tid) {
+      const nextIdx = Math.min(idx, surfaceTabs[s.name].length - 1);
+      const nextTab = surfaceTabs[s.name][nextIdx];
+      activeTabId[s.name] = nextTab.id;
+      nextTab.panel.classList.add('active');
+      updateTabBusyState(s, nextTab);
+    }
+    renderAgentTabs(s);
+  };
+
+  if (tabEl && !tabEl.classList.contains('leaving')) {
+    if (activeTabId[s.name] === tid && surfaceTabs[s.name].length > 1) {
+      const nextIdx = idx === surfaceTabs[s.name].length - 1 ? idx - 1 : idx + 1;
+      const nextTab = surfaceTabs[s.name][nextIdx];
+      if (nextTab) {
+        activeTabId[s.name] = nextTab.id;
+        nextTab.unreadDone = false;
+        tab.panel.classList.remove('active');
+        nextTab.panel.classList.add('active');
+        s.prompt.value = nextTab.promptDraft || '';
+        s.mode.value = nextTab.uiMode || 'plan';
+        attachmentsMap[s.name] = nextTab.attachments || [];
+        renderAttachments(s);
+        updateTabBusyState(s, nextTab);
+      }
+    }
+
+    tabEl.classList.add('leaving');
+
+    if (surfaceTabs[s.name].length === 2) {
+      const remainingTab = surfaceTabs[s.name].find(t => t.id !== tid);
+      if (remainingTab) {
+        const remainingEl = tabsList?.querySelector<HTMLElement>(`[data-agent-tab="${remainingTab.id}"]`);
+        if (remainingEl) {
+          remainingEl.classList.remove('closable');
+          remainingEl.classList.add('single');
+        }
+      }
+    }
+
+    let finished = false;
+    const onEnd = () => {
+      if (finished) return;
+      finished = true;
+      finalize();
+    };
+    tabEl.addEventListener('transitionend', onEnd, { once: true });
+    setTimeout(onEnd, 240);
+  } else {
+    finalize();
+  }
+}
+
+function updateTabBusyState(s: Surface, tab?: AgentTabState): void {
+  const t = tab || getActiveTab(s);
+  const on = t.runId != null;
+  s.send.classList.toggle('stop', on);
+  void setIcon(s.send, on ? 'stop' : 'send');
+  const span = $('span', s.send);
+  if (span) span.textContent = on ? 'Stop' : 'Send';
+  s.send.title = on ? 'Stop the agent' : 'Send (Enter)';
+  s.prompt.closest('.composer-box')?.classList.toggle('busy', on);
+}
+
+function setBusy(on: boolean): void {
+  updateTabBusyState(surface);
+}
+
+function newAgentTabAction(s: Surface = surface): void {
+  const cur = getActiveTab(s);
+  if (cur) archiveChatTab(s, cur);
+  const newTab = createAgentTab(s, undefined, undefined, null, true);
+  switchAgentTab(s, newTab.id);
+  const bar = s.name === 'box' ? $('#boxAgentTabsBar') : $('#agentTabsBar');
+  bar?.scrollTo({ left: bar.scrollWidth, behavior: 'smooth' });
+}
+
 function useSurface(name: WorkMode): void {
   surface = SURFACES[name];
-  if (!agentRun) msgSurface = surface;
+  msgSurface = surface;
 }
+
 function scrollChat(s: Surface): void {
   const scroller = s.name === 'box' ? $('.box-main') : s.chat;
-  scroller.scrollTop = scroller.scrollHeight;
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
 }
-function addMsg(html: string): HTMLElement {
-  const chat = msgSurface.chat;
-  const d = document.createElement('div'); d.innerHTML = html;
+
+function addMsg(html: string, tab?: AgentTabState): HTMLElement {
+  const t = tab || getActiveTab(msgSurface);
+  const d = document.createElement('div');
+  d.innerHTML = html;
   const el = d.firstElementChild as HTMLElement;
-  // The "thinking" indicator always stays last, under the newest message.
-  chat.insertBefore(el, chat.querySelector('.thinking'));
-  scrollChat(msgSurface);
-  saveChat();
+  const thinking = t.panel.querySelector('.thinking');
+  if (thinking) {
+    t.panel.insertBefore(el, thinking);
+  } else {
+    t.panel.appendChild(el);
+  }
+  if (t.id === activeTabId[t.surfaceName]) {
+    scrollChat(SURFACES[t.surfaceName]);
+  }
+  saveChat(t);
   return el;
 }
+
 const clockTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-// In the IDE replies come from the Planner or Builder; in Breeze Box from the agent itself (Codex…).
+
 function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: string; tint: string } {
   const chosen = selectedAgent();
-  if (s.name === 'box' && chosen) {
-    const st = AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: 'default' };
+  if (chosen && (s.name === 'box' || k === 'assistant')) {
+    const st = AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: chosen.id };
     return { name: chosen.name, ...st };
   }
   const { name, letter, tint } = agentsDef[k];
   return { name, letter, tint };
 }
-function agentMsg(k: AgentKey, html: string): HTMLElement {
-  const { name, letter, tint } = speaker(k);
-  return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`);
+
+function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
+  const t = tab || getActiveTab(msgSurface);
+  const { name, letter, tint } = speaker(k, SURFACES[t.surfaceName]);
+  return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`, t);
 }
-function userMsg(text: string, attachments?: ImageAttachment[]): void {
+
+function userMsg(text: string, attachments?: ImageAttachment[], tab?: AgentTabState): void {
+  const t = tab || getActiveTab(msgSurface);
   let imgHtml = '';
   if (attachments && attachments.length) {
     imgHtml = `<div class="msg-attachments">${attachments.map(a =>
@@ -4462,40 +5025,52 @@ function userMsg(text: string, attachments?: ImageAttachment[]): void {
     ).join('')}</div>`;
   }
   const bodyText = text ? `<div>${esc(text).replaceAll('\n', '<br>')}</div>` : '';
-  addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${bodyText}${imgHtml}</div></div>`);
+  addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${bodyText}${imgHtml}</div></div>`, t);
 }
-// Shown under the conversation while the agent works; never saved with the chat.
+
 function thinkingLabel(k: AgentKey): string {
   const who = speaker(k).name;
   const task = agentsDef[k].task;
   return msgSurface.name === 'box' || !task ? `${who} is thinking` : `${who} · ${task}`;
 }
-function showThinking(label: string, k: AgentKey = agentRun?.phase ?? 'assistant'): void {
-  const s = msgSurface;
-  let el = s.chat.querySelector<HTMLElement>('.thinking');
+
+function showThinking(label: string, k: AgentKey = 'assistant', tab?: AgentTabState): void {
+  const t = tab || getActiveTab(msgSurface);
+  let el = t.panel.querySelector<HTMLElement>('.thinking');
   if (!el) {
     el = document.createElement('div');
     el.className = 'thinking';
     el.setAttribute('role', 'status');
     el.innerHTML = '<span class="avatar mini"></span><span class="lbl"></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
-    s.chat.append(el);
-    scrollChat(s);
+    t.panel.appendChild(el);
+    if (t.id === activeTabId[t.surfaceName]) scrollChat(SURFACES[t.surfaceName]);
   }
-  const { letter, tint } = speaker(k, s);
-  $('.avatar', el).outerHTML = brandMark('avatar mini', tint, letter);
-  $('.lbl', el).textContent = label;
+  const { letter, tint } = speaker(k, SURFACES[t.surfaceName]);
+  const avatar = $('.avatar', el);
+  if (avatar) avatar.outerHTML = brandMark('avatar mini', tint, letter);
+  const lbl = $('.lbl', el);
+  if (lbl) lbl.textContent = label;
 }
-function hideThinking(): void {
-  for (const s of Object.values(SURFACES)) s.chat.querySelector('.thinking')?.remove();
+
+function hideThinking(tab?: AgentTabState): void {
+  if (tab) {
+    tab.panel.querySelector('.thinking')?.remove();
+  } else {
+    for (const list of Object.values(surfaceTabs)) {
+      for (const t of list) t.panel.querySelector('.thinking')?.remove();
+    }
+  }
 }
-function emptyChat(s: Surface = SURFACES.ide): void {
+
+function emptyChat(s: Surface = SURFACES.ide, tab?: AgentTabState): void {
+  const t = tab || getActiveTab(s);
   if (s.name === 'box') {
     const agent = selectedAgent();
     const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
-    s.chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
+    t.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
     return;
   }
-  s.chat.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
+  t.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
 }
 // A small, safe subset of Markdown for agent replies: inline code, bold and line breaks. Fenced code blocks
 // become artifacts: a card with the file name, Copy and Download. A fence may name its file: ```html index.html
@@ -4551,37 +5126,14 @@ document.addEventListener('click', e => {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 });
 const TOOL_ICON: Record<string, string> = { read: 'eye', edit: 'pencil', run: 'terminal', search: 'search', web: 'globe', todo: 'todo', agent: 'diamond', tool: 'dot', note: 'info' };
-function toolLine(kind: string, label: string): void {
-  addMsg(`<div class="tool-line ${kind}"><span class="ti">${svgIcon(TOOL_ICON[kind] ?? 'dot', 14)}</span><span class="tl">${esc(label)}</span></div>`);
+function toolLine(kind: string, label: string, tab?: AgentTabState): void {
+  addMsg(`<div class="tool-line ${kind}"><span class="ti">${svgIcon(TOOL_ICON[kind] ?? 'dot', 14)}</span><span class="tl">${esc(label)}</span></div>`, tab);
 }
 
 // The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
 const chatScope = (s: Surface) => (s.name === 'box' ? 'box' : rootInfo?.root ?? '');
 const chatKey = (s: Surface = msgSurface) => `breeze.chat:${chatScope(s)}`;
 const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${chatScope(s)}:${appState.agent ?? ''}`;
-// The chat's saveable HTML; empty when there is nothing to keep.
-function chatHtml(s: Surface): string {
-  if (s.chat.querySelector('.empty')) return '';
-  return [...s.chat.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
-}
-let chatTimer: TimeoutId | undefined;
-function saveChat(): void {
-  clearTimeout(chatTimer);
-  const s = msgSurface;
-  chatTimer = setTimeout(() => {
-    if (s.name === 'ide' && !rootInfo) return;
-    const html = chatHtml(s);
-    if (html && html.length < 400000) store.set(chatKey(s), html); else store.del(chatKey(s));
-  }, 400);
-}
-function restoreChat(s: Surface = SURFACES.ide): void {
-  const html = store.get<string>(chatKey(s), '');
-  if (!html) { emptyChat(s); return; }
-  s.chat.innerHTML = html;
-  // Buttons from an earlier run have no handlers any more; show them as settled.
-  $$('[data-live]', s.chat).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
-  scrollChat(s);
-}
 
 /* ----- Chat history: "New chat" files the current conversation away; the clock button brings one back ----- */
 interface ChatEntry { id: string; title: string; at: number; html: string; agent: string | null; session: string | null; }
@@ -4590,28 +5142,89 @@ const chatIdKey = (s: Surface) => `breeze.chatId:${chatScope(s)}`;
 const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
 const newChatId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const chatHistory = (s: Surface) => store.get<ChatEntry[]>(historyKey(s), []);
-function archiveChat(s: Surface): void {
+
+function archiveChatTab(s: Surface, tab: AgentTabState): void {
   if (s.name === 'ide' && !rootInfo) return;
-  const html = chatHtml(s);
-  if (!html) return;
-  const id = store.get<string | null>(chatIdKey(s), null) ?? newChatId();
-  const first = s.chat.querySelector('.msg.user .body')?.textContent ?? 'Chat';
-  const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || 'Chat';
-  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: appState.agent, session: store.get<string | null>(agentSessionKey(s), null) };
+  if (tab.panel.querySelector('.empty') && !tab.panel.querySelector('.msg')) return;
+  const html = [...tab.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+  if (!html || !html.includes('class="msg')) return;
+  if (!tab.historyId) tab.historyId = newChatId();
+  const id = tab.historyId;
+  const first = tab.panel.querySelector('.msg.user .body')?.textContent ?? tab.title ?? 'Chat';
+  const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || tab.title || 'Chat';
+  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: tab.agentId || appState.agent, session: tab.session ?? null };
   let bytes = 0;
   const list = [entry, ...chatHistory(s).filter(e => e.id !== id)].filter(e => (bytes += e.html.length) < HISTORY_BYTES).slice(0, HISTORY_MAX);
   store.set(historyKey(s), list);
-  store.del(chatIdKey(s));
 }
+
+function archiveChat(s: Surface): void {
+  const t = getActiveTab(s);
+  if (t) archiveChatTab(s, t);
+}
+
+// The chat's saveable HTML; empty when there is nothing to keep.
+function chatHtml(s: Surface): string {
+  const t = getActiveTab(s);
+  if (t.panel.querySelector('.empty')) return '';
+  return [...t.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+}
+let chatTimer: TimeoutId | undefined;
+function saveChat(tab?: AgentTabState): void {
+  clearTimeout(chatTimer);
+  const t = tab || getActiveTab(msgSurface);
+  chatTimer = setTimeout(() => {
+    if (t.surfaceName === 'ide' && !rootInfo) return;
+    const s = SURFACES[t.surfaceName];
+    archiveChatTab(s, t);
+  }, 400);
+}
+function restoreChat(s: Surface = SURFACES.ide): void {
+  const html = store.get<string>(chatKey(s), '');
+  // If an earlier session was stored in chatKey, archive it into chat history so it is never lost
+  if (html && html.includes('msg')) {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    const first = tempDiv.querySelector('.msg.user .body')?.textContent ?? 'Chat';
+    const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || 'Chat';
+    const entry: ChatEntry = {
+      id: newChatId(),
+      title,
+      at: Date.now(),
+      html,
+      agent: appState.agent,
+      session: store.get<string | null>(agentSessionKey(s), null),
+    };
+    let bytes = 0;
+    const existing = chatHistory(s);
+    if (!existing.some(e => e.title === title && Math.abs(e.at - entry.at) < 60000)) {
+      const list = [entry, ...existing.filter(e => e.id !== entry.id)].filter(e => (bytes += e.html.length) < HISTORY_BYTES).slice(0, HISTORY_MAX);
+      store.set(historyKey(s), list);
+    }
+  }
+  // Clear lingering chatKey so startup is always clean and never resurrects ghost chats
+  store.del(chatKey(s));
+
+  surfaceTabs[s.name] = [];
+  s.chat.innerHTML = '';
+  // Fresh, clean initial chat tab
+  const initial = createAgentTab(s, 'Chat 1');
+  activeTabId[s.name] = initial.id;
+  initial.panel.classList.add('active');
+  renderAgentTabs(s);
+  scrollChat(s);
+}
+
 function openChat(s: Surface, e: ChatEntry): void {
-  if (agentRun) { toast('Stop the agent before switching chats'); return; }
-  archiveChat(s);
-  store.set(historyKey(s), chatHistory(s).filter(x => x.id !== e.id));
-  store.set(chatIdKey(s), e.id);
-  store.set(chatKey(s), e.html);
-  // The agent can carry on the conversation only if it is the one that had it.
-  if (e.session && e.agent === appState.agent) store.set(agentSessionKey(s), e.session); else store.del(agentSessionKey(s));
-  restoreChat(s);
+  const cur = getActiveTab(s);
+  const isCurEmpty = !cur.runId && (cur.panel.querySelector('.empty') || !cur.panel.children.length);
+  const tab = isCurEmpty ? cur : createAgentTab(s, e.title);
+  tab.title = e.title;
+  tab.historyId = e.id;
+  tab.session = (e.session && e.agent === appState.agent) ? e.session : null;
+  tab.panel.innerHTML = e.html;
+  $$('[data-live]', tab.panel).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
+  switchAgentTab(s, tab.id);
   resetTeam();
   s.prompt.focus();
 }
@@ -4625,7 +5238,7 @@ function timeAgo(at: number): string {
   return d < 30 ? `${d}d ago` : new Date(at).toLocaleDateString();
 }
 function showHistory(s: Surface, anchor: HTMLElement): void {
-  if (anchor.classList.contains('open')) { closeMenu(); return; }
+  if (anchor.classList.contains('open') || (justClosedTrigger === anchor && Date.now() - justClosedAt < 350)) { closeMenu(); return; }
   closeMenu();
   const list = chatHistory(s);
   const items: MenuItem[] = list.length
@@ -4634,8 +5247,8 @@ function showHistory(s: Surface, anchor: HTMLElement): void {
   if (list.length) items.push({ sep: true }, { label: 'Clear chat history', run: () => { store.del(historyKey(s)); toast('Chat history cleared'); } });
   const r = anchor.getBoundingClientRect();
   anchor.classList.add('open');
-  popupMenu(r.right - 300, r.bottom + 4, items, () => anchor.classList.remove('open'));
-  $('#menuRoot .menu').classList.add('history-menu');
+  popupMenu(r.right - 300, r.bottom + 4, items, () => anchor.classList.remove('open'), anchor);
+  $('#menuRoot .menu')?.classList.add('history-menu');
 }
 $('#chatHistory').onclick = e => showHistory(SURFACES.ide, e.currentTarget as HTMLElement);
 $('#boxHistory').onclick = e => showHistory(SURFACES.box, e.currentTarget as HTMLElement);
@@ -4697,11 +5310,12 @@ async function addPastedImage(file: File, s: Surface): Promise<void> {
 
 
 
-interface Run { id: number; agent: string; mode: AgentMode; uiMode: string; phase: AgentKey; tools: number; files: Set<string>; plan: string | null; lastText: string; lastMsg?: HTMLElement; replied: boolean; announce: boolean; }
-let agentRun: Run | null = null;
-let lastRunFiles: string[] = [];
 for (const s of Object.values(SURFACES)) {
-  s.send.onclick = () => (agentRun ? stopAgent() : void sendPrompt());
+  s.send.onclick = () => {
+    const tab = getActiveTab(s);
+    if (tab.runId != null) stopAgent(tab);
+    else void sendPrompt();
+  };
   s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
 
   const box = s.prompt.closest<HTMLElement>('.composer-box');
@@ -4767,85 +5381,112 @@ document.addEventListener('click', e => {
   }
 });
 
-function newChat(): void {
-  if (agentRun) stopAgent();
-  archiveChat(surface);
-  store.del(agentSessionKey(surface)); store.del(chatKey(surface)); store.del(chatIdKey(surface));
-  emptyChat(surface);
-  resetTeam();
-  attachmentsMap[surface.name] = [];
-  renderAttachments(surface);
-  surface.prompt.focus();
-}
-$('#newChat').onclick = newChat;
-commands['chat.new'] = newChat;
+// Hook up new chat buttons to create new tabs
+const newChatBtn = document.getElementById('newChat');
+if (newChatBtn) newChatBtn.onclick = () => newAgentTabAction(SURFACES.ide);
+$('#agentNewTab')?.addEventListener('click', () => newAgentTabAction(SURFACES.ide));
+$('#boxNewTab')?.addEventListener('click', () => newAgentTabAction(SURFACES.box));
+$('[data-act="chat.new"]')?.addEventListener('click', () => newAgentTabAction(SURFACES.box));
+commands['chat.new'] = () => newAgentTabAction(surface);
 commands['agent.stop'] = () => stopAgent();
 
-function setBusy(on: boolean): void {
-  for (const { send, prompt } of Object.values(SURFACES)) {
-    send.classList.toggle('stop', on);
-    void setIcon(send, on ? 'stop' : 'send');
-    const span = $('span', send);
-    if (span) span.textContent = on ? 'Stop' : 'Send';
-    send.title = on ? 'Stop the agent' : 'Send (Enter)';
-    prompt.closest('.composer-box')?.classList.toggle('busy', on);
-  }
+function stopAgent(targetTab?: AgentTabState): void {
+  const tab = targetTab || getActiveTab(surface);
+  if (tab.runId != null) background(api.agent.stop(tab.runId));
 }
-function stopAgent(): void {
-  if (agentRun) background(api.agent.stop(agentRun.id));
-}
+
 const MODES: Record<string, AgentMode> = { build: 'build', ask: 'ask', plan: 'plan' };
 const phaseFor = (mode: AgentMode): AgentKey => ({ build: 'builder', plan: 'planner', ask: 'assistant' } as const)[mode];
+
 async function sendPrompt(): Promise<void> {
-  const text = surface.prompt.value.trim();
-  const attachments = [...(attachmentsMap[surface.name] || [])];
-  if ((!text && !attachments.length) || agentRun) return;
+  const s = surface;
+  const text = s.prompt.value.trim();
+  const attachments = [...(attachmentsMap[s.name] || [])];
+  const tab = getActiveTab(s);
+  if ((!text && !attachments.length) || tab.runId != null) return;
   const agent = selectedAgent();
   if (!agent) { openAgentPicker(); return; }
-  if (surface.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
-  msgSurface = surface;
-  const uiMode = surface.mode.value;
-  surface.prompt.value = '';
-  attachmentsMap[surface.name] = [];
-  renderAttachments(surface);
-  if (surface.chat.querySelector('.empty')) surface.chat.innerHTML = '';
-  // A new task: the cards from the last one go away until the agent has read this message.
+  if (s.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
+
+  msgSurface = s;
+  const uiMode = s.mode.value;
+  s.prompt.value = '';
+  tab.promptDraft = '';
+  attachmentsMap[s.name] = [];
+  tab.attachments = [];
+  renderAttachments(s);
+
+  if (tab.panel.querySelector('.empty')) tab.panel.innerHTML = '';
+
+  if (/^Chat \d+$/i.test(tab.title) || tab.title === 'New chat') {
+    tab.title = text ? (text.length > 20 ? text.slice(0, 18) + '…' : text) : 'Task';
+    renderAgentTabs(s);
+  }
+
   team = [];
   teamNeed = 0;
   renderAgents();
-  userMsg(text, attachments);
+  userMsg(text, attachments, tab);
+
   let agentPrompt = text;
   if (attachments.length) {
     const fileHeaders = attachments.map(a => `[Attached image: ${a.fileRel || a.name}]`).join('\n');
     agentPrompt = fileHeaders + (text ? `\n\n${text}` : '\nPlease inspect the attached image(s).');
   }
-  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', agentPrompt, uiMode, true);
+  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', agentPrompt, uiMode, tab, true);
 }
 
-async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string, announce = false): Promise<void> {
+async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string, tab: AgentTabState, announce = false): Promise<void> {
   const phase = phaseFor(mode);
-  showThinking(`${speaker(phase).name} is reading your message`, phase);
-  setBusy(true);
+  showThinking(`${speaker(phase).name} is reading your message`, phase, tab);
+  tab.agentId = agentId;
+  tab.uiMode = uiMode;
   agentsDef[phase].used = 0;
+
   try {
-    const box = msgSurface.name === 'box';
-    const id = await api.agent.run({ agent: agentId, mode, prompt, session: store.get<string | null>(agentSessionKey(), null), box });
-    agentRun = { id, agent: agentId, mode, uiMode, phase, tools: 0, files: new Set(), plan: null, lastText: '', replied: false, announce };
-    // Events that arrived before the run id came back are replayed now.
-    for (const [runId, ev] of earlyEvents.splice(0)) if (runId === id) handleAgentEvent(agentRun, ev);
-    if (agentRun?.id === id) setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
+    const box = tab.surfaceName === 'box';
+    const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.session, box });
+    const run: Run = {
+      id,
+      tabId: tab.id,
+      surfaceName: tab.surfaceName,
+      agent: agentId,
+      mode,
+      uiMode,
+      phase,
+      tools: 0,
+      files: new Set(),
+      plan: null,
+      lastText: '',
+      replied: false,
+      announce,
+    };
+    tab.runId = id;
+    tab.run = run;
+    agentRun = run;
+
+    updateTabBusyState(SURFACES[tab.surfaceName], tab);
+    renderAgentTabs(SURFACES[tab.surfaceName]);
+
+    for (const [runId, ev] of earlyEvents.splice(0)) {
+      if (runId === id) handleAgentEvent(run, ev, tab);
+    }
+    if (tab.runId === id) setAgent(phase, 'working', mode === 'build' ? 'Working on your request' : 'Reading the project', 0);
   } catch (e) {
-    setBusy(false);
-    hideThinking();
+    tab.runId = null;
+    tab.run = null;
+    updateTabBusyState(SURFACES[tab.surfaceName], tab);
+    renderAgentTabs(SURFACES[tab.surfaceName]);
+    hideThinking(tab);
     joinTeam(phase);
     setAgent(phase, 'idle', 'Could not start', 0);
-    errorCard(errMsg(e));
+    errorCard(errMsg(e), undefined, tab);
   }
 }
 
-function errorCard(text: string, hint?: string): void {
+function errorCard(text: string, hint?: string, tab?: AgentTabState): void {
   const hintHtml = hint ? `<p>${esc(hint)}</p>` : '';
-  addMsg(`<div class="card error"><h5>${svgIcon('alert', 14)} The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}</div>`);
+  addMsg(`<div class="card error"><h5>${svgIcon('alert', 14)} The agent hit a problem</h5><pre>${esc(text)}</pre>${hintHtml}</div>`, tab);
 }
 
 function onAgentFile(r: Run, path: string): void {
@@ -4854,38 +5495,85 @@ function onAgentFile(r: Run, path: string): void {
   renderTree(); renderTabs();
   queueGitRefresh();
 }
-function onAgentError(r: Run, ev: AgentEvent): void {
-  // Some CLIs print the error as a reply too; show it once, in the error card.
+
+function onAgentError(r: Run, ev: AgentEvent, tab: AgentTabState): void {
   if (r.lastMsg && ev.text?.trim() === r.lastText.trim()) r.lastMsg.remove();
-  errorCard(ev.text ?? 'Unknown error', ev.hint);
+  errorCard(ev.text ?? 'Unknown error', ev.hint, tab);
 }
-// The first sign of life from the agent: its card appears, and a new task says how many agents it needs.
-function onFirstReply(r: Run): void {
+
+function onFirstReply(r: Run, tab: AgentTabState): void {
   r.replied = true;
   if (r.announce) teamNeed = TEAM_SIZE[r.uiMode] ?? 1;
   joinTeam(r.phase);
-  if (r.announce && msgSurface.name === 'ide') addMsg(`<div class="team-line">${TEAM_LINE[r.uiMode] ?? TEAM_LINE[r.mode]}</div>`);
+  if (r.announce && tab.surfaceName === 'ide') addMsg(`<div class="team-line">${teamLineHtml(r.uiMode || r.mode)}</div>`, tab);
 }
-const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent) => void>> = {
-  session: (_r, ev) => { if (ev.id) store.set(agentSessionKey(), ev.id); },
-  text: (r, ev) => { if (ev.text) { r.lastText = ev.text; r.lastMsg = agentMsg(r.phase, md(ev.text)); } },
-  tool: (r, ev) => { r.tools++; toolLine(ev.kind ?? 'tool', ev.label ?? ''); setAgent(r.phase, 'working', ev.label ?? 'Working', r.tools); },
+
+const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab: AgentTabState) => void>> = {
+  session: (_r, ev, tab) => {
+    if (ev.id) {
+      tab.session = ev.id;
+      store.set(agentSessionKey(SURFACES[tab.surfaceName]), ev.id);
+    }
+  },
+  text: (r, ev, tab) => {
+    if (!ev.text) return;
+    if (r.lastMsg && r.lastText && (ev.text.startsWith(r.lastText) || ev.text === r.lastText)) {
+      const bodyEl = r.lastMsg.querySelector('.body');
+      if (bodyEl) {
+        bodyEl.innerHTML = md(ev.text);
+        r.lastText = ev.text;
+        if (tab.id === activeTabId[tab.surfaceName]) scrollChat(SURFACES[tab.surfaceName]);
+        saveChat(tab);
+        return;
+      }
+    }
+    r.lastText = ev.text;
+    r.lastMsg = agentMsg(r.phase, md(ev.text), tab);
+  },
+  tool: (r, ev, tab) => {
+    r.lastMsg = undefined;
+    r.tools++;
+    toolLine(ev.kind ?? 'tool', ev.label ?? '', tab);
+    setAgent(r.phase, 'working', ev.label ?? 'Working', r.tools);
+  },
   file: (r, ev) => { if (ev.path) onAgentFile(r, ev.path); },
   plan: (r, ev) => { r.plan = ev.text ?? ''; },
-  note: (_r, ev) => { if (ev.text) toolLine('note', ev.text); },
-  error: onAgentError,
-  done: finishRun,
+  note: (_r, ev, tab) => { if (ev.text) toolLine('note', ev.text, tab); },
+  auth: (_r, ev, tab) => {
+    const url = ev.url;
+    const cmd = ev.command;
+    const cardHtml = `<div class="card warn"><h5>${svgIcon('alert', 14)} Sign-in Required</h5><p>${esc(ev.text || 'Antigravity session expired or unauthenticated.')}</p>${url ? `<div class="row" style="margin-top:8px;"><button class="btn btn-primary btnAgentAuth">Sign in with Google</button></div>` : (cmd ? `<p class="sub">Run <code>${esc(cmd)}</code> to sign in</p>` : '')}</div>`;
+    const el = addMsg(cardHtml, tab);
+    if (url) {
+      el.querySelector<HTMLElement>('.btnAgentAuth')?.addEventListener('click', () => {
+        api.sys.openExternal(url);
+      });
+    }
+  },
+  'auth-required': (r, ev, tab) => {
+    AGENT_EVENTS.auth?.(r, ev, tab);
+  },
+  error: (r, ev, tab) => onAgentError(r, ev, tab),
+  done: (r, ev, tab) => finishRun(r, ev, tab),
 };
-function handleAgentEvent(r: Run, ev: AgentEvent): void {
-  if (!r.replied && ev.t !== 'session' && ev.t !== 'done') onFirstReply(r);
-  AGENT_EVENTS[ev.t]?.(r, ev);
+
+function handleAgentEvent(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  if (!r.replied && ev.t !== 'session' && ev.t !== 'done') onFirstReply(r, tab);
+  AGENT_EVENTS[ev.t]?.(r, ev, tab);
 }
-// A run that fails at once can report before its id reaches the renderer; those events wait here.
+
 const earlyEvents: [number, AgentEvent][] = [];
 api.agent.onEvent((runId, ev) => {
-  const r = agentRun;
-  if (r?.id === runId) handleAgentEvent(r, ev);
-  else if (!r && earlyEvents.length < 200) earlyEvents.push([runId, ev]);
+  let foundTab: AgentTabState | undefined;
+  for (const sName of (['ide', 'box'] as WorkMode[])) {
+    const t = surfaceTabs[sName].find(x => x.runId === runId);
+    if (t) { foundTab = t; break; }
+  }
+  if (foundTab && foundTab.run) {
+    handleAgentEvent(foundTab.run, ev, foundTab);
+  } else if (earlyEvents.length < 200) {
+    earlyEvents.push([runId, ev]);
+  }
 });
 
 function runSummary(r: Run, ev: AgentEvent): string[] {
@@ -4896,54 +5584,80 @@ function runSummary(r: Run, ev: AgentEvent): string[] {
   else if (ev.tokens) usage = `${ev.tokens.toLocaleString()} tokens`;
   return [time, files, usage].filter(Boolean);
 }
-function showPlan(r: Run): void {
+
+function showPlan(r: Run, tab: AgentTabState): void {
   const plan = (r.plan || r.lastText).trim();
   if (!plan) { setAgent('planner', 'done', 'Answered', r.tools); return; }
   setAgent('planner', 'waiting', 'Waiting for plan approval', r.tools);
-  const el = addMsg(`<div class="card plan"><h5>${svgIcon('todo', 14)} Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`);
+  const el = addMsg(`<div class="card plan"><h5>${svgIcon('todo', 14)} Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`, tab);
   $$('[data-plan]', el).forEach(b => b.onclick = () => {
     const ok = b.dataset.plan === 'ok';
     $('[data-live]', el).outerHTML = `<div class="resolved">${ok ? '✓ Approved' : '✎ Asked for changes'}</div>`;
-    saveChat();
+    saveChat(tab);
     if (ok) {
       setAgent('planner', 'done', 'Plan handed off', r.tools);
-      addMsg('<div class="handoff">Planner → Builder</div>');
-      void startAgentRun(r.agent, 'build', 'The plan is approved. Implement it now, then summarize what you changed.', 'build');
+      addMsg('<div class="handoff">Planner → Builder</div>', tab);
+      void startAgentRun(r.agent, 'build', 'The plan is approved. Implement it now, then summarize what you changed.', 'build', tab);
     } else {
       setAgent('planner', 'idle', 'Waiting for your changes', r.tools);
-      msgSurface.prompt.focus();
-      msgSurface.prompt.placeholder = 'What should change in the plan?';
+      const s = SURFACES[tab.surfaceName];
+      s.prompt.focus();
+      s.prompt.placeholder = 'What should change in the plan?';
     }
   });
 }
-function finishRun(r: Run, ev: AgentEvent): void {
-  agentRun = null;
-  earlyEvents.length = 0;
-  hideThinking();
-  setBusy(false);
+
+function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  tab.runId = null;
+  tab.run = null;
+  if (agentRun?.id === r.id) agentRun = null;
+  hideThinking(tab);
+
+  const s = SURFACES[tab.surfaceName];
+  if (tab.id === activeTabId[tab.surfaceName]) {
+    updateTabBusyState(s, tab);
+  }
+  renderAgentTabs(s);
+
   for (const k of Object.keys(locks)) delete locks[k];
   renderTree(); renderTabs();
   lastRunFiles = [...r.files];
   queueGitRefresh();
-  if (ev.stopped) { addMsg('<div class="handoff">Stopped by you</div>'); setAgent(r.phase, 'idle', 'Stopped', r.tools); vibeDone(false); return; }
-  if (!ev.ok) { setAgent(r.phase, 'idle', 'Stopped with an error', r.tools); vibeDone(false); return; }
-  if (r.uiMode === 'plan' && r.mode === 'plan') { showPlan(r); vibeDone(true, true); return; }
+
+  const allDone = !hasAnyActiveRun();
+  if (ev.stopped) {
+    addMsg('<div class="handoff">Stopped by you</div>', tab);
+    setAgent(r.phase, 'idle', 'Stopped', r.tools);
+    if (allDone) vibeDone(false);
+    return;
+  }
+  if (!ev.ok) {
+    setAgent(r.phase, 'idle', 'Stopped with an error', r.tools);
+    if (allDone) vibeDone(false);
+    return;
+  }
+  if (r.uiMode === 'plan' && r.mode === 'plan') {
+    showPlan(r, tab);
+    if (allDone) vibeDone(true, true);
+    return;
+  }
   const changed = r.files.size ? `Changed ${plural(r.files.size, 'file')}` : 'Answered';
   setAgent(r.phase, 'done', changed, r.tools);
-  vibeDone(true);
+  if (allDone) vibeDone(true);
+
   const bits = runSummary(r, ev);
   const summary = bits.length ? ' · ' + bits.join(' · ') : '';
   const review = r.files.size ? '<button class="btn btn-sm" data-live data-review>Review changes</button>' : '';
-  const el = addMsg(`<div class="run-done"><span>✓ Done${summary}</span>${review}</div>`);
+  const el = addMsg(`<div class="run-done"><span>✓ Done${summary}</span>${review}</div>`, tab);
   el.querySelector<HTMLElement>('[data-review]')?.addEventListener('click', () => showView('git', true));
-  msgSurface.prompt.placeholder = msgSurface.name === 'box' ? 'Ask Breeze anything…' : 'Describe what you want to build…';
+  s.prompt.placeholder = s.name === 'box' ? 'Ask Breeze anything…' : 'Describe what you want to build…';
   if (r.files.size && running) void reloadPreview();
 }
 
 /* ----- Custom dropdowns: every select.select gets a button that opens Breeze's own menu ----- */
 // The native <select> stays in the page (hidden) so code and forms keep reading its value.
 function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
-  if (btn.classList.contains('open')) { closeMenu(); return; }
+  if (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350)) { closeMenu(); return; }
   closeMenu();
   const label = () => {
     const text = sel.selectedOptions[0]?.text || sel.value || '';
@@ -4958,32 +5672,34 @@ function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
   const a = sel.id === 'agentModelSelect' ? selectedAgent() : null;
   const items: MenuItem[] = (a && a.found && a.models && a.models.length)
     ? modelMenuItems(a, () => {
-        sel.value = a.version || a.models?.[0] || '';
-        label();
-        btn.focus();
-      })
+      sel.value = a.version || a.models?.[0] || '';
+      label();
+      btn.focus();
+    })
     : [...sel.options].map(o => ({
-        label: o.text,
-        checked: () => o.value === sel.value,
-        enabled: () => !o.disabled,
-        run: () => {
-          sel.value = o.value;
-          label();
-          if (sel.onchange) void (sel.onchange as (e: Event) => void)(new Event('change'));
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          btn.focus();
-        },
-      }));
+      label: o.text,
+      checked: () => o.value === sel.value,
+      enabled: () => !o.disabled,
+      run: () => {
+        sel.value = o.value;
+        label();
+        if (sel.onchange) void (sel.onchange as (e: Event) => void)(new Event('change'));
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        btn.focus();
+      },
+    }));
   const r = btn.getBoundingClientRect();
   btn.classList.add('open');
   btn.setAttribute('aria-expanded', 'true');
-  popupMenu(r.left, r.bottom + 4, items, () => { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); });
+  popupMenu(r.left, r.bottom + 4, items, () => { btn.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }, btn);
   const m = $('#menuRoot .menu');
-  m.classList.add('dd-menu');
-  m.style.minWidth = `${Math.max(150, r.width)}px`;
-  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
-  // Near the bottom of the window (the chat composers) the menu opens upwards.
-  if (r.bottom + 4 + m.offsetHeight > innerHeight - 8) { m.style.top = `${Math.max(8, r.top - m.offsetHeight - 4)}px`; m.classList.add('up'); }
+  if (m) {
+    m.classList.add('dd-menu');
+    m.style.minWidth = `${Math.max(150, r.width)}px`;
+    m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
+    // Near the bottom of the window (the chat composers) the menu opens upwards.
+    if (r.bottom + 4 + m.offsetHeight > innerHeight - 8) { m.style.top = `${Math.max(8, r.top - m.offsetHeight - 4)}px`; m.classList.add('up'); }
+  }
 }
 function enhanceSelect(sel: HTMLSelectElement): void {
   if (sel.dataset.dd) return;
@@ -5029,7 +5745,7 @@ new MutationObserver(() => $$<HTMLSelectElement>('select.select:not([data-dd])')
 
 /* ================= Source control (git) ================= */
 let gitState: GitStatus = { repo: false };
-let gitLog: { head: string | null; commits: GitCommit[] } = { head: null, commits: [] };
+let gitLog: { head: string | null; commits: GitCommit[]; details?: GitCommitDetail[] } = { head: null, commits: [] };
 let gitBusy = false;
 let openCommit: string | null = null;
 const commitDetails = new Map<string, GitCommitDetail>();
@@ -5042,11 +5758,26 @@ async function refreshGit(): Promise<void> {
   if (!rootInfo) { gitState = { repo: false }; renderScm(); renderBranch(); return; }
   try {
     gitState = await api.git.status();
-    gitLog = gitState.repo && gitState.hasCommits ? await api.git.log() : { head: null, commits: [] };
+    gitLog = gitState.repo && gitState.hasCommits ? await api.git.log() : { head: null, commits: [], details: [] };
   } catch {
     gitState = { repo: false }; // git missing or not a repository: show the "initialize" panel
   }
+  if (gitLog.details?.length) {
+    for (const d of gitLog.details) {
+      commitDetails.set(d.hash, d);
+    }
+  }
   renderScm(); renderBranch(); renderTree(); renderTabs();
+  if (gitLog.commits.length) {
+    for (const c of gitLog.commits) {
+      if (!commitDetails.has(c.hash)) {
+        api.git.show(c.hash).then(d => {
+          commitDetails.set(c.hash, d);
+          if (openCommit === c.hash) placeCommitDetail(c.hash);
+        }).catch(() => {});
+      }
+    }
+  }
 }
 function renderBranch(): void {
   const s = gitState;
@@ -5096,7 +5827,7 @@ function scmRowHtml(f: GitFile, inStaged: boolean): string {
     ? `<button class="icon-btn" data-scm="unstage" title="Unstage Changes">${svgIcon('minus')}</button>`
     : `<button class="icon-btn" data-scm="stage" title="Stage Changes">${svgIcon('plus')}</button>`;
   return `<div class="scm-row ${st.cls}${enter}" data-file="${escAttr(f.path)}" data-staged="${inStaged ? 1 : ''}" title="${escAttr(f.path)} · ${st.title}">
-    <span class="ico">${fileIcon(baseName(f.path))}</span><span class="nm">${esc(baseName(f.path))}</span><span class="dir">${esc(dirName(f.path))}</span>
+    <span class="ico">${fileIcon(baseName(f.path))}</span><span class="nm">${fileNameHtml(baseName(f.path))}</span><span class="dir">${esc(dirName(f.path))}</span>
     <span class="acts"><button class="icon-btn" data-scm="open" title="Open File">${svgIcon('external')}</button>${discard}${toggle}</span><span class="st">${st.letter}</span></div>`;
 }
 function scmSectionHtml(key: string, title: string, list: GitFile[], inStaged: boolean, acts: string): string {
@@ -5106,6 +5837,115 @@ function scmSectionHtml(key: string, title: string, list: GitFile[], inStaged: b
     <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">${title}</span><span class="acts">${acts}</span><span class="count">${list.length}</span></div>
     <div class="scm-list">${rows}</div></div>`;
 }
+function lowestModelFor(a: DetectedAgent): { model?: string; effort: EffortLevel } {
+  const effort: EffortLevel = 'Low';
+  if (a.id === 'antigravity') {
+    const models = a.models ?? [];
+    const low = models.find(m => /flash-low/i.test(m))
+      || models.find(m => /flash-medium/i.test(m))
+      || models.find(m => /flash/i.test(m))
+      || models[models.length - 1];
+    return { model: low || 'gemini-3.8-flash-low', effort };
+  }
+  if (a.id === 'codex') {
+    const models = a.models ?? [];
+    const low = models.find(m => /mini/i.test(m)) || models[models.length - 1];
+    return { model: low || 'gpt-4o-mini', effort };
+  }
+  if (a.api) {
+    const models = a.models ?? [];
+    const low = models.find(m => /(1\.5b|3b|mini|small)/i.test(m)) || models[0];
+    return { model: low || a.version || undefined, effort };
+  }
+  return { model: a.models?.[a.models.length - 1], effort };
+}
+
+function autoResizeScmMsg(el?: HTMLTextAreaElement | null): void {
+  const msg = el || ($('#scmMsg') as HTMLTextAreaElement | null);
+  if (!msg) return;
+  msg.style.height = 'auto';
+  const target = Math.min(160, Math.max(28, msg.scrollHeight));
+  msg.style.height = `${target}px`;
+  msg.style.overflowY = msg.scrollHeight > 160 ? 'auto' : 'hidden';
+}
+
+function currentActiveAgent(): DetectedAgent | null {
+  try {
+    const list = typeof surfaceTabs !== 'undefined' ? surfaceTabs['ide'] : null;
+    const curId = typeof activeTabId !== 'undefined' ? activeTabId['ide'] : null;
+    const ideTab = list?.find(t => t.id === curId);
+    const agentId = ideTab?.agentId || appState.agent;
+    const found = appState.detect?.agents.find(a => a.id === agentId && a.found);
+    if (found) return found;
+  } catch {}
+  return selectedAgent();
+}
+
+function updateScmGenBtn(): void {
+  const btn = $('#scmGenMsg') as HTMLButtonElement | null;
+  if (!btn) return;
+  const a = currentActiveAgent();
+  const hasAgent = !!(a && a.found);
+  btn.classList.toggle('hidden', !hasAgent);
+  if (hasAgent) {
+    const tip = `Generate commit message (${a.name})`;
+    btn.title = tip;
+    btn.dataset.tooltip = tip;
+  }
+}
+
+async function generateCommitMsg(): Promise<void> {
+  const activeAg = currentActiveAgent();
+  if (!activeAg || !activeAg.found) {
+    toast('No active AI agent found');
+    return;
+  }
+  const currentFiles = gitState.files ?? [];
+  if (!currentFiles.length) {
+    toast('No changes to generate commit message for');
+    return;
+  }
+  const isStaged = currentFiles.some(f => f.x !== ' ' && f.x !== '?');
+  const genBtnEl = $('#scmGenMsg') as HTMLButtonElement | null;
+  if (genBtnEl) {
+    genBtnEl.disabled = true;
+    genBtnEl.classList.add('busy');
+    genBtnEl.innerHTML = `<div class="spinner sm"></div>`;
+  }
+  try {
+    const diff = await (isStaged ? api.git.diff([], true) : api.git.diff([], false));
+    const summary = currentFiles.map(f => `${f.path} (${statusOf(f, isStaged).title})`).join('\n');
+    const diffText = (diff || '').trim() || summary;
+    const truncated = diffText.length > 3500 ? diffText.slice(0, 3500) + '\n...(truncated)' : diffText;
+    const { model: lowModel, effort: lowEffort } = lowestModelFor(activeAg);
+    const prompt = `Write a short, concise Git commit message following conventional commits format (e.g. feat: ..., fix: ..., chore: ...) based on this diff:\n\n${truncated}\n\nImportant: Output ONLY the commit message itself. Do NOT output code fences, quotes, or conversational text.`;
+    const res = await api.git.genCommitMsg({
+      agent: activeAg.id,
+      prompt,
+      model: lowModel,
+      effort: lowEffort,
+    });
+    if (res) {
+      const msgArea = $<HTMLTextAreaElement>('#scmMsg');
+      if (msgArea) {
+        msgArea.value = res.trim();
+        scmDraft = msgArea.value;
+        autoResizeScmMsg(msgArea);
+        msgArea.focus();
+      }
+      toast(`Commit message generated with ${activeAg.name}`);
+    }
+  } catch (err: unknown) {
+    toast(`Failed to generate commit message: ${errMsg(err)}`);
+  } finally {
+    if (genBtnEl) {
+      genBtnEl.disabled = false;
+      genBtnEl.classList.remove('busy');
+      genBtnEl.innerHTML = svgIcon('sparkles', 14);
+    }
+  }
+}
+
 function renderScm(): void {
   const el = $('#scm');
   if (!rootInfo) { el.innerHTML = '<p class="side-note">Open a folder to use source control.</p>'; return; }
@@ -5122,9 +5962,11 @@ function renderScm(): void {
   const empty = files.length ? '' : '<p class="side-note">No changes. Everything is saved in a checkpoint.</p>';
   el.innerHTML = `
     <div class="commit-box">
-      <textarea class="input" id="scmMsg" rows="2" aria-label="Commit message" placeholder="Message (Ctrl+Enter to commit on ‘${escAttr(gitState.branch || 'main')}’)"></textarea>
-      <button class="btn btn-primary btn-sm commit-btn" data-act="git.commit" ${files.length ? '' : 'disabled'}>✓ ${commitLabel}</button>
-      ${syncBtn}
+      <textarea class="input" id="scmMsg" rows="1" aria-label="Commit message" placeholder="Message (Ctrl+Enter to commit on ‘${escAttr(gitState.branch || 'main')}’)"></textarea>
+      <div class="row gap-6">
+        <button class="btn btn-primary btn-sm commit-btn" data-act="git.commit" ${files.length ? '' : 'disabled'}>${commitLabel}</button>
+        ${syncBtn}
+      </div>
     </div>
     ${scmSectionHtml('staged', 'Staged Changes', staged, true, `<button class="icon-btn" data-scm-all="unstage" title="Unstage All">${svgIcon('minus')}</button>`)}
     ${scmSectionHtml('changes', 'Changes', changes, false, `<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">${svgIcon('undo')}</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">${svgIcon('plus')}</button>`)}
@@ -5138,8 +5980,14 @@ function renderScm(): void {
   for (const f of changes) seenScm.add(f.path + false);
   const msg = $<HTMLTextAreaElement>('#scmMsg', el);
   msg.value = scmDraft;
-  msg.oninput = () => { scmDraft = msg.value; };
+  autoResizeScmMsg(msg);
+  msg.oninput = () => {
+    scmDraft = msg.value;
+    autoResizeScmMsg(msg);
+  };
   msg.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run('git.commit'); } };
+
+  updateScmGenBtn();
 }
 let scmDraft = '';
 const seenScm = new Set<string>();
@@ -5147,12 +5995,55 @@ const seenScm = new Set<string>();
 function toggleScmSection(head: HTMLElement): void {
   const sec = head.parentElement as HTMLElement;
   const key = sec.dataset.sec as string;
-  if (scmCollapsed.has(key)) scmCollapsed.delete(key); else scmCollapsed.add(key);
-  sec.classList.toggle('closed');
-  // Only a section opened by a click slides in; refreshes redraw without animating.
-  if (!sec.classList.contains('closed')) {
+  const list = sec.querySelector<HTMLElement>('.scm-list');
+  if (sec.classList.contains('closing') || sec.classList.contains('opening') || !list) return;
+  const isClosing = !sec.classList.contains('closed');
+  if (isClosing) {
+    scmCollapsed.add(key);
+    sec.classList.add('closing');
+    const startH = list.scrollHeight;
+    list.style.overflow = 'hidden';
+    list.style.maxHeight = startH + 'px';
+    list.style.opacity = '1';
+    list.style.transform = 'translateY(0)';
+    void list.offsetHeight;
+    list.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .18s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
+    list.style.maxHeight = '0px';
+    list.style.opacity = '0';
+    list.style.transform = 'translateY(-4px)';
+    const cleanup = () => {
+      sec.classList.remove('closing');
+      sec.classList.add('closed');
+      list.style.overflow = '';
+      list.style.maxHeight = '';
+      list.style.opacity = '';
+      list.style.transform = '';
+      list.style.transition = '';
+    };
+    setTimeout(cleanup, 230);
+  } else {
+    scmCollapsed.delete(key);
+    sec.classList.remove('closed');
     sec.classList.add('opening');
-    sec.addEventListener('animationend', () => sec.classList.remove('opening'), { once: true });
+    list.style.overflow = 'hidden';
+    list.style.maxHeight = '0px';
+    list.style.opacity = '0';
+    list.style.transform = 'translateY(-4px)';
+    void list.offsetHeight;
+    const targetH = list.scrollHeight;
+    list.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .22s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
+    list.style.maxHeight = targetH + 'px';
+    list.style.opacity = '1';
+    list.style.transform = 'translateY(0)';
+    const cleanup = () => {
+      sec.classList.remove('opening');
+      list.style.overflow = '';
+      list.style.maxHeight = '';
+      list.style.opacity = '';
+      list.style.transform = '';
+      list.style.transition = '';
+    };
+    setTimeout(cleanup, 230);
   }
   store.set('breeze.scmCollapsed', [...scmCollapsed]);
 }
@@ -5182,6 +6073,17 @@ $('#scm').addEventListener('click', e => {
   if (commitRow) { void toggleCommit(commitRow.dataset.commit as string); return; }
   const rowEl = t.closest<HTMLElement>('.scm-row');
   if (rowEl) scmRowAction(t, rowEl);
+});
+$('#scm').addEventListener('pointerover', e => {
+  const commitRow = (e.target as HTMLElement).closest<HTMLElement>('[data-commit]');
+  if (!commitRow) return;
+  const hash = commitRow.dataset.commit;
+  if (hash && !commitDetails.has(hash)) {
+    api.git.show(hash).then(d => {
+      commitDetails.set(hash, d);
+      if (openCommit === hash) placeCommitDetail(hash);
+    }).catch(() => {});
+  }
 });
 
 async function gitOp(fn: () => Promise<unknown>, done?: string): Promise<boolean> {
@@ -5287,16 +6189,34 @@ function refClass(ref: string): string {
   if (ref.startsWith('tag: ')) return 'tag';
   return ref.includes('/') ? 'remote' : 'branch';
 }
+function detailGraphSvg(r: GraphRow, X: (i: number) => number): string {
+  const lines: string[] = [];
+  r.after.forEach((h, i) => {
+    if (h) {
+      lines.push(`<path d="M${X(i)} -1V101" stroke="${laneColor(i)}" stroke-width="2" vector-effect="non-scaling-stroke"/>`);
+    }
+  });
+  return lines.join('');
+}
+function commitDetailWrapHtml(r: GraphRow, width: number, X: (i: number) => number, d?: GitCommitDetail): string {
+  return `<div class="commit-detail-row" data-detail-hash="${r.c.hash}">
+    <div class="detail-graph-col" style="width:${width}px;flex-shrink:0;align-self:stretch;display:flex;min-height:100%;">
+      <svg class="detail-graph" width="${width}" viewBox="0 0 ${width} 100" preserveAspectRatio="none" style="width:${width}px;flex:1 1 100%;align-self:stretch;height:100%;min-height:100%;display:block;overflow:visible;pointer-events:none;">${detailGraphSvg(r, X)}</svg>
+    </div>
+    ${commitDetailHtml(r.c, d)}
+  </div>`;
+}
 function renderGraphRows(): string {
   if (!gitLog.commits.length) return '<p class="side-note">No checkpoints yet. Commit your changes to save the first one.</p>';
   const rows = layoutGraph(gitLog.commits);
-  const H = 30, X = (i: number) => 10 + i * 12;
+  const H = 36, X = (i: number) => 10 + i * 12;
   const width = Math.min(6, Math.max(...rows.map(r => Math.max(r.before.length, r.after.length, r.lane + 1)))) * 12 + 8;
   return rows.map(r => {
     const refs = r.c.refs.map(ref => `<span class="ref ${refClass(ref)}">${esc(ref.replace(/^HEAD -> /, '').replace(/^tag: /, ''))}</span>`).join('');
     const open = openCommit === r.c.hash;
-    const detail = open ? commitDetailHtml(commitDetails.get(r.c.hash)) : '';
-    return `<div class="commit ${open ? 'on' : ''}" data-commit="${r.c.hash}" title="${escAttr(r.c.subject)}">
+    const detail = open ? commitDetailWrapHtml(r, width, X, commitDetails.get(r.c.hash)) : '';
+    const tipText = `${r.c.subject} (${r.c.hash.slice(0, 7)} · ${r.c.author} · ${r.c.when})`;
+    return `<div class="commit ${open ? 'on' : ''}" data-commit="${r.c.hash}" data-tooltip="${escAttr(tipText)}">
       <svg width="${width}" height="${H}" fill="none" stroke-width="2">${graphSvg(r, H, X)}</svg>
       <div class="msgline"><div>${refs}${esc(r.c.subject)}</div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
     </div>${detail}`;
@@ -5310,58 +6230,100 @@ function splitFilePath(p: string): { name: string; ext: string } {
   }
   return { name: p, ext: '' };
 }
-function commitDetailHtml(d?: GitCommitDetail): string {
-  if (!d) return '<div class="commit-detail"><div class="side-note">Loading…</div></div>';
-  const files = d.files.map(f => {
-    const { name, ext } = splitFilePath(f.path);
-    return `<div class="file" data-open-file="${escAttr(f.path)}" title="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp"><span class="fp-name">${esc(name)}</span><span class="fp-ext">${esc(ext)}</span></span><span class="file-stats"><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`;
-  });
+function commitDetailHtml(c: GitCommit, d?: GitCommitDetail): string {
+  const files = d
+    ? d.files.map(f => {
+        const { name, ext } = splitFilePath(f.path);
+        return `<div class="file" data-open-file="${escAttr(f.path)}" title="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp"><span class="fp-name">${esc(name)}</span><span class="fp-ext">${esc(ext)}</span></span><span class="file-stats"><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`;
+      }).join('')
+    : '<div class="side-note">Loading changed files…</div>';
   return `<div class="commit-detail">
-    <div class="cd-msg">${esc(d.message)}</div>
-    <div class="cd-meta">${esc(d.author)} · ${esc(d.when)} · <code>${d.hash.slice(0, 8)}</code></div>
-    ${files.join('')}
-    <div class="row mt-8 commit-actions"><button class="btn btn-sm" data-branch-from="${d.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${d.hash}">Copy id</button></div>
+    <div class="cd-msg">${esc(d ? d.message : c.subject)}</div>
+    <div class="cd-meta">${esc(d ? d.author : c.author)} · ${esc(d ? d.when : c.when)} · <code>${c.hash.slice(0, 8)}</code></div>
+    ${files}
+    <div class="row mt-8 commit-actions"><button class="btn btn-sm" data-branch-from="${c.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${c.hash}">Copy id</button></div>
   </div>`;
 }
 // Opens or closes one checkpoint's details in place; the rest of the panel is left alone.
 const commitRow = (hash: string) => $(`#scm .commit[data-commit="${hash}"]`);
-function closeCommitDetail(hash: string): void {
+function closeCommitDetail(hash: string, instant = false): void {
   const row = commitRow(hash);
   row?.classList.remove('on');
   const d = row?.nextElementSibling as HTMLElement | null;
-  if (d?.classList.contains('commit-detail')) {
-    d.classList.remove('enter');
-    d.classList.add('exit');
-    setTimeout(() => { if (d.classList.contains('exit')) d.remove(); }, 180);
+  if ((d?.classList.contains('commit-detail-row') || d?.classList.contains('commit-detail')) && !d.dataset.closing) {
+    if (instant) {
+      d.remove();
+      return;
+    }
+    d.dataset.closing = '1';
+    d.style.overflow = 'hidden';
+    d.style.maxHeight = d.scrollHeight + 'px';
+    void d.offsetHeight;
+    d.style.transition = 'max-height .2s cubic-bezier(.16, 1, .3, 1), opacity .18s ease, transform .2s cubic-bezier(.16, 1, .3, 1)';
+    d.style.maxHeight = '0px';
+    d.style.opacity = '0';
+    d.style.transform = 'translateY(-4px)';
+    setTimeout(() => { d.remove(); }, 210);
   }
 }
 function placeCommitDetail(hash: string): void {
   const row = commitRow(hash);
   if (!row) return;
+  const rows = layoutGraph(gitLog.commits);
+  const r = rows.find(x => x.c.hash === hash);
+  if (!r) return;
+  const X = (i: number) => 10 + i * 12;
+  const width = Math.min(6, Math.max(...rows.map(row => Math.max(row.before.length, row.after.length, row.lane + 1)))) * 12 + 8;
   const holder = document.createElement('div');
-  holder.innerHTML = commitDetailHtml(commitDetails.get(hash));
+  holder.innerHTML = commitDetailWrapHtml(r, width, X, commitDetails.get(hash));
   const fresh = holder.firstElementChild as HTMLElement;
   const old = row.nextElementSibling as HTMLElement | null;
   // Loading → loaded swaps the contents only, so the box doesn't animate in twice.
-  if (old?.classList.contains('commit-detail') && !old.classList.contains('exit')) old.innerHTML = fresh.innerHTML;
-  else {
-    if (old?.classList.contains('commit-detail')) old.remove();
-    fresh.classList.add('enter');
-    fresh.addEventListener('animationend', () => fresh.classList.remove('enter'), { once: true });
+  if ((old?.classList.contains('commit-detail-row') || old?.classList.contains('commit-detail')) && !old.dataset.closing) {
+    const card = old.querySelector('.commit-detail') || old;
+    const freshCard = fresh.querySelector('.commit-detail') || fresh;
+    card.innerHTML = freshCard.innerHTML;
+    const graphCol = old.querySelector('.detail-graph-col');
+    const freshGraphCol = fresh.querySelector('.detail-graph-col');
+    if (graphCol && freshGraphCol) {
+      graphCol.innerHTML = freshGraphCol.innerHTML;
+    }
+    if (old.style.maxHeight && old.style.maxHeight !== 'none') {
+      old.style.maxHeight = old.scrollHeight + 'px';
+    }
+  } else {
+    if (old?.classList.contains('commit-detail-row') || old?.classList.contains('commit-detail')) old.remove();
+    fresh.style.overflow = 'hidden';
+    fresh.style.maxHeight = '0px';
+    fresh.style.opacity = '0';
+    fresh.style.transform = 'translateY(-4px)';
     row.after(fresh);
+    void fresh.offsetHeight;
+    const targetH = fresh.scrollHeight;
+    fresh.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .2s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
+    fresh.style.maxHeight = targetH + 'px';
+    fresh.style.opacity = '1';
+    fresh.style.transform = 'translateY(0)';
+    setTimeout(() => {
+      fresh.style.overflow = '';
+      fresh.style.maxHeight = '';
+      fresh.style.opacity = '';
+      fresh.style.transform = '';
+      fresh.style.transition = '';
+    }, 240);
   }
   row.classList.add('on');
 }
 async function toggleCommit(hash: string): Promise<void> {
   const was = openCommit;
   openCommit = openCommit === hash ? null : hash;
-  if (was) closeCommitDetail(was);
+  if (was) closeCommitDetail(was, openCommit !== null);
   if (!openCommit) return;
   placeCommitDetail(hash);
   if (commitDetails.has(hash)) return;
   try { commitDetails.set(hash, await api.git.show(hash)); } catch (e) {
     toast(errMsg(e));
-    if (openCommit === hash) { openCommit = null; closeCommitDetail(hash); }
+    if (openCommit === hash) { openCommit = null; closeCommitDetail(hash, true); }
     return;
   }
   if (openCommit === hash) placeCommitDetail(hash);
@@ -5501,8 +6463,16 @@ Object.assign(commands, {
   'git.init': () => gitOp(() => api.git.init(), 'Repository created'),
   'git.commit': commitNow,
   'git.sync': syncBranch,
+  'git.genCommitMsg': () => void generateCommitMsg(),
   'git.more': () => {
-    const r = $('[data-act="git.more"]').getBoundingClientRect();
+    const btn = $('[data-act="git.more"]');
+    if (btn && (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350))) {
+      closeMenu();
+      return;
+    }
+    closeMenu();
+    btn?.classList.add('open');
+    const r = btn.getBoundingClientRect();
     popupMenu(r.left, r.bottom + 4, [
       { label: 'Pull', run: () => void gitOp(() => api.git.sync('pull'), 'Pulled') },
       { label: 'Push', run: () => void gitOp(() => api.git.sync('push'), 'Pushed') },
@@ -5510,9 +6480,10 @@ Object.assign(commands, {
       { sep: true },
       { label: 'Switch Branch…', run: () => void pickBranch() },
       { label: 'Create Branch…', run: () => void newBranch() },
-    ]);
+    ], () => btn?.classList.remove('open'), btn);
   },
 });
+$('#scmGenMsg')?.addEventListener('click', () => { void generateCommitMsg(); });
 
 /* ================= Views ================= */
 
@@ -5891,12 +6862,115 @@ function bindToasts(root: ParentNode = document): void {
   $$('[data-toast]', root).forEach(b => b.onclick = () => toast(b.dataset.toast ?? ''));
 }
 
+/* ================= Custom Tooltip UI ================= */
+let tooltipEl: HTMLElement | null = null;
+let tooltipTimer: TimeoutId | undefined;
+let cursorX = 0;
+let cursorY = 0;
+
+function initTooltip(): void {
+  tooltipEl = document.createElement('div');
+  tooltipEl.className = 'breeze-tooltip';
+  tooltipEl.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(tooltipEl);
+
+  const hideTooltip = () => {
+    clearTimeout(tooltipTimer);
+    if (tooltipEl) {
+      tooltipEl.classList.remove('visible');
+    }
+  };
+
+  const updateTooltipPos = () => {
+    if (!tooltipEl || !tooltipEl.classList.contains('visible')) return;
+    const tipW = tooltipEl.offsetWidth;
+    const tipH = tooltipEl.offsetHeight;
+    let left = cursorX + 10;
+    let top = cursorY + 14;
+
+    // Flip horizontally if tooltip would overflow right edge
+    if (left + tipW > window.innerWidth - 8) {
+      left = cursorX - tipW - 8;
+    }
+    // Flip vertically if tooltip would overflow bottom edge
+    if (top + tipH > window.innerHeight - 8) {
+      top = cursorY - tipH - 8;
+    }
+    // Keep within viewport boundaries
+    left = Math.max(6, Math.min(left, window.innerWidth - tipW - 6));
+    top = Math.max(6, Math.min(top, window.innerHeight - tipH - 6));
+
+    tooltipEl.style.left = `${Math.round(left)}px`;
+    tooltipEl.style.top = `${Math.round(top)}px`;
+  };
+
+  document.addEventListener('pointermove', (e) => {
+    cursorX = e.clientX;
+    cursorY = e.clientY;
+    if (tooltipEl?.classList.contains('visible')) {
+      updateTooltipPos();
+    }
+  }, { passive: true });
+
+  document.addEventListener('pointerover', (e) => {
+    cursorX = e.clientX;
+    cursorY = e.clientY;
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[title], [data-tooltip]');
+    if (!target) {
+      hideTooltip();
+      return;
+    }
+
+    // Never show tooltips on agents tab, agent pill, or agent tab items
+    if (target.closest('#agentTabsBar, #boxAgentTabsBar, #agentPill, #agentCount, #tglAgents, .agent-tab, .agent-tabs-list')) {
+      if (target.hasAttribute('title')) target.removeAttribute('title');
+      hideTooltip();
+      return;
+    }
+
+    if (target.hasAttribute('title')) {
+      const val = target.getAttribute('title') || '';
+      target.removeAttribute('title');
+      if (val.trim()) target.dataset.tooltip = val.trim();
+    }
+    const tip = target.dataset.tooltip;
+    if (!tip || !tooltipEl) {
+      hideTooltip();
+      return;
+    }
+    clearTimeout(tooltipTimer);
+    tooltipTimer = setTimeout(() => {
+      if (!target.isConnected || !tooltipEl) return;
+      tooltipEl.textContent = tip;
+      tooltipEl.classList.add('visible');
+      updateTooltipPos();
+    }, 180);
+  }, true);
+
+  document.addEventListener('pointerout', (e) => {
+    const related = e.relatedTarget as HTMLElement | null;
+    const current = (e.target as HTMLElement).closest<HTMLElement>('[data-tooltip]');
+    if (current && related && current.contains(related)) return;
+    hideTooltip();
+  }, true);
+
+  document.addEventListener('pointerdown', hideTooltip, true);
+  window.addEventListener('scroll', hideTooltip, true);
+}
+
 /* ================= Init ================= */
 async function boot(): Promise<void> {
+  void Promise.all([
+    document.fonts.load('400 12px Inter'),
+    document.fonts.load('500 12px Inter'),
+    document.fonts.load('600 11px Inter'),
+    document.fonts.load('700 12px Inter'),
+  ]);
   buildMenubar();
   applyLayout();
   showView(layout.view);
-  renderTree(); renderTabs(); renderEditor(); renderAgents(); renderPreview(); emptyChat(); renderScm(); renderBranch(); bindToasts();
+  renderTree(); renderTabs(); renderEditor(); renderAgents(); renderPreview(); emptyChat(); renderScm(); renderBranch(); bindToasts(); initTooltip();
+  void refreshGit();
   renderDetection();
   setVibeArmed(appState.vibeArmed);
   if (appState.discord) { renderDiscord('off', 'Connecting to Discord…'); queueDiscord(); }
