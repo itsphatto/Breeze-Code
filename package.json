@@ -1,7 +1,7 @@
 {
   "name": "breeze-code",
   "private": true,
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "A Light Weight Development Environment",
   "author": "itsphatto",
   "main": "src/main/main.js",
