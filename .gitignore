@@ -4,4 +4,3 @@ breeze.config.json
 dist
 src/renderer/breezescript.js
 .vscode/
-BreezeCode-Web/
