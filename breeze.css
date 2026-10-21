@@ -5653,8 +5653,10 @@ body.vibing .box {
   background: var(--blue-soft);
 }
 
+/* Re-enables dragging that the global `-webkit-user-drag: none` rule turns off. */
 .tree-item[draggable="true"] {
   cursor: grab;
+  -webkit-user-drag: element;
 }
 
 .tree-item.dragging {

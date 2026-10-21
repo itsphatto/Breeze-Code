@@ -2016,12 +2016,22 @@ function dropTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
   if (row) { const p = row.dataset.path as string; return { el: row, dir: row.dataset.dir ? p : dirName(p) }; }
   return t.closest('#tree') ? { el: $('#tree'), dir: '' } : null;
 }
+// A row drops into that folder (or a file's folder), empty explorer space into the project root.
+// A folder can't go into itself or anything inside it, and dropping where it already is does nothing.
 function moveTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
-  if (!draggedTreePath) return null;
-  const row = (e.target as HTMLElement).closest<HTMLElement>('#tree [data-dir][data-path]');
-  if (!row) return null;
-  const dir = row.dataset.path as string;
-  return dir === dirName(draggedTreePath) ? null : { el: row, dir };
+  const from = draggedTreePath;
+  if (!from) return null;
+  const t = e.target as HTMLElement;
+  const row = t.closest<HTMLElement>('#tree [data-path]');
+  let el: HTMLElement, dir: string;
+  if (row) {
+    const p = row.dataset.path as string;
+    dir = row.dataset.dir ? p : dirName(p);
+    el = dir ? $(`#tree .tree-item[data-path="${escAttr(dir)}"]`) ?? row : $('#tree');
+  } else if (t.closest('#tree')) { el = $('#tree'); dir = ''; }
+  else return null;
+  if (dir === dirName(from) || dir === from || dir.startsWith(from + '/')) return null;
+  return { el, dir };
 }
 const entryFile = (e: FileSystemFileEntry) => new Promise<File>((res, rej) => e.file(res, rej));
 async function entryChildren(dir: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> {
@@ -2075,6 +2085,7 @@ document.addEventListener('drop', e => {
   if (!external) {
     const from = draggedTreePath;
     draggedTreePath = null;
+    if (t.dir) expanded.add(t.dir);
     if (from) background(moveEntry(from, joinPath(t.dir, baseName(from))));
     return;
   }
@@ -2297,7 +2308,7 @@ function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof
   const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, isIgnored ? 'git-ignored' : '', enter ? 'enter' : ''].filter(Boolean).join(' ');
   const icon = e.dir ? folderIcon(e.name, open) : fileIcon(e.name);
   const nameHtml = e.dir ? `<span class="nm-base">${esc(e.name)}</span>` : fileNameHtml(e.name);
-  return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1"' : 'draggable="true"'} title="${escAttr(p)}">
+  return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1" ' : ''}draggable="true" title="${escAttr(p)}">
     <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${nameHtml}</span>${lockTag}${gitTag}</div>`;
 }
 function renderTree(): void {

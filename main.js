@@ -107,6 +107,16 @@ const SESSION_DATA = path.join(app.getPath('userData'), 'session-data');
 fs.mkdirSync(SESSION_DATA, { recursive: true });
 app.setPath('sessionData', SESSION_DATA);
 
+// A second copy would fight the first over those caches ("Unable to move the cache: Access is denied"),
+// so it focuses the running window and exits before Chromium opens them.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+});
+
 // Logs a failure from work nobody waits for. A page load that a redirect or reload replaced isn't one.
 const logError = where => err => {
   if (err?.code !== 'ERR_ABORTED') console.error(`[breeze] ${where}:`, err?.message ?? err);
