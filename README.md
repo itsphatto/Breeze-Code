@@ -4,9 +4,9 @@
 
 <img src="assets/brand/BreezeCode.png" height="44" alt="Breeze IDE">
 
-**A lightweight desktop IDE where your AI agents plan, build and show their work, right next to your code.**
+**A lightweight desktop development environment where your AI agents plan, build and show their work, right next to your code.**
 
-![Version](https://img.shields.io/badge/version-0.4.6-005EFF?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.4.8-005EFF?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows-1c1c21?style=flat-square)
 ![Electron](https://img.shields.io/badge/Electron-44-1c1c21?style=flat-square&logo=electron&logoColor=9feaf9)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-1c1c21?style=flat-square&logo=typescript&logoColor=3178c6)
