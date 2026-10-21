@@ -550,7 +550,7 @@ const BRAND_ICONS: Record<string, string> = {
 const BARE_ICONS = new Set(['facebook']);
 function brandMark(cls: string, id: string, fallback: string): string {
   const file = BRAND_ICONS[id];
-  const inner = file ? `<img class="brand-img" src="assets/icons/${file}" alt="" draggable="false">` : esc(fallback);
+  const inner = file ? `<img class="brand-img" src="../../assets/icons/${file}" alt="" draggable="false">` : esc(fallback);
   return `<span class="${cls} tint-${id}${file ? ' has-img' : ''}${file && BARE_ICONS.has(id) ? ' bare' : ''}">${inner}</span>`;
 }
 
@@ -745,7 +745,7 @@ for (const id of ['#avatars', '#boxAvatar']) {
 // The onboarding step and the "Add account" dialog share this panel; signinRoot is the one in use.
 const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
     <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
-    <button class="btn" data-signin="Google"><img src="assets/icons/Google.png" width="18" height="18" alt="Google">Continue with Google</button>
+    <button class="btn" data-signin="Google"><img src="../../assets/icons/Google.png" width="18" height="18" alt="Google">Continue with Google</button>
     <p class="signin-error hidden" data-si="error" role="alert"></p>
   </div>
   <div class="waiting hidden" data-si="wait">
@@ -2953,7 +2953,7 @@ function welcomeHtml(): string {
   const keys = rootInfo
     ? k('Ctrl+P', 'Go to file') + k('Ctrl+N', 'New file') + k('Ctrl+Shift+F', 'Search files') + k('Ctrl+`', 'Terminal')
     : k('Ctrl+O', 'Open folder') + k('Ctrl+B', 'Toggle side bar') + k('Ctrl+Alt+B', 'Toggle agents');
-  return `<div><img src="Agent.png" alt="" draggable="false"><h4>${rootInfo ? 'No file open' : 'Open a folder to start'}</h4><div class="keys">${keys}</div></div>`;
+  return `<div><img src="../../assets/brand/Agent.png" alt="" draggable="false"><h4>${rootInfo ? 'No file open' : 'Open a folder to start'}</h4><div class="keys">${keys}</div></div>`;
 }
 function queueRender(): void {
   if (renderQueued) return;
@@ -4765,9 +4765,9 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
     if (s.name === 'box') {
       const agent = selectedAgent();
       const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
-      tab.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
+      tab.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
     } else {
-      tab.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
+      tab.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
     }
   }
   s.chat.appendChild(tab.panel);
@@ -5078,10 +5078,10 @@ function emptyChat(s: Surface = SURFACES.ide, tab?: AgentTabState): void {
   if (s.name === 'box') {
     const agent = selectedAgent();
     const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
-    t.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
+    t.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
     return;
   }
-  t.panel.innerHTML = `<div class="empty"><div><img src="Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
+  t.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
 }
 // A small, safe subset of Markdown for agent replies: inline code, bold and line breaks. Fenced code blocks
 // become artifacts: a card with the file name, Copy and Download. A fence may name its file: ```html index.html
@@ -6741,7 +6741,7 @@ function vibeDone(ok: boolean, plan = false): void {
 function notifyVibe(title: string, body: string): void {
   if (typeof Notification === 'undefined') return;
   const show = () => {
-    const n = new Notification(title, { body, icon: 'Icon.png', tag: 'breeze-vibe' });
+    const n = new Notification(title, { body, icon: '../../assets/brand/Icon.png', tag: 'breeze-vibe' });
     n.onclick = () => { window.focus(); n.close(); };
   };
   if (Notification.permission === 'granted') show();

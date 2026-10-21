@@ -139,10 +139,11 @@ function saveState(patch) {
 
 /* ================= Window ================= */
 // The app icon on the taskbar, window and dock.
-const APP_ICON = path.join(__dirname, 'Icon.png');
+const ROOT = path.join(__dirname, '..', '..'); // project root: assets, runtime, .env and breeze.config.json live here
+const APP_ICON = path.join(ROOT, 'assets', 'brand', 'Icon.png');
 // The one page the window may show. Anything else (a file dropped onto the window, a link) would run with the
 // preload bridge, which can run commands, so the window never navigates away from it.
-const APP_PAGE = path.join(__dirname, 'breeze.html');
+const APP_PAGE = path.join(ROOT, 'src', 'renderer', 'breeze.html');
 
 // Only Breeze's own page may use the main process: not another page in the window, not a frame inside it.
 function handle(channel, fn) {
@@ -708,7 +709,7 @@ handle('run:file', async (_e, rel) => {
   try {
     const abs = resolveIn(rel);
     // gcc can't read inside the packaged app's asar archive; the header is unpacked next to it.
-    const stdioHeader = unpacked(path.join(__dirname, 'runtime', 'breeze_stdio.h'));
+    const stdioHeader = unpacked(path.join(ROOT, 'runtime', 'breeze_stdio.h'));
     let { tools, pathValue } = await getTools();
     const opts = { csproj: nearestCsproj(abs) };
     let plan = runPlan(abs, tools, process.platform, stdioHeader, opts);
@@ -1789,12 +1790,12 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
 });
 
 /* ================= Sign in with GitHub / Google ================= */
-// Client ids come from breeze.config.json next to this file, or from environment variables.
-// A .env next to this file fills in environment variables; ones already set in the shell win.
-try { process.loadEnvFile(path.join(__dirname, '.env')); } catch { /* no .env */ }
+// Client ids come from breeze.config.json in the project root, or from environment variables.
+// A .env in the project root fills in environment variables; ones already set in the shell win.
+try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* no .env */ }
 function authConfig() {
   let file = {};
-  try { file = JSON.parse(fs.readFileSync(path.join(__dirname, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
+  try { file = JSON.parse(fs.readFileSync(path.join(ROOT, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
   return {
     github: { clientId: process.env.BREEZE_GITHUB_CLIENT_ID || file.github?.clientId || '' },
     google: {
@@ -1898,7 +1899,7 @@ const PAGE_ICON = {
 let wordmarkUri = null;
 function wordmarkSrc() {
   if (wordmarkUri === null) {
-    try { wordmarkUri = `data:image/png;base64,${fs.readFileSync(path.join(__dirname, 'BreezeCode.png')).toString('base64')}`; } catch { wordmarkUri = ''; }
+    try { wordmarkUri = `data:image/png;base64,${fs.readFileSync(path.join(ROOT, 'assets', 'brand', 'BreezeCode.png')).toString('base64')}`; } catch { wordmarkUri = ''; }
   }
   return wordmarkUri;
 }
@@ -2139,7 +2140,7 @@ const { DiscordRpc } = require('./discord');
 const DEFAULT_DISCORD_CLIENT_ID = '';
 function discordClientId() {
   let file = {};
-  try { file = JSON.parse(fs.readFileSync(path.join(__dirname, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
+  try { file = JSON.parse(fs.readFileSync(path.join(ROOT, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
   return String(process.env.BREEZE_DISCORD_CLIENT_ID || file.discord?.clientId || DEFAULT_DISCORD_CLIENT_ID).trim();
 }
 let discordRpc = null;

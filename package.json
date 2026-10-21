@@ -4,12 +4,12 @@
   "version": "0.4.7",
   "description": "A Light Weight Development Environment",
   "author": "itsphatto",
-  "main": "main.js",
+  "main": "src/main/main.js",
   "scripts": {
     "start": "tsc && electron .",
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "node --check main.js && node --check preload.js && node --test \"test/**/*.test.js\"",
+    "test": "node --check src/main/main.js && node --check src/main/preload.js && node --test \"test/**/*.test.js\"",
     "dist": "tsc && electron-builder --win --publish never",
     "predist": "node scripts/write-config.js"
   },
@@ -37,19 +37,9 @@
       "output": "dist"
     },
     "files": [
-      "main.js",
-      "preload.js",
-      "toolchains.js",
-      "discord.js",
-      "agentbrain.js",
-      "antigravityAgentService.js",
-      "guard.js",
-      "breezescript.js",
-      "breeze.html",
-      "breeze.css",
-      "runtime/**",
-      "*.png",
+      "src/**",
       "assets/**",
+      "runtime/**",
       "package.json",
       "breeze.config.json"
     ],
@@ -60,7 +50,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "Icon.png"
+      "icon": "assets/brand/Icon.png"
     }
   },
   "dependencies": {

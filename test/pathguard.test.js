@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { isInside, resolveUnder, resolveReal, isGitPath, isPageUrl } = require('../pathguard');
+const { isInside, resolveUnder, resolveReal, isGitPath, isPageUrl } = require('../src/main/pathguard');
 
 // A project folder and a folder next to it, outside the project.
 function sandbox(t) {
@@ -86,12 +86,12 @@ test('isGitPath leaves ordinary files alone', () => {
 });
 
 test('isPageUrl matches only the app page', () => {
-  const page = pathToFileURL(path.join(__dirname, '..', 'breeze.html')).href;
+  const page = pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'breeze.html')).href;
   assert.ok(isPageUrl(page, page));
   assert.ok(isPageUrl(`${page}?x=1#top`, page));
   assert.ok(isPageUrl(page.toUpperCase().replace('FILE:', 'file:'), page, 'win32'));
   assert.ok(!isPageUrl(page.toUpperCase().replace('FILE:', 'file:'), page, 'linux'));
-  assert.ok(!isPageUrl(pathToFileURL(path.join(__dirname, '..', 'evil.html')).href, page));
+  assert.ok(!isPageUrl(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'evil.html')).href, page));
   assert.ok(!isPageUrl(pathToFileURL(path.join(os.tmpdir(), 'project', 'index.html')).href, page));
   assert.ok(!isPageUrl('https://example.com/breeze.html', page));
   assert.ok(!isPageUrl('file:///%E0%A4%A', page));
@@ -99,6 +99,6 @@ test('isPageUrl matches only the app page', () => {
 });
 
 test('main.js checks every navigation of the window against breeze.html', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
   assert.match(src, /win\.webContents\.on\('will-navigate', \(e, url\) => \{\s*if \(!isFileUrl\(url, APP_PAGE\)\) e\.preventDefault\(\);/);
 });

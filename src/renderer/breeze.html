@@ -7,14 +7,14 @@
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: file: https://avatars.githubusercontent.com https://lh3.googleusercontent.com; frame-src 'self' breeze-preview:">
   <title>Breeze Code</title>
-  <link rel="preload" href="assets/fonts/Inter-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="../../assets/fonts/Inter-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="../../assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="breeze.css">
 </head>
 
 <body>
   <!-- Opening animation: a blue glow rises, then the logo fades up. It is pure CSS so it plays from the first frame. -->
-  <div class="splash" id="splash" aria-hidden="true"><img class="splash-logo" src="Agent.png">
+  <div class="splash" id="splash" aria-hidden="true"><img class="splash-logo" src="../../assets/brand/Agent.png">
     <div class="splash-loader"></div>
   </div>
 
@@ -169,7 +169,7 @@
     <div class="drag-strip"></div>
     <!-- Welcome -->
     <section class="ob-step ob-await" data-step="0">
-      <img class="ob-logo" src="Agent.png" width="72" height="72">
+      <img class="ob-logo" src="../../assets/brand/Agent.png" width="72" height="72">
       <h1>Breeze Code</h1>
       <p class="lead">Smooth as a breeze.</p>
       <button class="btn btn-primary btn-lg" data-next>Start breezing</button>
@@ -184,7 +184,7 @@
           <button class="btn" data-signin="GitHub"><svg width="18" height="18">
               <use href="#i-gh" />
             </svg>Continue with GitHub</button>
-          <button class="btn" data-signin="Google"><img src="assets/icons/google.png" width="18" height="18">Continue
+          <button class="btn" data-signin="Google"><img src="../../assets/icons/google.png" width="18" height="18">Continue
             with Google</button>
           <p class="signin-error hidden" data-si="error" role="alert"></p>
           <button class="btn btn-ghost btn-sm" id="signinSkip">Continue without signing in</button>
@@ -271,7 +271,7 @@
   <!-- ================= IDE ================= -->
   <div class="ide hidden" id="ide">
     <header class="titlebar">
-      <span class="logo"><img src="BreezeCode.png"></span>
+      <span class="logo"><img src="../../assets/brand/BreezeCode.png"></span>
       <nav class="menubar" id="menubar" aria-label="Application menu"></nav>
       <span class="spacer"></span>
       <span class="project" id="projectName">No folder</span>
@@ -493,7 +493,7 @@
   <!-- ================= BREEZE BOX (chat only) ================= -->
   <div class="box hidden" id="box">
     <header class="titlebar box-bar">
-      <span class="logo"><img src="BreezeBox.png"></span>
+      <span class="logo"><img src="../../assets/brand/BreezeBox.png"></span>
       <span class="spacer"></span>
       <button class="btn btn-sm btn-ghost box-history" id="boxHistory" title="Chat history" aria-haspopup="menu"><svg
           class="btn-ico" width="14" height="14">

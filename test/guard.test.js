@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('../guard');
+const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('../src/main/guard');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'breeze-guard-'));
 // A link to a folder: a junction on Windows (no admin rights needed), a symlink elsewhere.

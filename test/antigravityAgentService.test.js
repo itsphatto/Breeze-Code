@@ -7,7 +7,7 @@ const {
   AntigravityAuthError,
   AntigravityTimeoutError,
   AntigravityProcessError,
-} = require('../antigravityAgentService.js');
+} = require('../src/main/antigravityAgentService.js');
 
 test('AntigravityAgentService exports and static discovery methods', () => {
   assert.equal(typeof AntigravityAgentService, 'function');

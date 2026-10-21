@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const brain = require('../agentbrain');
+const brain = require('../src/main/agentbrain');
 
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 const big = n => Array.from({ length: n }, (_, i) => `line ${i + 1}: ${'x'.repeat(60)}`).join('\n');

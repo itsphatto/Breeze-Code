@@ -2,5 +2,6 @@ node_modules/
 .env
 breeze.config.json
 dist
-breezescript.js
+src/renderer/breezescript.js
 .vscode/
+BreezeCode-Web/

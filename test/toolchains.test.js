@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
-const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked } = require('../toolchains');
+const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installUrl, unpacked } = require('../src/main/toolchains');
 
 const H = 'C:\\app\\runtime\\breeze_stdio.h';
 const T = (p, name, version = '1.0') => ({ path: p, name, version });

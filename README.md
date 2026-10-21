@@ -2,7 +2,7 @@
 
 
 
-<img src="BreezeCode.png" height="44" alt="Breeze IDE">
+<img src="assets/brand/BreezeCode.png" height="44" alt="Breeze IDE">
 
 **A lightweight desktop IDE where your AI agents plan, build and show their work, right next to your code.**
 
@@ -15,7 +15,7 @@
 
 <br>
 
-<img src="ide.jpg" alt="Breeze IDE: explorer, editor, live preview and the agents panel after a plan was approved and built" width="900">
+<img src="docs/screenshots/ide-hero.jpg" alt="Breeze IDE: explorer, editor, live preview and the agents panel after a plan was approved and built" width="900">
 
 </div>
 
@@ -102,7 +102,7 @@ npm install
 npm start
 ```
 
-`npm start` compiles `breezescript.ts` and launches the app. `breezescript.js` is build output and isn't committed, so run `npm run build` once before opening `breeze.html` in a browser for a demo of the UI with a sample project and canned agent runs.
+`npm start` compiles `src/renderer/breezescript.ts` and launches the app. `src/renderer/breezescript.js` is build output and isn't committed, so run `npm run build` once before opening `src/renderer/breeze.html` in a browser for a demo of the UI with a sample project and canned agent runs.
 
 | Script | What it does |
 | --- | --- |
@@ -153,14 +153,18 @@ This runs `scripts/write-config.js`, which writes `breeze.config.json` from your
 
 | Path | Purpose |
 | --- | --- |
-| `main.js` | Electron main process: files, terminal, agents, Git, auth |
-| `agentbrain.js` | The local LLM agent's context budget, project map and file-tool formats |
-| `preload.js` | Bridge between the main process and the UI |
-| `breeze.html`, `breeze.css` | UI |
-| `breezescript.ts` | Renderer logic (compiled to `breezescript.js`) |
-| `toolchains.js` | Compiler and tool detection |
-| `discord.js` | Discord Rich Presence client |
+| `src/main/main.js` | Electron main process: files, terminal, agents, Git, auth |
+| `src/main/agentbrain.js` | The local LLM agent's context budget, project map and file-tool formats |
+| `src/main/preload.js` | Bridge between the main process and the UI |
+| `src/main/toolchains.js` | Compiler and tool detection |
+| `src/main/discord.js` | Discord Rich Presence client |
+| `src/main/guard.js`, `pathguard.js` | Path and command safety checks |
+| `src/renderer/breeze.html`, `breeze.css` | UI |
+| `src/renderer/breezescript.ts` | Renderer logic (compiled to `breezescript.js`) |
+| `assets/brand/` | App icon, logos and wordmarks |
+| `assets/fonts/` | Bundled fonts |
 | `assets/icons/` | Agent and feed logos |
 | `runtime/` | C runtime helpers |
+| `scripts/` | Build helpers |
 | `docs/screenshots/` | Screenshots used in this README |
 | `test/` | Tests |

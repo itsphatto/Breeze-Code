@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { encode, FrameReader, ipcPaths, DiscordRpc } = require('../discord');
+const { encode, FrameReader, ipcPaths, DiscordRpc } = require('../src/main/discord');
 
 test('encode writes op and length as little-endian int32 before the JSON', () => {
   const buf = encode(1, { a: 'é' });
