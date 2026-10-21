@@ -6,8 +6,8 @@
     "strict": true,
     "noEmitOnError": true,
     "removeComments": false,
-    "types": [],
+    "types": ["node"],
     "outDir": "."
   },
-  "files": ["breezescript.ts"]
+  "files": ["breezescript.ts", "antigravityAgentService.ts"]
 }

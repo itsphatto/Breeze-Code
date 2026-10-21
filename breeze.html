@@ -5,12 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: file: https://avatars.githubusercontent.com https://lh3.googleusercontent.com; frame-src 'self' breeze-preview:">
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: file: https://avatars.githubusercontent.com https://lh3.googleusercontent.com; frame-src 'self' breeze-preview:">
   <title>Breeze Code</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Inter:wght@400;500;600&family=B612+Mono&display=swap"
-    rel="stylesheet">
+  <link rel="preload" href="assets/fonts/Inter-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="breeze.css">
 </head>
 
@@ -186,7 +184,7 @@
           <button class="btn" data-signin="GitHub"><svg width="18" height="18">
               <use href="#i-gh" />
             </svg>Continue with GitHub</button>
-          <button class="btn" data-signin="Google"><img src="assets/icons/Google.png" width="18" height="18">Continue
+          <button class="btn" data-signin="Google"><img src="assets/icons/google.png" width="18" height="18">Continue
             with Google</button>
           <p class="signin-error hidden" data-si="error" role="alert"></p>
           <button class="btn btn-ghost btn-sm" id="signinSkip">Continue without signing in</button>
@@ -223,7 +221,8 @@
             <header>
               <h3>Git and Node</h3><span class="pill" id="toolsPill">Scanning…</span>
             </header>
-            <p class="muted">Agents use these to save checkpoints and run your project.</p>
+            <p class="muted">Agents use these to save checkpoints and run your project. Click on each compiler not
+              installed yet to run an installer.</p>
             <div class="row" id="toolList"></div>
           </div>
           <button class="btn btn-primary btn-lg w-full" data-next>Continue</button>
@@ -314,7 +313,7 @@
       <aside class="sidebar" id="sidebar" aria-label="Side bar">
         <!-- Files -->
         <div data-panel="files" class="contents">
-          <div class="side-head">
+          <div class="side-head"><span>Explorer</span>
             <span class="head-actions">
               <button class="icon-btn" data-act="file.newFile" title="New File"><svg width="14" height="14">
                   <use href="#i-newfile" />
@@ -338,8 +337,8 @@
         </div>
         <!-- Search -->
         <div data-panel="search" class="contents hidden">
-          <div class="side-head"><span class="head-actions"><button class="icon-btn" data-act="view.toggleSide"
-                title="Hide Side Bar"><svg width="14" height="14">
+          <div class="side-head"><span>Search</span><span class="head-actions"><button class="icon-btn"
+                data-act="view.toggleSide" title="Hide Side Bar"><svg width="14" height="14">
                   <use href="#i-chev" />
                 </svg></button></span></div>
           <div class="search-box">
@@ -353,7 +352,8 @@
         </div>
         <!-- Git -->
         <div data-panel="git" class="contents hidden">
-          <div class="side-head"><span class="head-actions">
+          <div class="side-head"><span>Source Control</span><span class="head-actions">
+              <button class="icon-btn hidden" id="scmGenMsg" data-act="git.genCommitMsg" title="Generate commit message" data-tooltip="Generate commit message"><svg data-i="sparkles" data-size="14"></svg></button>
               <button class="icon-btn" data-act="git.refresh" title="Refresh"><svg width="14" height="14">
                   <use href="#i-refresh" />
                 </svg></button>
@@ -432,16 +432,23 @@
 
       <aside class="agents" id="agents" aria-label="Agents">
         <div class="sash sash-v sash-left" data-sash="agents"></div>
-        <div class="side-head"><span class="row gap-6">Agents<span class="head-count hidden" id="agentCount"
-              title="Agents on this task"></span></span><span class="row gap-6"><button class="pill blue pill-btn"
-              id="agentPill" title="Choose which AI agent to use">No agent</button><button class="icon-btn"
+        <div class="side-head"><span class="row gap-6">Agents<span class="head-count hidden" id="agentCount"></span></span><span class="row gap-6"><button class="pill blue pill-btn"
+              id="agentPill">No agent</button><button class="icon-btn"
               id="chatHistory" title="Chat history" aria-haspopup="menu"><svg width="14" height="14">
                 <use href="#i-history" />
-              </svg></button><button class="icon-btn" id="newChat" title="New chat"><svg
-                data-i="plus"></svg></button><button class="icon-btn flip" data-act="view.toggleAgents"
+              </svg></button><button class="icon-btn flip" data-act="view.toggleAgents"
               title="Hide Agents"><svg width="14" height="14">
                 <use href="#i-chev" />
               </svg></button></span></div>
+        <div class="agent-tabs-bar" id="agentTabsBar">
+          <div class="agent-tabs-list" id="agentTabsList"></div>
+          <button class="agent-tab-new" id="agentNewTab" type="button" title="New chat"><svg width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h14" />
+              <path d="M12 5v14" />
+            </svg></button>
+        </div>
         <div class="agent-cards hidden" id="agentCards"></div>
         <div class="chat" id="chat"></div>
         <div class="composer">
@@ -501,6 +508,15 @@
         </svg></button>
       <button class="avatars" id="boxAvatar" aria-haspopup="menu" title="Account"></button>
     </header>
+    <div class="agent-tabs-bar box-tabs-bar" id="boxAgentTabsBar">
+      <div class="agent-tabs-list" id="boxAgentTabsList"></div>
+      <button class="agent-tab-new" id="boxNewTab" type="button" title="New chat"><svg width="12" height="12"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 12h14" />
+          <path d="M12 5v14" />
+        </svg></button>
+    </div>
     <main class="box-main">
       <div class="box-chat" id="boxChat" aria-live="polite"></div>
     </main>

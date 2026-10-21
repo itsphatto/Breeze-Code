@@ -42,6 +42,7 @@
       "toolchains.js",
       "discord.js",
       "agentbrain.js",
+      "antigravityAgentService.js",
       "guard.js",
       "breezescript.js",
       "breeze.html",
