@@ -1,5 +1,5 @@
 // Exposes a narrow, typed bridge to the renderer. Every path is project-relative and checked in main.js.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const invoke = (ch, ...args) => ipcRenderer.invoke(ch, ...args);
 const listen = (ch, cb) => {
@@ -49,10 +49,19 @@ contextBridge.exposeInMainWorld('breeze', {
     detect: () => invoke('sys:detect'),
     openExternal: url => invoke('sys:openExternal', url),
     runCommand: cmd => invoke('sys:runCommand', cmd),
+    getPathForFile: file => {
+      try {
+        if (webUtils && typeof webUtils.getPathForFile === 'function') {
+          return webUtils.getPathForFile(file);
+        }
+      } catch {}
+      return (file && file.path) || '';
+    },
   },
   live: {
     status: () => invoke('live:status'),
     start: () => invoke('live:start'),
+    stop: () => invoke('live:stop'),
   },
   llm: {
     connect: (url, key) => invoke('llm:connect', url, key),

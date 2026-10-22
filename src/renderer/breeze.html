@@ -14,7 +14,7 @@
 
 <body>
   <!-- Opening animation: a blue glow rises, then the logo fades up. It is pure CSS so it plays from the first frame. -->
-  <div class="splash" id="splash" aria-hidden="true"><img class="splash-logo" src="../../assets/brand/Agent.png">
+  <div class="splash" id="splash" aria-hidden="true"><img class="splash-logo" src="../../assets/brand/Agent.png" alt="Breeze Code Logo">
     <div class="splash-loader"></div>
   </div>
 
@@ -169,7 +169,7 @@
     <div class="drag-strip"></div>
     <!-- Welcome -->
     <section class="ob-step ob-await" data-step="0">
-      <img class="ob-logo" src="../../assets/brand/Agent.png" width="72" height="72">
+      <img class="ob-logo" src="../../assets/brand/Agent.png" width="72" height="72" alt="Breeze Code Logo">
       <h1>Breeze Code</h1>
       <p class="lead">Smooth as a breeze.</p>
       <button class="btn btn-primary btn-lg" data-next>Start breezing</button>
@@ -184,7 +184,7 @@
           <button class="btn" data-signin="GitHub"><svg width="18" height="18">
               <use href="#i-gh" />
             </svg>Continue with GitHub</button>
-          <button class="btn" data-signin="Google"><img src="../../assets/icons/google.png" width="18" height="18">Continue
+          <button class="btn" data-signin="Google"><img src="../../assets/icons/google.png" width="18" height="18" alt="Google Logo">Continue
             with Google</button>
           <p class="signin-error hidden" data-si="error" role="alert"></p>
           <button class="btn btn-ghost btn-sm" id="signinSkip">Continue without signing in</button>
@@ -271,7 +271,7 @@
   <!-- ================= IDE ================= -->
   <div class="ide hidden" id="ide">
     <header class="titlebar">
-      <span class="logo"><img src="../../assets/brand/BreezeCode.png"></span>
+      <span class="logo"><img src="../../assets/brand/BreezeCode.png" alt="Breeze Code"></span>
       <nav class="menubar" id="menubar" aria-label="Application menu"></nav>
       <span class="spacer"></span>
       <span class="project" id="projectName">No folder</span>
@@ -423,7 +423,7 @@
           </div>
           <div class="term-body" id="termBody">
             <div id="termOut"></div>
-            <div class="term-line"><span class="ps" id="termPs">&gt;</span><span class="term-field"><span
+            <div class="term-line"><span class="ps" id="termPs"><span class="ps-prefix">PS</span> <span class="ps-arrow">&gt;</span></span><span class="term-field"><span
                   class="term-ghost" id="termGhost" aria-hidden="true"></span><input id="termInput" spellcheck="false"
                   autocomplete="off" aria-label="Terminal input"></span></div>
           </div>
@@ -442,8 +442,8 @@
               </svg></button></span></div>
         <div class="agent-tabs-bar" id="agentTabsBar">
           <div class="agent-tabs-list" id="agentTabsList"></div>
-          <button class="agent-tab-new" id="agentNewTab" type="button" title="New chat"><svg width="12" height="12"
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          <button class="agent-tab-new" id="agentNewTab" type="button" title="New chat" aria-label="New chat"><svg width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
               stroke-linejoin="round" aria-hidden="true">
               <path d="M5 12h14" />
               <path d="M12 5v14" />
@@ -493,7 +493,7 @@
   <!-- ================= BREEZE BOX (chat only) ================= -->
   <div class="box hidden" id="box">
     <header class="titlebar box-bar">
-      <span class="logo"><img src="../../assets/brand/BreezeBox.png"></span>
+      <span class="logo"><img src="../../assets/brand/BreezeBox.png" alt="Breeze Box"></span>
       <span class="spacer"></span>
       <button class="btn btn-sm btn-ghost box-history" id="boxHistory" title="Chat history" aria-haspopup="menu"><svg
           class="btn-ico" width="14" height="14">
@@ -510,8 +510,8 @@
     </header>
     <div class="agent-tabs-bar box-tabs-bar" id="boxAgentTabsBar">
       <div class="agent-tabs-list" id="boxAgentTabsList"></div>
-      <button class="agent-tab-new" id="boxNewTab" type="button" title="New chat"><svg width="12" height="12"
-          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+      <button class="agent-tab-new" id="boxNewTab" type="button" title="New chat" aria-label="New chat"><svg width="12" height="12"
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
           stroke-linejoin="round" aria-hidden="true">
           <path d="M5 12h14" />
           <path d="M12 5v14" />
@@ -546,7 +546,7 @@
   <!-- ================= VIBE MODE ================= -->
   <!-- While an agent works, the IDE fades and blurs and a 9:16 feed plays here. -->
   <div class="vibe-stage hidden" id="vibe">
-    <div class="vibe-panel" role="dialog" aria-modal="true" aria-label="Vibe Mode">
+    <dialog class="vibe-panel" aria-label="Vibe Mode" open>
       <div class="vibe-top">
         <div class="vibe-sites" id="vibeSites"></div>
         <button class="icon-btn" id="vibeMute" title="Mute"><svg data-i="volume" data-size="18"></svg></button>
@@ -559,7 +559,7 @@
           class="vibe-clock" id="vibeClock">0:00</span></div>
       <div class="vibe-ready hidden" id="vibeReady"><span id="vibeReadyText">✓ Your code is ready</span><button
           class="btn btn-primary btn-sm" id="vibeBack">Show me</button></div>
-    </div>
+    </dialog>
   </div>
 
   <div id="menuRoot"></div>

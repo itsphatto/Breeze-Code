@@ -123,7 +123,7 @@ const logError = where => err => {
 };
 // Opens an https link in the user's browser.
 function openInBrowser(url) {
-  if (typeof url === 'string' && (/^https:\/\//.test(url) || url.startsWith(LIVE_URL))) shell.openExternal(url).catch(logError('openExternal'));
+  if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith(LIVE_URL))) shell.openExternal(url).catch(logError('openExternal'));
 }
 
 /* ================= Persisted main-process state ================= */
@@ -205,7 +205,7 @@ async function servePreview(req) {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   protocol.handle(PREVIEW_SCHEME, servePreview);
   // The menu bar is drawn in HTML; the native one would only duplicate it.
   Menu.setApplicationMenu(null);
@@ -213,7 +213,7 @@ app.whenReady().then(() => {
   // Windows only shows notifications (Vibe Mode's "your code is ready") for an app with a user model id.
   if (isWin) app.setAppUserModelId(app.isPackaged ? 'com.breeze.ide' : process.execPath);
   createWindow();
-  getTools().catch(logError('toolchains'));
+  await getTools().catch(logError('toolchains'));
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -296,9 +296,20 @@ function notifyLiveClients(changed) {
   for (const res of liveClients) res.write(body);
 }
 function stopLiveServer() {
-  for (const res of liveClients) res.end();
+  for (const res of liveClients) {
+    try { res.end(); } catch {}
+  }
   liveClients.clear();
-  if (liveServer) liveServer.close();
+  if (liveServer) {
+    try {
+      if (typeof liveServer.closeAllConnections === 'function') {
+        liveServer.closeAllConnections();
+      }
+    } catch {}
+    try {
+      liveServer.close();
+    } catch {}
+  }
   liveServer = null;
   liveRoot = null;
 }
@@ -469,7 +480,8 @@ handle('fs:fileUrl', (_e, rel) => {
 
 handle('fs:previewUrl', (_e, rel) => {
   resolveIn(rel); // throws when no folder is open or the path leaves the project
-  return `${PREVIEW_SCHEME}://project/${String(rel).split(/[\/]/).map(encodeURIComponent).join('/')}`;
+  const segments = String(rel).replaceAll('\\', '/').split('/').map(encodeURIComponent).join('/');
+  return `${PREVIEW_SCHEME}://project/${segments}`;
 });
 
 // Every file under `dir`, skipping build output and dependencies. Folders are read in parallel.
@@ -638,7 +650,10 @@ handle('term:run', async (_e, command) => {
   if (cd) return cd;
   const { tools, pathValue } = await getTools();
   const id = nextTermId++;
-  const child = spawn(command, { shell: true, cwd: termCwd, env: toolEnv(process.env, [...tools.binDirs, ...agentDirs()], process.platform, pathValue), windowsHide: true });
+  const env = toolEnv(process.env, [...tools.binDirs, ...agentDirs()], process.platform, pathValue);
+  env.FORCE_COLOR = '1';
+  env.NPM_CONFIG_COLOR = 'always';
+  const child = spawn(command, { shell: true, cwd: termCwd, env, windowsHide: true });
   terms.set(id, child);
   child.stdin.on('error', ignoreEpipe);
   // Decoded as a stream, so a character split across two chunks stays whole.
@@ -659,7 +674,13 @@ handle('term:write', (_e, id, text) => {
 // Compilers and Python found on this PC (memoised; `force` looks again, e.g. after the user installs one).
 const ignoreEpipe = () => { /* the program exited before reading its input */ };
 const probe = (file, args) => new Promise(res => {
-  execFile(file, args, { windowsHide: true, timeout: 4000 }, (err, stdout) => res({ code: err ? (typeof err.code === 'number' ? err.code : null) : 0, stdout: String(stdout || '') }));
+  execFile(file, args, { windowsHide: true, timeout: 4000 }, (err, stdout) => {
+    let code = 0;
+    if (err) {
+      code = typeof err.code === 'number' ? err.code : null;
+    }
+    res({ code, stdout: String(stdout || '') });
+  });
 });
 // lstat, not existsSync: Store app-execution aliases (WindowsApps\python.exe) fail existsSync
 const exists = p => { try { fs.lstatSync(p); return true; } catch { return false; } };
@@ -696,7 +717,7 @@ function nearestCsproj(abs) {
   if (!/\.cs$/i.test(abs)) return null;
   for (let dir = path.dirname(abs); ; dir = path.dirname(dir)) {
     let names = [];
-    try { names = fs.readdirSync(dir).filter(n => /\.csproj$/i.test(n)).sort(); } catch { /* unreadable: keep looking up */ }
+    try { names = fs.readdirSync(dir).filter(n => /\.csproj$/i.test(n)).sort((a, b) => a.localeCompare(b)); } catch { /* unreadable: keep looking up */ }
     if (names.length) return path.join(dir, names[0]);
     if (path.relative(root, dir) === '' || dir === path.dirname(dir)) return null;
   }
@@ -705,7 +726,12 @@ handle('run:file', async (_e, rel) => {
   if (activeRun) return { error: 'A program is still running — press Ctrl+C to stop it' };
   if (!root) return { error: 'Open a folder first' };
   const claim = activeRun = { id: 0, cancel() { /* still starting */ } };
-  const fail = error => { if (activeRun === claim) activeRun = null; return { error }; };
+  const fail = error => {
+    if (activeRun === claim) {
+      activeRun = null;
+    }
+    return { error };
+  };
   try {
     const abs = resolveIn(rel);
     // gcc can't read inside the packaged app's asar archive; the header is unpacked next to it.
@@ -736,7 +762,8 @@ handle('run:file', async (_e, rel) => {
           onDone: (code, ms) => {
             terms.delete(id);
             if (activeRun === claim) activeRun = null;
-            send(`${code === null ? 'stopped' : `exited with code ${code}`} · ${(ms / 1000).toFixed(1)}s\n`);
+            const outcome = code === null ? 'stopped' : `exited with code ${code}`;
+            send(`${outcome} · ${(ms / 1000).toFixed(1)}s\n`);
             win?.webContents.send('term:exit', id, code);
           },
         });
@@ -820,7 +847,7 @@ const agentDirs = () => [...new Set([...agentBins.values()].filter(b => !b.endsW
 
 let cachedAntigravityModels = null;
 function antigravityModels(bin) {
-  if (cachedAntigravityModels && cachedAntigravityModels.length) return cachedAntigravityModels;
+  if (cachedAntigravityModels?.length) return cachedAntigravityModels;
   try {
     cachedAntigravityModels = AntigravityAgentService.getAvailableModels(bin);
     return cachedAntigravityModels;
@@ -865,14 +892,21 @@ async function locate(commands, paths) {
   return found.find(Boolean) || paths.find(p => p && fs.existsSync(p)) || null;
 }
 
-handle('sys:detect', async () => {
-  const agents = await Promise.all(AGENTS.map(async a => {
-    const bin = await locate(a.commands, a.paths());
-    if (bin) agentBins.set(a.id, bin); else agentBins.delete(a.id);
-    const cm = a.id === 'codex' ? codexModels() : [];
-    const am = a.id === 'antigravity' ? antigravityModels(bin) : [];
-    const codexFallbackList = ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o3-mini', 'chatgpt-4o-latest'];
-    const antigravityFallbackList = [
+async function detectAgent(a) {
+  const bin = await locate(a.commands, a.paths());
+  if (bin) agentBins.set(a.id, bin);
+  else agentBins.delete(a.id);
+
+  let models = [];
+  let version = null;
+
+  if (a.id === 'codex') {
+    const cm = codexModels();
+    models = cm.length ? cm : ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o3-mini', 'chatgpt-4o-latest'];
+    version = loadState().codexModel || 'gpt-4o';
+  } else if (a.id === 'antigravity') {
+    const am = antigravityModels(bin);
+    models = am.length ? am : [
       'claude-sonnet-4-6',
       'gemini-3.8-flash-high',
       'claude-opus-4-6-thinking',
@@ -880,14 +914,16 @@ handle('sys:detect', async () => {
       'gemini-3.8-flash-low',
       'gpt-oss-120b-medium',
     ];
-    const models = a.id === 'codex'
-      ? (cm.length ? cm : codexFallbackList)
-      : (a.id === 'antigravity' ? (am.length ? am : antigravityFallbackList) : []);
-    const version = a.id === 'codex'
-      ? (loadState().codexModel || 'gpt-4o')
-      : (a.id === 'antigravity' ? (loadState().antigravityModel || models[0] || 'claude-sonnet-4-6') : (bin ? await versionOf(bin) : null));
-    return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
-  }));
+    version = loadState().antigravityModel || models[0] || 'claude-sonnet-4-6';
+  } else if (bin) {
+    version = await versionOf(bin);
+  }
+
+  return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
+}
+
+handle('sys:detect', async () => {
+  const agents = await Promise.all(AGENTS.map(detectAgent));
   // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
   let llm = await llmConfig(true).catch(() => null);
   // A saved server may have been closed since: it only counts as found while it answers and still has the model.
@@ -909,11 +945,12 @@ handle('sys:openExternal', (_e, url) => openInBrowser(url));
 handle('sys:runCommand', async (_e, cmd) => {
   if (typeof cmd !== 'string' || !cmd.trim()) return false;
   const command = cmd.trim();
+  const escaped = command.replaceAll('"', String.raw`\"`);
   if (process.platform === 'win32') {
-    spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', command], { detached: true, stdio: 'ignore' }).unref();
+    const comspec = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+    spawn(comspec, ['/c', 'start', 'cmd.exe', '/k', command], { detached: true, stdio: 'ignore' }).unref();
   } else if (process.platform === 'darwin') {
-    const escaped = command.replace(/"/g, '\\"');
-    spawn('osascript', ['-e', `tell application "Terminal" to do script "${escaped}"`], { detached: true, stdio: 'ignore' }).unref();
+    spawn('/usr/bin/osascript', ['-e', `tell application "Terminal" to do script "${escaped}"`], { detached: true, stdio: 'ignore' }).unref();
   } else {
     spawn('x-terminal-emulator', ['-e', command], { detached: true, stdio: 'ignore' }).unref();
   }
@@ -936,6 +973,10 @@ handle('agent:setModel', async (_e, { agent, model, effort }) => {
 });
 handle('live:status', async () => ({ available: await hasLiveIndex(), running: !!liveServer, url: await liveIndexUrl() }));
 handle('live:start', () => startLiveServer());
+handle('live:stop', async () => {
+  stopLiveServer();
+  return { available: await hasLiveIndex(), running: false, url: await liveIndexUrl() };
+});
 handle('win:reload', () => win?.webContents.reload());
 handle('win:devtools', () => win?.webContents.toggleDevTools());
 handle('win:quit', () => app.quit());
@@ -1090,7 +1131,7 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
     if (run.stopped) return;
     if (ev.type === 'auth-required') {
       emit(runId, { t: 'auth', text: ev.text, url: ev.raw?.url, command: ev.raw?.command });
-      service.triggerExternalAuth();
+      service.triggerExternalAuth().catch(logError('auth'));
       return;
     }
     if (ev.type === 'text' && ev.text) {
@@ -1118,7 +1159,7 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
   service.on('auth-required', auth => {
     if (run.stopped) return;
     emit(runId, { t: 'auth', text: auth.rawText, url: auth.url, command: auth.command });
-    service.triggerExternalAuth(auth.url);
+    service.triggerExternalAuth(auth.url).catch(logError('auth'));
   });
 
   service.on('error', err => {
@@ -1456,6 +1497,20 @@ function llmBudget(cfg) {
 }
 // Reasoning models (Qwen 3, DeepSeek R1…) put their thinking in <think> tags: it is neither shown nor kept.
 const withoutThinking = s => String(s ?? '').replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim();
+async function executeLlmTurns(ctx, run, ask, messages) {
+  for (let n = 0; n < LLM_MAX_TURNS && !run.stopped; n++) {
+    ctx.turn = n;
+    const calls = await ask(true);
+    if (!calls) break;
+    messages.push(...await runToolCalls(ctx, calls));
+    if (n === LLM_MAX_TURNS - 1 && !run.stopped) {
+      emit(ctx.runId, { t: 'note', text: `${ctx.cfg.model} used ${LLM_MAX_TURNS} steps, so Breeze asked it to answer with what it found.` });
+      messages.push({ role: 'user', content: 'You have used many steps. Stop using tools and answer now with what you found.' });
+      await ask(false);
+    }
+  }
+}
+
 async function runLocal(runId, run, { mode, prompt, session, base }) {
   const cfg = await llmConfig(false);
   if (!cfg?.model) throw new Error('Connect a local LLM server first (Settings → Run Setup Again).');
@@ -1493,17 +1548,7 @@ async function runLocal(runId, run, { mode, prompt, session, base }) {
     return calls;
   };
   try {
-    for (let n = 0; n < LLM_MAX_TURNS && !run.stopped; n++) {
-      ctx.turn = n;
-      const calls = await ask(true);
-      if (!calls) break;
-      messages.push(...await runToolCalls(ctx, calls));
-      if (n === LLM_MAX_TURNS - 1 && !run.stopped) {
-        emit(runId, { t: 'note', text: `${cfg.model} used ${LLM_MAX_TURNS} steps, so Breeze asked it to answer with what it found.` });
-        messages.push({ role: 'user', content: 'You have used many steps. Stop using tools and answer now with what you found.' });
-        await ask(false);
-      }
-    }
+    await executeLlmTurns(ctx, run, ask, messages);
   } catch (err) {
     if (!run.stopped) throw err; // stopping aborts the request
   } finally {
@@ -1554,6 +1599,33 @@ function parseBranchHeader(head) {
   const count = word => Number(new RegExp(String.raw`${word} (\d+)`).exec(track)?.[1] || 0);
   return { branch: branch === 'HEAD (no branch)' ? 'detached' : branch, upstream, ahead: count('ahead'), behind: count('behind') };
 }
+function parseGitStatusPorcelain(out, top, currentRoot) {
+  const res = { branch: '', upstream: '', ahead: 0, behind: 0, files: [], ignored: [] };
+  const parts = out.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    const e = parts[i];
+    if (e.startsWith('## ')) {
+      Object.assign(res, parseBranchHeader(e.slice(3)));
+    } else if (e) {
+      const x = e[0], y = e[1];
+      const rel = path.relative(currentRoot, path.join(top, e.slice(3)));
+      if (x === '!' && y === '!') {
+        if (!rel.startsWith('..')) {
+          let clean = rel.replaceAll('\\', '/');
+          while (clean.endsWith('/')) clean = clean.slice(0, -1);
+          if (clean) res.ignored.push(clean);
+        }
+      } else {
+        if (x === 'R' || x === 'C') i++;
+        if (!rel.startsWith('..')) {
+          res.files.push({ path: rel.split(path.sep).join('/'), x, y });
+        }
+      }
+    }
+  }
+  return res;
+}
+
 handle('git:status', async () => {
   if (!root) return { repo: false };
   let top;
@@ -1562,26 +1634,8 @@ handle('git:status', async () => {
     git(['status', '--porcelain=v1', '-b', '-z', '--untracked-files=all', '--ignored=matching']),
     git(['remote']).catch(() => ''),
   ]);
-  const res = { repo: true, branch: '', upstream: '', ahead: 0, behind: 0, hasCommits: true, hasRemote: !!remotes.trim(), files: [], ignored: [] };
-  const parts = out.split('\0');
-  for (let i = 0; i < parts.length; i++) {
-    const e = parts[i];
-    if (e.startsWith('## ')) Object.assign(res, parseBranchHeader(e.slice(3)));
-    else if (e) {
-      const x = e[0], y = e[1];
-      const rel = path.relative(root, path.join(top, e.slice(3)));
-      if (x === '!' && y === '!') {
-        if (!rel.startsWith('..')) {
-          const clean = rel.replace(/[\\/]+$/, '').replace(/\\/g, '/');
-          if (clean) res.ignored.push(clean);
-        }
-      } else {
-        if (x === 'R' || x === 'C') i++; // the next entry is the original path
-        if (!rel.startsWith('..')) res.files.push({ path: rel.split(path.sep).join('/'), x, y }); // skip files outside the open folder
-      }
-    }
-  }
-  return res;
+  const parsed = parseGitStatusPorcelain(out, top, root);
+  return { repo: true, ...parsed, hasCommits: true, hasRemote: !!remotes.trim() };
 });
 
 handle('git:log', async () => {
@@ -1729,7 +1783,7 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     const body = {
       model: targetModel,
       messages: [
-        { role: 'system', content: 'You are a git commit message generator. Output only a short conventional commit message (e.g. feat: ..., fix: ..., chore: ...). No explanations, code fences, or quotes.' },
+        { role: 'system', content: 'You are an expert git commit message generator. Analyze the changes compared to the previous commit and wrap up everything comprehensively into a conventional commit message (e.g. feat: ..., fix: ..., chore: ...). Output ONLY the commit message itself without quotes, code fences, or explanations.' },
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
@@ -1750,7 +1804,8 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     const bin = agentBins.get('codex');
     if (!bin) throw new Error('Codex was not found');
     const targetModel = model || 'gpt-4o-mini';
-    const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', '-m', targetModel, '-c', 'model_reasoning_effort="low"'];
+    const targetEffort = (effort || 'low').toLowerCase();
+    const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', ...(targetModel ? ['-m', targetModel] : []), '-c', `model_reasoning_effort="${targetEffort}"`];
     return new Promise((resolve, reject) => {
       const child = /\.(?:cmd|bat)$/i.test(bin)
         ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
