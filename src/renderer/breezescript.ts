@@ -7006,6 +7006,7 @@ function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
       return;
     }
     btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.title = text;
   };
   const a = sel.id === 'agentModelSelect' ? selectedAgent() : null;
   const items: MenuItem[] = (a?.found && a.models?.length)
@@ -7062,6 +7063,7 @@ function enhanceSelect(sel: HTMLSelectElement): void {
       return;
     }
     btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.title = text;
   };
   label();
   sel.addEventListener('change', label);
@@ -7177,27 +7179,49 @@ function scmSectionHtml(key: string, title: string, list: GitFile[], inStaged: b
     <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">${title}</span><span class="acts">${acts}</span><span class="count">${list.length}</span></div>
     <div class="scm-list">${rows}</div></div>`;
 }
-function lowestModelFor(a: DetectedAgent): { model?: string; effort: EffortLevel } {
-  const effort: EffortLevel = 'Low';
+function lowestModelFor(a: DetectedAgent): { model?: string } {
   if (a.id === 'antigravity') {
     const models = a.models ?? [];
     const low = models.find(m => /flash-low/i.test(m))
       || models.find(m => /flash-medium/i.test(m))
       || models.find(m => /flash/i.test(m))
       || models.at(-1);
-    return { model: low || 'gemini-3.8-flash-low', effort };
+    return { model: low || 'gemini-3.8-flash-low' };
   }
   if (a.id === 'codex') {
     const models = a.models ?? [];
     const low = models.find(m => /mini/i.test(m)) || models.at(-1);
-    return { model: low || 'gpt-4o-mini', effort };
+    return { model: low || 'gpt-4o-mini' };
   }
   if (a.api) {
     const models = a.models ?? [];
     const low = models.find(m => /(1\.5b|3b|mini|small)/i.test(m)) || models[0];
-    return { model: low || a.version || undefined, effort };
+    return { model: low || a.version || undefined };
   }
-  return { model: a.models?.at(-1), effort };
+  return { model: a.models?.at(-1) };
+}
+
+function heuristicCommitMsg(files: GitFile[]): string {
+  if (!files.length) return 'chore: update project';
+  const names = files.map(f => baseName(f.path));
+  const dirs = [...new Set(files.map(f => dirName(f.path)).filter(Boolean))];
+  const scope = dirs.length === 1 ? `(${dirs[0].split(/[/\\]/).pop()})` : '';
+
+  const isTestOnly = files.every(f => /test|\.spec\./i.test(f.path));
+  if (isTestOnly) return `test${scope}: update tests for ${names.slice(0, 3).join(', ')}`;
+
+  const isDocOnly = files.every(f => /\.(md|txt|doc)$/i.test(f.path));
+  if (isDocOnly) return `docs${scope}: update documentation`;
+
+  const isStyleOnly = files.every(f => /\.(css|scss|less)$/i.test(f.path));
+  if (isStyleOnly) return `style${scope}: update styling in ${names.slice(0, 3).join(', ')}`;
+
+  const isBuildOnly = files.every(f => /(package\.json|tsconfig|webpack|vite|rollup|build)/i.test(f.path));
+  if (isBuildOnly) return `chore${scope}: update build and dependencies`;
+
+  const hasNew = files.some(f => f.x === '?' || f.x === 'A');
+  const type = hasNew ? 'feat' : 'fix';
+  return `${type}${scope}: update ${names.slice(0, 2).join(', ')}${names.length > 2 ? ` and ${names.length - 2} other file${names.length > 3 ? 's' : ''}` : ''}`;
 }
 
 function autoResizeScmMsg(el?: HTMLTextAreaElement | null): void {
@@ -7224,26 +7248,22 @@ function currentActiveAgent(): DetectedAgent | null {
 function updateScmGenBtn(): void {
   const btn = $('#scmGenMsg') as HTMLButtonElement | null;
   if (!btn) return;
-  const a = currentActiveAgent();
-  const hasAgent = !!a?.found;
-  btn.classList.toggle('hidden', !hasAgent);
-  if (hasAgent) {
-    const tip = `Generate commit message (${a.name})`;
-    btn.title = tip;
-    btn.dataset.tooltip = tip;
-  }
+  const a = currentActiveAgent() || appState.detect?.agents.find(x => x.found);
+  btn.classList.remove('hidden');
+  const tip = a?.found ? `Generate commit message (${a.name})` : 'Generate commit message';
+  btn.title = tip;
+  btn.dataset.tooltip = tip;
 }
 
 async function generateCommitMsg(): Promise<void> {
-  const activeAg = currentActiveAgent();
-  if (!activeAg || !activeAg.found) {
-    toast('No active AI agent found');
-    return;
-  }
   const currentFiles = gitState.files ?? [];
   if (!currentFiles.length) {
     toast('No changes to generate commit message for');
     return;
+  }
+  let activeAg = currentActiveAgent();
+  if (!activeAg || !activeAg.found) {
+    activeAg = appState.detect?.agents?.find(a => a.found) || null;
   }
   const isStaged = currentFiles.some(f => f.x !== ' ' && f.x !== '?');
   const genBtnEl = $('#scmGenMsg') as HTMLButtonElement | null;
@@ -7253,6 +7273,19 @@ async function generateCommitMsg(): Promise<void> {
     genBtnEl.innerHTML = `<div class="spinner sm"></div>`;
   }
   try {
+    if (!activeAg || !activeAg.found) {
+      const fallbackMsg = heuristicCommitMsg(currentFiles);
+      const msgArea = $<HTMLTextAreaElement>('#scmMsg');
+      if (msgArea) {
+        msgArea.value = fallbackMsg;
+        scmDraft = msgArea.value;
+        autoResizeScmMsg(msgArea);
+        msgArea.focus();
+      }
+      toast('Commit message generated');
+      return;
+    }
+
     const stagedDiff = isStaged ? await api.git.diff([], true).catch(() => '') : '';
     const unstagedDiff = await api.git.diff([], false).catch(() => '');
     let diffText = '';
@@ -7270,7 +7303,6 @@ async function generateCommitMsg(): Promise<void> {
     const userChosenModel = modelSel?.value?.trim() || undefined;
     const { model: fallbackModel } = lowestModelFor(activeAg);
     const chosenModel = userChosenModel || fallbackModel || activeAg.version || activeAg.models?.[0];
-    const chosenEffort = 'low';
 
     const prevCommit = gitLog.commits?.[0];
     const prevCommitContext = prevCommit
@@ -7288,7 +7320,7 @@ ${summary}
 Diff:
 ${truncated}
 
-Requirements:
+Instructions:
 - Follow Conventional Commits format (e.g. feat: ..., fix: ..., chore: ..., refactor: ..., docs: ..., style: ..., test: ...).
 - If there are multiple distinct changes, provide a concise summary title, followed by an empty line and short bullet points (- ...) detailing the key changes.
 - Output ONLY the commit message itself. Do NOT output code blocks, quotes, or conversational preamble.`;
@@ -7297,7 +7329,7 @@ Requirements:
       agent: activeAg.id,
       prompt,
       model: chosenModel,
-      effort: chosenEffort,
+      effort: undefined, // No forced effort requirement: every model works smoothly
     });
     if (res) {
       const msgArea = $<HTMLTextAreaElement>('#scmMsg');
@@ -7310,7 +7342,15 @@ Requirements:
       toast(`Commit message generated with ${activeAg.name}`);
     }
   } catch (err: unknown) {
-    toast(`Failed to generate commit message: ${errMsg(err)}`);
+    const fallbackMsg = heuristicCommitMsg(currentFiles);
+    const msgArea = $<HTMLTextAreaElement>('#scmMsg');
+    if (msgArea) {
+      msgArea.value = fallbackMsg;
+      scmDraft = msgArea.value;
+      autoResizeScmMsg(msgArea);
+      msgArea.focus();
+    }
+    toast(`Commit message generated (${errMsg(err)})`);
   } finally {
     if (genBtnEl) {
       genBtnEl.disabled = false;
@@ -7592,7 +7632,7 @@ function renderGraphRows(): string {
     const tipText = `${r.c.subject} (${r.c.hash.slice(0, 7)} · ${r.c.author} · ${r.c.when})`;
     return `<div class="commit ${open ? 'on' : ''}" data-commit="${r.c.hash}" data-tooltip="${escAttr(tipText)}">
       <svg width="${width}" height="${H}" fill="none" stroke-width="2">${graphSvg(r, H, X)}</svg>
-      <div class="msgline"><div>${refs}${esc(r.c.subject)}</div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
+      <div class="msgline"><div>${refs}<span class="subj">${esc(r.c.subject)}</span></div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
     </div>${detail}`;
   }).join('');
 }
@@ -8305,7 +8345,7 @@ function initTooltip(): void {
   document.addEventListener('pointerover', (e) => {
     cursorX = e.clientX;
     cursorY = e.clientY;
-    const target = (e.target as HTMLElement).closest<HTMLElement>('[title], [data-tooltip]');
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[title], [data-tooltip], [alt]');
     if (!target) {
       hideTooltip();
       return;
@@ -8321,6 +8361,9 @@ function initTooltip(): void {
     if (target.hasAttribute('title')) {
       const val = target.getAttribute('title') || '';
       target.removeAttribute('title');
+      if (val.trim()) target.dataset.tooltip = val.trim();
+    } else if (target.hasAttribute('alt') && !target.dataset.tooltip) {
+      const val = target.getAttribute('alt') || '';
       if (val.trim()) target.dataset.tooltip = val.trim();
     }
     const tip = target.dataset.tooltip;

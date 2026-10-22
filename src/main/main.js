@@ -1742,7 +1742,17 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
   const base = root;
   if (!base) throw new Error('Open a folder first');
 
-  if (agent === 'antigravity') {
+  let targetAgent = agent;
+  if (!targetAgent) {
+    if (agentBins.get('antigravity')) targetAgent = 'antigravity';
+    else if (agentBins.get('codex')) targetAgent = 'codex';
+    else {
+      const cfg = await llmConfig(true).catch(() => null);
+      if (cfg) targetAgent = 'local';
+    }
+  }
+
+  if (targetAgent === 'antigravity') {
     const bin = agentBins.get('antigravity');
     const targetModel = model || 'gemini-3.8-flash-low';
     const service = new AntigravityAgentService({
@@ -1750,7 +1760,7 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
       cwd: base,
       mode: 'ask',
       model: targetModel,
-      effort: effort || 'low',
+      effort: undefined, // No forced effort requirement: every model (Claude, Flash, Opus, GPT-OSS) runs without conflict
       prompt,
       autoOpenAuth: false,
     });
@@ -1776,7 +1786,7 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     });
   }
 
-  if (agent === 'local') {
+  if (targetAgent === 'local') {
     const cfg = await llmConfig(true).catch(() => null);
     if (!cfg) throw new Error('No Ollama server is connected');
     const targetModel = model || cfg.model;
@@ -1800,12 +1810,14 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     return text || 'chore: update files';
   }
 
-  if (agent === 'codex') {
+  if (targetAgent === 'codex') {
     const bin = agentBins.get('codex');
     if (!bin) throw new Error('Codex was not found');
     const targetModel = model || 'gpt-4o-mini';
-    const targetEffort = (effort || 'low').toLowerCase();
-    const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', ...(targetModel ? ['-m', targetModel] : []), '-c', `model_reasoning_effort="${targetEffort}"`];
+    const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', ...(targetModel ? ['-m', targetModel] : [])];
+    if (effort && /^(o1|o3|o4)/i.test(targetModel)) {
+      args.push('-c', `model_reasoning_effort="${effort.toLowerCase()}"`);
+    }
     return new Promise((resolve, reject) => {
       const child = /\.(?:cmd|bat)$/i.test(bin)
         ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
