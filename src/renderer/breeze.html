@@ -314,6 +314,7 @@
       </nav>
 
       <aside class="sidebar" id="sidebar" aria-label="Side bar">
+        <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
         <!-- Files -->
         <div data-panel="files" class="contents">
           <div class="side-head"><span>Explorer</span>
@@ -373,6 +374,7 @@
       <section class="center">
         <div class="work" id="work">
           <div class="pane" id="editorPane">
+            <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
             <div class="tabs" id="tabs"></div>
             <div class="editor-row" id="editorRow">
             <div class="editor" id="editor">
@@ -439,15 +441,17 @@
         <div class="terminal" id="terminal">
           <div class="sash sash-h" data-sash="term"></div>
           <div class="term-head" id="termToggle">
-            <span id="termTitle"><svg data-i="chevronRight" data-size="14"></svg> Terminal</span><span
-              class="spacer"></span>
+            <span id="termTitle"><svg data-i="chevronRight" data-size="14"></svg> Terminal</span>
+            <div class="term-tabs" id="termTabs"></div>
+            <button class="icon-btn term-new-btn" id="termNewBtn" data-act="term.new" title="New Terminal (Ctrl+Shift+`)"><svg data-i="plus" data-size="13"></svg></button>
+            <span class="spacer"></span>
             <button class="icon-btn" data-act="term.clear" title="Clear"><svg data-i="backspace"></svg></button>
             <button class="icon-btn" data-act="term.kill" title="Stop running command (Ctrl+C)"><svg
                 data-i="stop"></svg></button>
             <span>Ctrl+`</span>
           </div>
           <div class="term-body" id="termBody">
-            <div id="termOut"></div>
+            <div id="termOut" class="term-out-pane"></div>
             <div class="term-line"><span class="ps" id="termPs"><span class="ps-prefix">PS</span> <span class="ps-arrow">&gt;</span></span><span class="term-field"><span
                   class="term-ghost" id="termGhost" aria-hidden="true"></span><input id="termInput" spellcheck="false"
                   autocomplete="off" aria-label="Terminal input"></span></div>
@@ -456,6 +460,7 @@
       </section>
 
       <aside class="agents" id="agents" aria-label="Agents">
+        <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
         <div class="sash sash-v sash-left" data-sash="agents"></div>
         <div class="side-head"><span class="row gap-6">Agents<span class="head-count hidden" id="agentCount"></span></span><span class="row gap-6"><button class="pill blue pill-btn"
               id="agentPill">No agent</button><button class="icon-btn"
@@ -520,6 +525,7 @@
 
   <!-- ================= BREEZE BOX (chat only) ================= -->
   <div class="box hidden" id="box">
+    <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
     <header class="titlebar box-bar">
       <span class="logo"><img src="../../assets/brand/BreezeBox.png" alt="Breeze Box"></span>
       <span class="spacer"></span>

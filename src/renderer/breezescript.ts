@@ -2221,6 +2221,664 @@ function markDrop(el: HTMLElement | null): void {
   dropMark = el;
   el?.classList.add('drop-over');
 }
+interface BorderSample {
+  bx: number;
+  by: number;
+  nx: number;
+  ny: number;
+  s: number;
+}
+
+interface WaveConfig {
+  t: number;
+  speed: number;
+  baseDepth: number;
+  maxSurge: number;
+  influenceRadius: number;
+  harmonics: [number, number, number, number];
+  swellM: number;
+  blurRadius: number;
+  colorStops: { stop: number; color: string }[];
+}
+
+interface FluidCanvasState {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  container: HTMLElement;
+  curX: number;
+  curY: number;
+  targetX: number;
+  targetY: number;
+  glowS: number;
+  targetS: number;
+  glowX: number;
+  glowY: number;
+  energies: Float32Array;
+  active: boolean;
+  fadeStartTime: number | null;
+  animId: number | null;
+  time: number;
+}
+
+const fluidCanvases = new Map<HTMLElement, FluidCanvasState>();
+
+interface BorderSamplingResult {
+  P: number;
+  samples: BorderSample[];
+}
+
+function sampleBorder(W: number, H: number, R: number, count: number): BorderSamplingResult {
+  const r = Math.max(0, Math.min(R, W / 2, H / 2));
+  const wStraight = Math.max(0, W - 2 * r);
+  const hStraight = Math.max(0, H - 2 * r);
+  const cornerLen = r > 0.5 ? (Math.PI / 2) * r : 0;
+  const P = 2 * wStraight + 2 * hStraight + 4 * cornerLen;
+  if (P <= 0) return { P: 0, samples: [] };
+
+  const samples: BorderSample[] = [];
+  for (let i = 0; i < count; i++) {
+    const s = (i / count) * P;
+    let bx = 0, by = 0, nx = 0, ny = 0;
+
+    if (r <= 0.5) {
+      if (s <= W) {
+        bx = s;
+        by = 0;
+        nx = 0;
+        ny = 1;
+      } else if (s <= W + H) {
+        bx = W;
+        by = s - W;
+        nx = -1;
+        ny = 0;
+      } else if (s <= 2 * W + H) {
+        bx = W - (s - W - H);
+        by = H;
+        nx = 0;
+        ny = -1;
+      } else {
+        bx = 0;
+        by = H - (s - 2 * W - H);
+        nx = 1;
+        ny = 0;
+      }
+    } else {
+      if (s <= wStraight) {
+        bx = r + s;
+        by = 0;
+        nx = 0;
+        ny = 1;
+      } else if (s <= wStraight + cornerLen) {
+        const frac = (s - wStraight) / cornerLen;
+        const angle = -Math.PI / 2 + frac * (Math.PI / 2);
+        bx = W - r + Math.cos(angle) * r;
+        by = r + Math.sin(angle) * r;
+        nx = -Math.cos(angle);
+        ny = -Math.sin(angle);
+      } else if (s <= wStraight + cornerLen + hStraight) {
+        const dist = s - (wStraight + cornerLen);
+        bx = W;
+        by = r + dist;
+        nx = -1;
+        ny = 0;
+      } else if (s <= wStraight + 2 * cornerLen + hStraight) {
+        const frac = (s - (wStraight + cornerLen + hStraight)) / cornerLen;
+        const angle = frac * (Math.PI / 2);
+        bx = W - r + Math.cos(angle) * r;
+        by = H - r + Math.sin(angle) * r;
+        nx = -Math.cos(angle);
+        ny = -Math.sin(angle);
+      } else if (s <= 2 * wStraight + 2 * cornerLen + hStraight) {
+        const dist = s - (wStraight + 2 * cornerLen + hStraight);
+        bx = W - r - dist;
+        by = H;
+        nx = 0;
+        ny = -1;
+      } else if (s <= 2 * wStraight + 3 * cornerLen + hStraight) {
+        const frac = (s - (2 * wStraight + 2 * cornerLen + hStraight)) / cornerLen;
+        const angle = Math.PI / 2 + frac * (Math.PI / 2);
+        bx = r + Math.cos(angle) * r;
+        by = H - r + Math.sin(angle) * r;
+        nx = -Math.cos(angle);
+        ny = -Math.sin(angle);
+      } else if (s <= 2 * wStraight + 3 * cornerLen + 2 * hStraight) {
+        const dist = s - (2 * wStraight + 3 * cornerLen + hStraight);
+        bx = 0;
+        by = H - r - dist;
+        nx = 1;
+        ny = 0;
+      } else {
+        const frac = (s - (2 * wStraight + 3 * cornerLen + 2 * hStraight)) / cornerLen;
+        const angle = Math.PI + frac * (Math.PI / 2);
+        bx = r + Math.cos(angle) * r;
+        by = r + Math.sin(angle) * r;
+        nx = -Math.cos(angle);
+        ny = -Math.sin(angle);
+      }
+    }
+
+    samples.push({ bx, by, nx, ny, s });
+  }
+  return { P, samples };
+}
+
+function drawFluidBlurFade(
+  ctx: CanvasRenderingContext2D,
+  samples: BorderSample[],
+  P: number,
+  energies: Float32Array,
+  gx: number,
+  gy: number,
+  cfg: WaveConfig,
+  W: number,
+  H: number
+): void {
+  const N = samples.length;
+  if (N < 4 || P <= 0) return;
+
+  const t = cfg.t * cfg.speed;
+  const maxSafeDepth = Math.max(16, Math.min(105, Math.min(W, H) * 0.45));
+
+  const [m1, m2, m3, m4] = cfg.harmonics;
+  const k1 = (2 * Math.PI * m1) / P;
+  const k2 = (2 * Math.PI * m2) / P;
+  const k3 = (2 * Math.PI * m3) / P;
+  const k4 = (2 * Math.PI * m4) / P;
+  const kSwell = (2 * Math.PI * cfg.swellM) / P;
+
+  const outerPts: [number, number][] = [];
+  const innerPts: [number, number][] = [];
+
+  // Buffer offset from the outer border so the blur fade shape never touches the border edge directly
+  // This completely eliminates any sharp boundary line when clipped to the container edge
+  const borderBuffer = 5;
+
+  for (let i = 0; i < N; i++) {
+    const s = samples[i];
+    const S = s.s;
+
+    // Slower, smoother harmonic wave superposition for tranquil breathing motion
+    const w1 = Math.sin(k1 * S + t * 0.9);
+    const w2 = Math.sin(k2 * S - t * 1.3 + 1.2);
+    const w3 = Math.cos(k3 * S + t * 1.7 + 2.5);
+    const w4 = Math.sin(k4 * S - t * 2.1 + 3.7);
+    const swell = 0.5 + 0.5 * Math.sin(kSwell * S + t * 0.5);
+
+    // Variation factor creating organic, gentle differing wave heights along the border
+    const variation = Math.max(0.12, 0.48 + 0.32 * swell + 0.28 * w1 + 0.2 * w2 + 0.12 * w3 + 0.08 * w4);
+
+    // Local energy from state.energies[i] (smooth attack on entry, graceful decay on leave)
+    const energy = energies ? (energies[i] || 0) : 0;
+
+    // Modulate depth by energy: when leaving, wave smoothly recedes to border (depth -> 0)
+    const baseH = cfg.baseDepth * (0.5 + 0.5 * variation);
+    const surgeH = cfg.maxSurge * variation;
+    const depth = Math.min(maxSafeDepth, (baseH + surgeH) * energy);
+
+    outerPts.push([s.bx + s.nx * borderBuffer, s.by + s.ny * borderBuffer]);
+    innerPts.push([s.bx + s.nx * (borderBuffer + depth), s.by + s.ny * (borderBuffer + depth)]);
+  }
+
+  // Draw fluid body ribbon as a pure, soft atmospheric blur fade (NO solid lines, NO border contact)
+  ctx.save();
+  ctx.filter = `blur(${cfg.blurRadius}px)`;
+
+  ctx.beginPath();
+  // Outer perimeter loop (buffered inward)
+  ctx.moveTo(outerPts[0][0], outerPts[0][1]);
+  for (let i = 1; i < N; i++) {
+    ctx.lineTo(outerPts[i][0], outerPts[i][1]);
+  }
+  ctx.closePath();
+
+  // Inner wavy boundary loop in reverse (smooth quadratic curves)
+  ctx.moveTo(innerPts[0][0], innerPts[0][1]);
+  for (let i = N - 1; i >= 0; i--) {
+    const curr = innerPts[i];
+    const prev = innerPts[(i - 1 + N) % N];
+    const midX = (curr[0] + prev[0]) / 2;
+    const midY = (curr[1] + prev[1]) / 2;
+    ctx.quadraticCurveTo(curr[0], curr[1], midX, midY);
+  }
+  ctx.closePath();
+
+  // Radial gradient centered at border focal point (gx, gy)
+  const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, cfg.influenceRadius * 1.35);
+  for (const cs of cfg.colorStops) {
+    grad.addColorStop(cs.stop, cs.color);
+  }
+  ctx.fillStyle = grad;
+  ctx.fill('evenodd');
+
+  ctx.restore();
+}
+
+function getDistToRoundedBorder(x: number, y: number, w: number, h: number, r: number): number {
+  const clampR = Math.min(r, w / 2, h / 2);
+  if (clampR <= 0.5) {
+    return Math.min(x, w - x, y, h - y);
+  }
+  if (x < clampR && y < clampR) {
+    return clampR - Math.hypot(clampR - x, clampR - y);
+  }
+  if (x > w - clampR && y < clampR) {
+    return clampR - Math.hypot(x - (w - clampR), clampR - y);
+  }
+  if (x < clampR && y > h - clampR) {
+    return clampR - Math.hypot(clampR - x, y - (h - clampR));
+  }
+  if (x > w - clampR && y > h - clampR) {
+    return clampR - Math.hypot(x - (w - clampR), y - (h - clampR));
+  }
+  return Math.min(x, w - x, y, h - y);
+}
+
+function drawFluidDotGrid(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  rawR: number,
+  gx: number,
+  gy: number,
+  t: number,
+  maxEnergy: number
+): void {
+  if (maxEnergy <= 0.015) return;
+
+  const influenceRadius = 480;
+  // High-density stippled dot matrix field with elevated dot count (~7.5x more dots)
+  const stepX = 4.2;
+  const stepY = 3.6;
+
+  // Active bounding box around glow focal point (gx, gy)
+  const minX = Math.max(0, Math.floor((gx - influenceRadius) / stepX) * stepX);
+  const maxX = Math.min(w, Math.ceil((gx + influenceRadius) / stepX) * stepX);
+  const minY = Math.max(0, Math.floor((gy - influenceRadius) / stepY) * stepY);
+  const maxY = Math.min(h, Math.ceil((gy + influenceRadius) / stepY) * stepY);
+
+  const startRow = Math.floor(minY / stepY);
+  const endRow = Math.ceil(maxY / stepY);
+
+  ctx.save();
+  ctx.filter = 'none';
+
+  for (let row = startRow; row <= endRow; row++) {
+    const dotY = row * stepY;
+    if (dotY < 0 || dotY > h) continue;
+
+    const rowOffset = (row % 2 === 1) ? stepX * 0.5 : 0;
+    const startCol = Math.floor((minX - rowOffset) / stepX);
+    const endCol = Math.ceil((maxX - rowOffset) / stepX);
+
+    for (let col = startCol; col <= endCol; col++) {
+      const dotX = col * stepX + rowOffset;
+      if (dotX < 0 || dotX > w) continue;
+
+      // Distance to glow center
+      const distToGlow = Math.hypot(dotX - gx, dotY - gy);
+      if (distToGlow > influenceRadius) continue;
+
+      const glowP = Math.max(0, 1 - distToGlow / influenceRadius);
+      const energy = glowP * glowP * (3 - 2 * glowP) * maxEnergy;
+      if (energy <= 0.02) continue;
+
+      // Distance to border with exact rounded-corner calculation
+      const distToBorder = getDistToRoundedBorder(dotX, dotY, w, h, rawR);
+      // Stay at least 5px away from border to prevent any border edge lining
+      if (distToBorder < 5) continue;
+
+      // Border perimeter coordinate: continuous across borders and corners
+      const u = dotX + dotY * 0.9;
+
+      // Multi-harmonic undulating wave terrain for organic mountain crests and valleys
+      const k1 = 0.028; // wavelength ~224px
+      const k2 = 0.068; // wavelength ~92px
+      const k3 = 0.135; // wavelength ~46px
+
+      const wave1 = Math.sin(k1 * u + t * 1.6);
+      const wave2 = Math.sin(k2 * u - t * 2.2 + 1.25);
+      const wave3 = Math.cos(k3 * u + t * 3.0 + 2.6);
+
+      const crestFactor = Math.max(0.15, 0.52 + 0.28 * wave1 + 0.16 * wave2 + 0.10 * wave3);
+
+      // Increased wave height and reach matching the expanded blur fade depth
+      const maxAllowedDepth = Math.max(20, Math.min(95, Math.min(w, h) * 0.42));
+      const targetReach = (14 + 58 * crestFactor) * energy;
+      const maxWaveDepth = Math.min(maxAllowedDepth, targetReach);
+
+      if (distToBorder > maxWaveDepth) continue;
+
+      // Depth ratio: 0 at container border to 1.0 at crest peak
+      const depthRatio = distToBorder / maxWaveDepth;
+
+      // Soft feathering at crest front and near container boundary (fades smoothly to zero near border)
+      const crestFeather = Math.max(0, Math.min(1, (1 - depthRatio) / 0.11));
+      const borderFeather = Math.max(0, Math.min(1, (distToBorder - 5) / 6.0));
+      const edgeFeather = crestFeather * borderFeather;
+
+      // Crest ridge prominence (dots are largest and brightest along the wave ridge)
+      const ridgeProximity = 1 - Math.abs(depthRatio - 0.80) / 0.80;
+      const ridgeIntensity = Math.max(0, Math.min(1, ridgeProximity));
+
+      // Delicate micro-stippling dot radius (~0.30px to 1.25px)
+      const baseR = 0.40 + 0.18 * energy;
+      const ridgeR = 0.55 * (ridgeIntensity * ridgeIntensity);
+      const dotRadius = Math.max(0.30, (baseR + ridgeR) * edgeFeather);
+
+      // Dot alpha
+      const baseAlpha = 0.38 + 0.54 * (ridgeIntensity * ridgeIntensity);
+      const dotAlpha = Math.min(1, baseAlpha * edgeFeather * energy);
+      if (dotAlpha <= 0.01) continue;
+
+      // Multi-blue gradients with Google Gemini chromatic wave crest tips
+      const chromaticShift = 0.5 + 0.5 * Math.sin(0.018 * u + t * 0.9);
+
+      let r = 56, g = 189, b = 248;
+      if (depthRatio < 0.38) {
+        // Deep Royal Sapphire into Vivid Azure
+        const f = depthRatio / 0.38;
+        r = Math.round(29 + f * (14 - 29));
+        g = Math.round(78 + f * (165 - 78));
+        b = Math.round(216 + f * (233 - 216));
+      } else if (depthRatio < 0.74) {
+        // Vivid Azure to Electric Cyan with subtle violet undertone
+        const f = (depthRatio - 0.38) / 0.36;
+        const targetR = Math.round(56 + chromaticShift * 65);
+        const targetG = Math.round(189 - chromaticShift * 55);
+        const targetB = Math.round(248 - chromaticShift * 12);
+        r = Math.round(14 + f * (targetR - 14));
+        g = Math.round(165 + f * (targetG - 165));
+        b = Math.round(233 + f * (targetB - 233));
+      } else {
+        // Crest Ridge: Electric Cyan / Ice Blue transitioning to Google Gemini Violet, Magenta & Coral tips
+        const f = (depthRatio - 0.74) / 0.26;
+        const crestR = Math.round(168 + chromaticShift * 72);
+        const crestG = Math.round(85 - chromaticShift * 20);
+        const crestB = Math.round(247 - chromaticShift * 85);
+
+        const mix = 0.32 + 0.68 * chromaticShift * f;
+        r = Math.round(56 + (crestR - 56) * mix);
+        g = Math.round(189 + (crestG - 189) * mix);
+        b = Math.round(248 + (crestB - 248) * mix);
+      }
+
+      // Radiant halo glow on crest ridge dots
+      if (ridgeIntensity > 0.65 && energy > 0.38) {
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(dotAlpha * 0.18).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, dotRadius * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Crisp stippled core dot
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${dotAlpha.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
+function renderFluidFrame(state: FluidCanvasState): void {
+  const { canvas, ctx, container } = state;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  if (w <= 0 || h <= 0) return;
+
+  const pw = Math.round(w * dpr);
+  const ph = Math.round(h * dpr);
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw;
+    canvas.height = ph;
+  }
+
+  // Slower, smoother easing for tranquil fluid tracking
+  const ease = state.active ? 0.09 : 0.06;
+  state.curX += (state.targetX - state.curX) * ease;
+  state.curY += (state.targetY - state.curY) * ease;
+  state.time += 0.009;
+
+  // Read actual container border radius
+  const compStyle = window.getComputedStyle(container);
+  const rawR = parseFloat(compStyle.borderRadius) || 0;
+
+  const { P, samples } = sampleBorder(w, h, rawR, 180);
+  const N = samples.length;
+  if (N < 4 || P <= 0) return;
+
+  // Initialize or resize energies Float32Array if needed
+  if (!state.energies || state.energies.length !== N) {
+    state.energies = new Float32Array(N);
+  }
+
+  // Find border perimeter point closest to pointer for target perimeter distance
+  let bestDistSq = Infinity;
+  let bestS = 0;
+  for (let i = 0; i < N; i++) {
+    const s = samples[i];
+    const d2 = (s.bx - state.curX) ** 2 + (s.by - state.curY) ** 2;
+    if (d2 < bestDistSq) {
+      bestDistSq = d2;
+      bestS = s.s;
+    }
+  }
+  state.targetS = bestS;
+
+  // Smoothly glide glowS along the perimeter loop (slower, smoother travelling wave animation between sides)
+  const deltaS = ((state.targetS - state.glowS + 1.5 * P) % P) - 0.5 * P;
+  state.glowS = (state.glowS + deltaS * 0.08 + P) % P;
+
+  // Interpolate exact (glowX, glowY) from glowS
+  const sNorm = (state.glowS / P) * N;
+  const i0 = Math.floor(sNorm) % N;
+  const i1 = (i0 + 1) % N;
+  const fracS = sNorm - Math.floor(sNorm);
+  state.glowX = samples[i0].bx + (samples[i1].bx - samples[i0].bx) * fracS;
+  state.glowY = samples[i0].by + (samples[i1].by - samples[i0].by) * fracS;
+
+  // Update per-sample energies with asymmetric attack and decay:
+  // - Active Attack: smooth, organic swell
+  // - Active Decay: graceful wave dissipation when moving between sides (~500ms)
+  // - Inactive Decay: fast fade-out when dropped or pointer leaves
+  // Increased influence radius for longer perimeter coverage
+  const influenceRadius = 480;
+  let maxEnergy = 0;
+  for (let i = 0; i < N; i++) {
+    const s = samples[i];
+    const distToCursor = Math.hypot(s.bx - state.curX, s.by - state.curY);
+    const p = Math.max(0, 1 - distToCursor / influenceRadius);
+    const targetEnergy = state.active ? (p * p * (3 - 2 * p)) : 0;
+
+    if (state.active) {
+      if (targetEnergy > state.energies[i]) {
+        state.energies[i] += (targetEnergy - state.energies[i]) * 0.12;
+      } else {
+        state.energies[i] += (targetEnergy - state.energies[i]) * 0.035;
+      }
+    } else {
+      // Rapid graceful decay upon drop
+      state.energies[i] *= 0.88;
+    }
+    if (state.energies[i] > maxEnergy) {
+      maxEnergy = state.energies[i];
+    }
+  }
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  // Clip strictly inside container so blur radiates inward without spilling outside
+  ctx.beginPath();
+  if (typeof (ctx as any).roundRect === 'function' && rawR > 0.5) {
+    const r = Math.min(rawR, w / 2, h / 2);
+    (ctx as any).roundRect(0, 0, w, h, r);
+  } else {
+    ctx.rect(0, 0, w, h);
+  }
+  ctx.clip();
+
+  const gx = state.glowX;
+  const gy = state.glowY;
+  const t = state.time;
+
+  // 1. Ambient Deep Blur Fade Layer (Wide atmospheric blue haze with increased height and length)
+  drawFluidBlurFade(ctx, samples, P, state.energies, gx, gy, {
+    t,
+    speed: 0.65,
+    baseDepth: 22,
+    maxSurge: 54,
+    influenceRadius: 520,
+    harmonics: [2, 5, 8, 12],
+    swellM: 1,
+    blurRadius: 36,
+    colorStops: [
+      { stop: 0, color: 'rgba(56, 189, 248, 0.35)' },
+      { stop: 0.20, color: 'rgba(14, 165, 233, 0.28)' },
+      { stop: 0.45, color: 'rgba(37, 99, 235, 0.18)' },
+      { stop: 0.70, color: 'rgba(29, 78, 216, 0.08)' },
+      { stop: 0.88, color: 'rgba(30, 58, 138, 0.03)' },
+      { stop: 1, color: 'rgba(15, 23, 42, 0)' }
+    ]
+  }, w, h);
+
+  // 2. Dynamic Fluid Wave Blur Fade Layer (Oceanic Azure & Cobalt undulating wave with increased height and length)
+  drawFluidBlurFade(ctx, samples, P, state.energies, gx, gy, {
+    t,
+    speed: 0.9,
+    baseDepth: 16,
+    maxSurge: 42,
+    influenceRadius: 420,
+    harmonics: [3, 6, 11, 16],
+    swellM: 2,
+    blurRadius: 22,
+    colorStops: [
+      { stop: 0, color: 'rgba(56, 189, 248, 0.45)' },
+      { stop: 0.22, color: 'rgba(14, 165, 233, 0.32)' },
+      { stop: 0.50, color: 'rgba(37, 99, 235, 0.18)' },
+      { stop: 0.78, color: 'rgba(29, 78, 216, 0.06)' },
+      { stop: 1, color: 'rgba(30, 27, 75, 0)' }
+    ]
+  }, w, h);
+
+  // 3. Stippled Wave Dot Grid (Gemini-style undulating micro-dot matrix with chromatic crests and increased density)
+  drawFluidDotGrid(ctx, w, h, rawR, gx, gy, t, maxEnergy);
+
+  ctx.restore();
+}
+
+function getFluidState(container: HTMLElement): FluidCanvasState | null {
+  let state = fluidCanvases.get(container);
+  if (state) return state;
+  const canvas = container.querySelector<HTMLCanvasElement>('.agent-fluid-canvas');
+  if (!canvas) return null;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  const rect = container.getBoundingClientRect();
+  const initX = rect.width / 2;
+  const initY = 0;
+  state = {
+    canvas,
+    ctx,
+    container,
+    curX: initX,
+    curY: initY,
+    targetX: initX,
+    targetY: initY,
+    glowS: 0,
+    targetS: 0,
+    glowX: initX,
+    glowY: initY,
+    energies: new Float32Array(180),
+    active: false,
+    fadeStartTime: null,
+    animId: null,
+    time: 0,
+  };
+  fluidCanvases.set(container, state);
+  return state;
+}
+
+function updateAgentDragPointer(container: HTMLElement, clientX: number, clientY: number): void {
+  const state = getFluidState(container);
+  if (!state) return;
+  const rect = container.getBoundingClientRect();
+  const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+  const y = Math.max(0, Math.min(rect.height, clientY - rect.top));
+
+  state.targetX = x;
+  state.targetY = y;
+  state.fadeStartTime = null;
+
+  if (!state.active) {
+    state.active = true;
+    state.curX = x;
+    state.curY = y;
+    startFluidCanvasLoop(state);
+  }
+}
+
+function setFluidContainer(container: HTMLElement | null, clientX: number, clientY: number): void {
+  const containers = [$('#sidebar'), $('#editorPane'), $('#agents'), $('#box')].filter((x): x is HTMLElement => !!x);
+  for (const c of containers) {
+    if (c === container) {
+      c.classList.add('agent-drop-over', 'drop-over-active');
+      updateAgentDragPointer(c, clientX, clientY);
+    } else {
+      c.classList.remove('agent-drop-over', 'drop-over-active');
+      const state = fluidCanvases.get(c);
+      if (state && state.active) {
+        state.active = false;
+        state.fadeStartTime = performance.now();
+      }
+    }
+  }
+}
+
+function stopAgentDragPointer(immediate = false): void {
+  const now = performance.now();
+  for (const state of fluidCanvases.values()) {
+    state.active = false;
+    state.fadeStartTime = now;
+    if (immediate && state.energies) {
+      for (let i = 0; i < state.energies.length; i++) {
+        state.energies[i] *= 0.3;
+      }
+    }
+  }
+  $('#agents')?.classList.remove('agent-drop-over', 'drop-over-active');
+  $('#box')?.classList.remove('agent-drop-over', 'drop-over-active');
+  $('#sidebar')?.classList.remove('agent-drop-over', 'drop-over-active');
+  $('#editorPane')?.classList.remove('agent-drop-over', 'drop-over-active');
+}
+
+function startFluidCanvasLoop(state: FluidCanvasState): void {
+  if (state.animId != null) return;
+  function loop(): void {
+    if (!state.active) {
+      let maxEnergy = 0;
+      if (state.energies) {
+        for (let i = 0; i < state.energies.length; i++) {
+          if (state.energies[i] > maxEnergy) maxEnergy = state.energies[i];
+        }
+      }
+      const elapsed = performance.now() - (state.fadeStartTime ?? 0);
+      if (elapsed > 450 || maxEnergy < 0.005) {
+        state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+        if (state.energies) state.energies.fill(0);
+        state.animId = null;
+        return;
+      }
+    }
+    renderFluidFrame(state);
+    state.animId = requestAnimationFrame(loop);
+  }
+  state.animId = requestAnimationFrame(loop);
+}
+
 function markAgentDrop(el: HTMLElement | null): void {
   if (agentDropMark === el) return;
   agentDropMark?.classList.remove('agent-drop-over', 'drag-over');
@@ -2235,6 +2893,14 @@ function clearAgentDropMarks(): void {
     agentDropMark.classList.remove('agent-drop-over', 'drag-over');
     agentDropMark = null;
   }
+  $('#agents')?.classList.remove('agent-drop-over', 'drop-over-active');
+  $('#box')?.classList.remove('agent-drop-over', 'drop-over-active');
+  $('#sidebar')?.classList.remove('agent-drop-over', 'drop-over-active');
+  $('#editorPane')?.classList.remove('agent-drop-over', 'drop-over-active');
+  for (const b of $$<HTMLElement>('.composer-box')) b.classList.remove('drag-over');
+  for (const t of $$<HTMLElement>('.agent-tab')) t.classList.remove('agent-drop-over');
+  for (const t of $$<HTMLElement>('.agent-tab-new')) t.classList.remove('agent-drop-over');
+  stopAgentDragPointer(true);
 }
 interface AgentDropTargetInfo {
   el: HTMLElement;
@@ -2438,6 +3104,15 @@ interface TreeMoveAction {
   name: string;
 }
 
+interface TreeImportAction {
+  type: 'tree-import';
+  dir: string;
+  topPaths: string[];
+  savedPaths: string[];
+  names: string[];
+  cachedFiles?: { rel: string; data: Uint8Array }[];
+}
+
 interface RemoveAttachmentAction {
   type: 'remove-attachment';
   surface: 'ide' | 'box';
@@ -2446,13 +3121,15 @@ interface RemoveAttachmentAction {
   index: number;
 }
 
-type AppUndoAction = LayoutAction | TreeOrderAction | TreeMoveAction | RemoveAttachmentAction;
+type AppUndoAction = LayoutAction | TreeOrderAction | TreeMoveAction | TreeImportAction | RemoveAttachmentAction;
 
 const actionUndoStack: AppUndoAction[] = [];
 const actionRedoStack: AppUndoAction[] = [];
 const APP_UNDO_MAX = 50;
+let lastUserTypeAt = 0;
 
 function pushAppAction(action: AppUndoAction): void {
+  (action as any).timestamp = Date.now();
   actionUndoStack.push(action);
   if (actionUndoStack.length > APP_UNDO_MAX) actionUndoStack.shift();
   actionRedoStack.length = 0;
@@ -2512,6 +3189,32 @@ async function undoAppAction(): Promise<boolean> {
     return true;
   }
 
+  if (action.type === 'tree-import') {
+    for (const p of action.topPaths) {
+      try {
+        await api.fs.trash(p);
+      } catch (err) {
+        console.warn('Failed to trash imported file/dir:', p, err);
+      }
+      const d = dirName(p);
+      if (treeOrder[d]) {
+        treeOrder[d] = treeOrder[d].filter(n => n !== baseName(p));
+        saveTreeOrder(d, treeOrder[d]);
+      }
+      for (const tabPath of openTabs.filter(x => x === p || x.startsWith(p + '/'))) {
+        dropTab(tabPath);
+      }
+      expanded.delete(p);
+    }
+    dirCache.clear();
+    await refreshTree();
+    renderTabs();
+    renderEditor();
+    saveSession();
+    toast(`Undid import · ${action.names.join(', ')}`);
+    return true;
+  }
+
   if (action.type === 'layout') {
     Object.assign(layout, action.prev);
     applyLayoutAnimated();
@@ -2558,6 +3261,24 @@ async function redoAppAction(): Promise<boolean> {
     flashUndoItem(action.from);
     toast(`Redid move · ${action.name}`);
     return true;
+  }
+
+  if (action.type === 'tree-import') {
+    if (action.cachedFiles && action.cachedFiles.length > 0) {
+      for (const item of action.cachedFiles) {
+        await api.fs.importFile(action.dir, item.rel, item.data);
+      }
+      for (let d = action.dir; d; d = dirName(d)) expanded.add(d);
+      dirCache.clear();
+      await refreshTree();
+      renderTabs();
+      renderEditor();
+      saveSession();
+      toast(`Redid import · ${action.names.join(', ')}`);
+      return true;
+    }
+    toast(`Cannot redo file import after items were moved to ${binName()}`);
+    return false;
   }
 
   if (action.type === 'layout') {
@@ -2746,17 +3467,43 @@ async function collectDropped(entry: FileSystemEntry, prefix: string, out: Dropp
   if (entry.isFile) { out.push({ rel: prefix + entry.name, file: await entryFile(entry as FileSystemFileEntry) }); return; }
   for (const child of await entryChildren(entry as FileSystemDirectoryEntry)) await collectDropped(child, `${prefix}${entry.name}/`, out, skipped);
 }
-async function importDropped(entries: FileSystemEntry[], dir: string): Promise<void> {
+async function importDropped(entries: FileSystemEntry[], dir: string, openFirst = false): Promise<void> {
   const found: Dropped[] = [], skipped: string[] = [], saved: string[] = [], failed: string[] = [];
   for (const entry of entries) await collectDropped(entry, '', found, skipped);
   const files = found.filter(d => d.file.size <= DROP_MAX_BYTES);
+  const cachedFiles: { rel: string; data: Uint8Array }[] = [];
+  let totalBytes = 0;
   for (const d of files) {
-    try { saved.push(await api.fs.importFile(dir, d.rel, new Uint8Array(await d.file.arrayBuffer()))); }
+    try {
+      const buf = new Uint8Array(await d.file.arrayBuffer());
+      saved.push(await api.fs.importFile(dir, d.rel, buf));
+      totalBytes += buf.length;
+      if (totalBytes <= 20 * 1024 * 1024) {
+        cachedFiles.push({ rel: d.rel, data: buf });
+      }
+    }
     catch (err) { failed.push(errMsg(err)); }
   }
   for (let d = dir; d; d = dirName(d)) expanded.add(d);
+  dirCache.clear();
   await refreshTree(); saveSession();
-  if (saved.length === 1 && entries.length === 1 && entries[0].isFile) openFile(saved[0]);
+
+  if (saved.length > 0) {
+    const topPaths = entries.map(e => joinPath(dir, e.name));
+    pushAppAction({
+      type: 'tree-import',
+      dir,
+      topPaths,
+      savedPaths: [...saved],
+      names: entries.map(e => e.name),
+      cachedFiles: totalBytes <= 20 * 1024 * 1024 ? cachedFiles : undefined,
+    });
+  }
+
+  if (saved.length >= 1 && (openFirst || (entries.length === 1 && entries[0].isFile))) {
+    openFile(saved[0]);
+  }
+
   const notes = [
     skipped.length ? `skipped ${[...new Set(skipped)].join(', ')}` : '',
     found.length > files.length ? `${plural(found.length - files.length, 'file')} over 50 MB left out` : '',
@@ -2769,36 +3516,90 @@ async function importDropped(entries: FileSystemEntry[], dir: string): Promise<v
 document.addEventListener('dragover', e => {
   if (!hasFiles(e) && !draggedTreePath) return;
 
+  const target = e.target as HTMLElement | null;
+
   const ag = agentDropTarget(e);
   if (ag) {
     e.preventDefault();
     markDrop(null);
     clearTreeDropMarks();
     markAgentDrop(ag.el);
+    const container = ag.surface.name === 'box' ? $('#box') : $('#agents');
+    setFluidContainer(container, e.clientX, e.clientY);
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     return;
   }
-  clearAgentDropMarks();
+  if (agentDropMark) {
+    agentDropMark.classList.remove('agent-drop-over', 'drag-over');
+    agentDropMark = null;
+  }
 
   if (draggedTreePath) {
+    if (target?.closest('#editorPane')) {
+      e.preventDefault();
+      markDrop(null);
+      clearTreeDropMarks();
+      setFluidContainer($('#editorPane'), e.clientX, e.clientY);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
+      return;
+    }
+
     const treeTarget = treeDropTarget(e);
     if (treeTarget) {
       e.preventDefault();
       markDrop(null);
       markTreeDrop(treeTarget.el, treeTarget.pos);
+      setFluidContainer($('#sidebar'), e.clientX, e.clientY);
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
       return;
     }
+
+    const mt = moveTarget(e);
+    if (mt) {
+      e.preventDefault();
+      clearTreeDropMarks();
+      markDrop(mt.el !== $('#tree') ? mt.el : null);
+      setFluidContainer($('#sidebar'), e.clientX, e.clientY);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      return;
+    }
+
+    if (target?.closest('#sidebar')) {
+      e.preventDefault();
+      clearTreeDropMarks();
+      markDrop(null);
+      setFluidContainer($('#sidebar'), e.clientX, e.clientY);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+      return;
+    }
+
+    clearTreeDropMarks();
+    markDrop(null);
+    setFluidContainer(null, 0, 0);
+    return;
   }
 
   clearTreeDropMarks();
-  e.preventDefault();
-  const t = hasFiles(e) ? dropTarget(e) : moveTarget(e);
-  markDrop(t?.el ?? null);
+  const dt = dropTarget(e);
+  if (target?.closest('#editorPane')) {
+    e.preventDefault();
+    markDrop(null);
+    setFluidContainer($('#editorPane'), e.clientX, e.clientY);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    return;
+  }
+  if (target?.closest('#sidebar')) {
+    e.preventDefault();
+    markDrop(dt?.el !== $('#tree') ? (dt?.el ?? null) : null);
+    setFluidContainer($('#sidebar'), e.clientX, e.clientY);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    return;
+  }
+
+  markDrop(dt?.el ?? null);
+  setFluidContainer(null, 0, 0);
   if (e.dataTransfer) {
-    let effect: 'copy' | 'move' | 'none' = 'none';
-    if (t) effect = hasFiles(e) ? 'copy' : 'move';
-    e.dataTransfer.dropEffect = effect;
+    e.dataTransfer.dropEffect = dt ? 'copy' : 'none';
   }
 });
 document.addEventListener('dragleave', e => {
@@ -2811,6 +3612,8 @@ document.addEventListener('dragleave', e => {
 document.addEventListener('drop', e => {
   if (!hasFiles(e) && !draggedTreePath) return;
 
+  const target = e.target as HTMLElement | null;
+
   const ag = agentDropTarget(e);
   if (ag) {
     e.preventDefault();
@@ -2820,39 +3623,72 @@ document.addEventListener('drop', e => {
     background(handleAgentDrop(e, ag));
     return;
   }
-  clearAgentDropMarks();
 
   if (draggedTreePath) {
-    const treeTarget = treeDropTarget(e);
     const from = draggedTreePath;
+    const isDir = draggedTreeIsDir;
     draggedTreePath = null;
     draggedTreeIsDir = false;
+    clearAgentDropMarks();
     clearTreeDropMarks();
     markDrop(null);
+
+    if (target?.closest('#editorPane')) {
+      e.preventDefault();
+      if (!isDir) openFile(from);
+      return;
+    }
+
+    const treeTarget = treeDropTarget(e);
     if (treeTarget) {
       e.preventDefault();
       background(rearrangeTreeItem(from, treeTarget.path, treeTarget.pos));
       return;
     }
+
+    const mt = moveTarget(e);
+    if (mt) {
+      e.preventDefault();
+      const destDir = mt.dir;
+      const fromName = baseName(from);
+      const destPath = joinPath(destDir, fromName);
+      if (from !== destPath && from !== destDir && !destDir.startsWith(from + '/')) {
+        if (destDir) expanded.add(destDir);
+        const fromDir = dirName(from);
+        const prevFromOrder = (dirCache.get(fromDir) || []).map(entry => entry.name);
+        const prevDestOrder = (dirCache.get(destDir) || []).map(entry => entry.name);
+
+        pushAppAction({
+          type: 'tree-move',
+          from: destPath,
+          to: from,
+          fromDir,
+          targetDir: destDir,
+          prevFromOrder,
+          prevTargetOrder: prevDestOrder,
+          name: fromName,
+        });
+
+        background(moveEntry(from, destPath));
+        toast(`Moved ${fromName} into ${destDir ? baseName(destDir) : 'project root'}`);
+      }
+      return;
+    }
+    return;
   }
 
   e.preventDefault();
+  clearAgentDropMarks();
   clearTreeDropMarks();
-  const external = hasFiles(e);
-  const t = external ? dropTarget(e) : moveTarget(e);
   markDrop(null);
-  if (!t) return;
-  if (!external) {
-    const from = draggedTreePath;
-    draggedTreePath = null;
-    draggedTreeIsDir = false;
-    if (t.dir) expanded.add(t.dir);
-    if (from) background(moveEntry(from, joinPath(t.dir, baseName(from))));
-    return;
-  }
-  // The item list is only readable during the event, so take the entries now and read them afterwards.
+
   const entries = [...(e.dataTransfer?.items ?? [])].map(i => i.webkitGetAsEntry()).filter((x): x is FileSystemEntry => !!x);
-  background(importDropped(entries, t.dir));
+  if (!entries.length) return;
+
+  const inEditor = !!target?.closest('#editorPane');
+  const dt = dropTarget(e);
+  const destDir = inEditor ? targetDir() : (dt?.dir ?? '');
+  background(importDropped(entries, destDir, inEditor));
 });
 
 // Puts back a tab's unsaved text and caret from the last session.
@@ -2977,6 +3813,7 @@ function createTextarea(b: EditorBuffer): HTMLTextAreaElement {
   textareaOwner.set(ta, b);
   ta.addEventListener('beforeinput', e => beforeEdit(b, e));
   ta.addEventListener('input', () => {
+    lastUserTypeAt = Date.now();
     const wasDirty = isDirty(b);
     b.text = ta.value;
     if (wasDirty !== isDirty(b)) { renderTabs(); renderTree(); }
@@ -3365,7 +4202,6 @@ async function reloadText(b: EditorBuffer): Promise<void> {
 /* ----- Agent edits, typed out: the old text goes, the new text arrives a few characters at a time ----- */
 const typingTo = new Map<string, string>();   // path -> the text the animation is heading for
 const typingCaret = new Map<string, number>(); // path -> where the agent's caret is while it types
-let lastUserTypeAt = 0;
 const sleepMs = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
 // Follow the agent to the file it edits, unless the person is busy typing somewhere.
 function mayFollowAgent(): boolean {
@@ -4491,14 +5327,24 @@ function editorKeys(e: KeyboardEvent): void {
   const ta = e.target as HTMLTextAreaElement;
   const b = textareaOwner.get(ta);
   const k = e.key.toLowerCase();
-  lastUserTypeAt = Date.now();
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')) sfx.play('key');
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')) {
+    lastUserTypeAt = Date.now();
+    sfx.play('key');
+  }
   if (suggestKeys(e, ta)) return;
   if (b && pairKey(e, ta)) { e.preventDefault(); return; }
   if (b && e.ctrlKey && e.key === ' ') { e.preventDefault(); editorSuggest(b, true); return; }
   if (b && (e.ctrlKey || e.metaKey) && !e.altKey && (k === 'z' || k === 'y')) {
     const isUndo = k === 'z' && !e.shiftKey;
     if (isUndo) {
+      const topAction = actionUndoStack[actionUndoStack.length - 1];
+      const isRecentTreeAction = topAction && topAction.type.startsWith('tree-') &&
+        ((topAction as any).timestamp ?? 0) > (lastUserTypeAt || 0);
+      if (isRecentTreeAction) {
+        e.preventDefault();
+        void undoAppAction();
+        return;
+      }
       if (b.undo.length > 0) {
         e.preventDefault();
         stepHistory(b, true);
@@ -4512,6 +5358,13 @@ function editorKeys(e: KeyboardEvent): void {
       e.preventDefault();
       return;
     } else {
+      const topRedo = actionRedoStack[actionRedoStack.length - 1];
+      const isRecentTreeRedo = topRedo && topRedo.type.startsWith('tree-');
+      if (isRecentTreeRedo) {
+        e.preventDefault();
+        void redoAppAction();
+        return;
+      }
       if (b.redo.length > 0) {
         e.preventDefault();
         stepHistory(b, false);
@@ -4802,21 +5655,225 @@ async function reloadPreview(): Promise<void> {
 function stopPreview(): void { running = false; previewPath = null; renderPreview(); }
 
 /* ================= Terminal ================= */
-const term = {
-  cwd: '', proc: null as number | null, runId: null as number | null,
-  history: store.get<string[]>('breeze.termHistory', []),
-  hIdx: 0,
-  runCwd: '',                                  // folder of the file being run: relative paths in its output resolve here
-  pending: null as { el: HTMLElement; text: string } | null, // the run's unfinished last line, shown as plain text until it ends
-  refs: [] as ErrorRef[],                      // the project errors the run has printed so far
-};
+interface ErrorRef { path: string; line: number; col: number; msg: string; error: boolean; start: number; end: number; }
+
+interface TermSession {
+  id: number;
+  name: string;
+  cwd: string;
+  proc: number | null;
+  runId: number | null;
+  history: string[];
+  hIdx: number;
+  runCwd: string;
+  pending: { el: HTMLElement; text: string } | null;
+  refs: ErrorRef[];
+  paneEl: HTMLElement;
+  inputVal: string;
+}
+
+let nextTermSessionId = 1;
+const termSessions: TermSession[] = [];
+let activeTermSession: TermSession = null as any;
+
 const termOut = $('#termOut');
 const termInput = $<HTMLInputElement>('#termInput');
+
+// Backward-compatibility proxy for code accessing single 'term'
+const term = {
+  get cwd() { return activeTermSession?.cwd ?? ''; },
+  set cwd(v: string) { if (activeTermSession) activeTermSession.cwd = v; },
+  get proc() { return activeTermSession?.proc ?? null; },
+  set proc(v: number | null) { if (activeTermSession) activeTermSession.proc = v; },
+  get runId() { return activeTermSession?.runId ?? null; },
+  set runId(v: number | null) { if (activeTermSession) activeTermSession.runId = v; },
+  get history() { return activeTermSession?.history ?? store.get<string[]>('breeze.termHistory', []); },
+  set history(v: string[]) { if (activeTermSession) activeTermSession.history = v; },
+  get hIdx() { return activeTermSession?.hIdx ?? 0; },
+  set hIdx(v: number) { if (activeTermSession) activeTermSession.hIdx = v; },
+  get runCwd() { return activeTermSession?.runCwd ?? ''; },
+  set runCwd(v: string) { if (activeTermSession) activeTermSession.runCwd = v; },
+  get pending() { return activeTermSession?.pending ?? null; },
+  set pending(v: { el: HTMLElement; text: string } | null) { if (activeTermSession) activeTermSession.pending = v; },
+  get refs() { return activeTermSession?.refs ?? []; },
+  set refs(v: ErrorRef[]) { if (activeTermSession) activeTermSession.refs = v; },
+};
+
+function createPromptHtml(cwd: string): string {
+  let path = cwd || '~';
+  path = path.replace(/\//g, '\\');
+  path = path.replace(/^([a-zA-Z]):/, (_, d) => d.toUpperCase() + ':');
+  return `<span class="ps-prefix">PS</span> <span class="ps-path" title="${escAttr(cwd || '~')}">${esc(path)}</span><span class="ps-arrow">&gt;</span>`;
+}
+
+function renderPs(): void {
+  const el = $('#termPs');
+  if (el) el.innerHTML = createPromptHtml(term.cwd);
+}
+
+function createPromptElement(cwd: string): HTMLElement {
+  const span = document.createElement('span');
+  span.className = 'ps term-prompt-line';
+  span.innerHTML = createPromptHtml(cwd);
+  return span;
+}
+
+let termScrollRaf = 0;
+function scheduleTermScroll(): void {
+  if (termScrollRaf) return;
+  termScrollRaf = requestAnimationFrame(() => {
+    termScrollRaf = 0;
+    const b = $('#termBody');
+    if (b) b.scrollTop = b.scrollHeight;
+  });
+}
+
+function activateTermSession(id: number): void {
+  const session = termSessions.find(s => s.id === id);
+  if (!session) return;
+
+  if (activeTermSession && activeTermSession !== session) {
+    activeTermSession.inputVal = termInput.value;
+  }
+
+  activeTermSession = session;
+  termInput.value = session.inputVal;
+  termGhost.innerHTML = '';
+
+  for (const s of termSessions) {
+    if (s.paneEl) {
+      s.paneEl.style.display = s.id === id ? 'block' : 'none';
+    }
+  }
+
+  renderPs();
+  if (session.proc != null) {
+    $('#termPs').classList.add('busy');
+  } else {
+    $('#termPs').classList.remove('busy');
+  }
+
+  renderTermTabs();
+  scheduleTermScroll();
+  termInput.focus();
+}
+
+function createTermSession(name?: string): TermSession {
+  const id = nextTermSessionId++;
+  const sessionName = name || `Terminal ${id}`;
+
+  let paneEl: HTMLElement;
+  const initialPane = $('#termOut');
+  if (id === 1 && initialPane) {
+    paneEl = initialPane;
+  } else {
+    paneEl = document.createElement('div');
+    paneEl.className = 'term-out-pane';
+    const termLine = $('.term-line', $('#termBody'));
+    if (termLine) {
+      $('#termBody').insertBefore(paneEl, termLine);
+    } else {
+      $('#termBody').appendChild(paneEl);
+    }
+  }
+
+  const session: TermSession = {
+    id,
+    name: sessionName,
+    cwd: activeTermSession?.cwd || (rootInfo?.root ?? ''),
+    proc: null,
+    runId: null,
+    history: [...store.get<string[]>('breeze.termHistory', [])],
+    hIdx: 0,
+    runCwd: '',
+    pending: null,
+    refs: [],
+    paneEl,
+    inputVal: '',
+  };
+  session.hIdx = session.history.length;
+
+  termSessions.push(session);
+  activateTermSession(session.id);
+  return session;
+}
+
+function closeTermSession(id: number, e?: MouseEvent): void {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+  const idx = termSessions.findIndex(s => s.id === id);
+  if (idx < 0) return;
+  const session = termSessions[idx];
+
+  if (session.proc != null) {
+    background(api.term.kill(session.proc));
+  }
+
+  if (session.paneEl && session.paneEl !== $('#termOut')) {
+    session.paneEl.remove();
+  } else if (session.paneEl === $('#termOut')) {
+    session.paneEl.innerHTML = '';
+  }
+
+  termSessions.splice(idx, 1);
+
+  if (termSessions.length === 0) {
+    createTermSession('Terminal 1');
+  } else if (activeTermSession?.id === id) {
+    const nextIdx = Math.min(idx, termSessions.length - 1);
+    activateTermSession(termSessions[nextIdx].id);
+  } else {
+    renderTermTabs();
+  }
+}
+
+function renderTermTabs(): void {
+  const tabsContainer = $('#termTabs');
+  if (!tabsContainer) return;
+  tabsContainer.innerHTML = '';
+
+  for (const s of termSessions) {
+    const tab = document.createElement('div');
+    tab.className = `term-tab ${s.id === activeTermSession?.id ? 'active' : ''} ${s.proc != null ? 'busy' : ''}`;
+    tab.dataset.tid = String(s.id);
+    tab.title = `${s.name}${s.proc != null ? ' (running)' : ''}`;
+
+    const dot = document.createElement('span');
+    dot.className = 'term-tab-dot';
+    tab.appendChild(dot);
+
+    const title = document.createElement('span');
+    title.className = 'term-tab-title';
+    title.textContent = s.name;
+    tab.appendChild(title);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'term-tab-close';
+    closeBtn.title = 'Close terminal';
+    closeBtn.innerHTML = svgIcon('x', 11);
+    closeBtn.onclick = (e) => closeTermSession(s.id, e);
+    tab.appendChild(closeBtn);
+
+    tab.onclick = (e) => {
+      if ((e.target as HTMLElement).closest('.term-tab-close')) return;
+      activateTermSession(s.id);
+    };
+
+    tabsContainer.appendChild(tab);
+  }
+}
+
+// Initialise default session if none exists
+if (termSessions.length === 0) {
+  createTermSession('Terminal 1');
+}
+
 // Colour codes and lone carriage returns don't render in the panel.
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // Where compilers and Python say the trouble is: `file:line:col: error: msg` (GCC, clang), `File "file", line N`,
 // and `file(line,col): error CS1002: msg [project.csproj]` (C#).
-interface ErrorRef { path: string; line: number; col: number; msg: string; error: boolean; start: number; end: number; }
 const GCC_REF = /^((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
 const CS_REF = /^[ \t]*((?:[A-Za-z]:(?=[\\/]))?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
 const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
@@ -5069,67 +6126,42 @@ function formatCommandSyntax(cmd: string): string {
   return html;
 }
 
-function createPromptHtml(cwd: string): string {
-  let path = cwd || '~';
-  path = path.replace(/\//g, '\\');
-  path = path.replace(/^([a-zA-Z]):/, (_, d) => d.toUpperCase() + ':');
-  return `<span class="ps-prefix">PS</span> <span class="ps-path" title="${escAttr(cwd || '~')}">${esc(path)}</span><span class="ps-arrow">&gt;</span>`;
-}
-
-function renderPs(): void {
-  const el = $('#termPs');
-  if (el) el.innerHTML = createPromptHtml(term.cwd);
-}
-
-function createPromptElement(cwd: string): HTMLElement {
-  const span = document.createElement('span');
-  span.className = 'ps term-prompt-line';
-  span.innerHTML = createPromptHtml(cwd);
-  return span;
-}
-
 const cleanOut = (text: string) => text.replaceAll(ANSI, '').replaceAll(/\r(?!\n)/g, '');
 
-let termScrollRaf = 0;
-function scheduleTermScroll(): void {
-  if (termScrollRaf) return;
-  termScrollRaf = requestAnimationFrame(() => {
-    termScrollRaf = 0;
-    const b = $('#termBody');
-    if (b) b.scrollTop = b.scrollHeight;
-  });
+function termAppend(el: HTMLElement, session: TermSession = activeTermSession): void {
+  const pane = session?.paneEl || termOut;
+  pane.appendChild(el);
+  while (pane.childNodes.length > 3000) pane.firstChild?.remove();
+  if (session === activeTermSession) scheduleTermScroll();
 }
 
-function termAppend(el: HTMLElement): void {
-  termOut.appendChild(el);
-  while (termOut.childNodes.length > 3000) termOut.firstChild?.remove();
-  scheduleTermScroll();
-}
-
-function termWrite(text: string, cls = ''): HTMLElement {
+function termWrite(text: string, cls = '', session: TermSession = activeTermSession): HTMLElement {
+  const target = session || activeTermSession;
   const span = document.createElement('span');
   if (cls) span.className = cls;
   span.innerHTML = parseAnsiToHtml(text);
-  term.pending = null; // anything written here ends the run's open line
-  termAppend(span);
+  if (target) target.pending = null; // anything written here ends the run's open line
+  termAppend(span, target);
   return span;
 }
 
 // A run's output: finished lines show their error locations as links; the unfinished last line stays
 // plain (a prompt like "Name: " has no newline) and is swapped for the linked version once it ends.
-function runOutput(chunk: string): void {
-  const full = (term.pending?.text ?? '') + chunk;
-  term.pending?.el.remove();
-  term.pending = null;
+function runOutput(chunk: string, session: TermSession = activeTermSession): void {
+  const target = session || activeTermSession;
+  const full = (target?.pending?.text ?? '') + chunk;
+  target?.pending?.el.remove();
+  if (target) target.pending = null;
   const nl = full.lastIndexOf('\n');
-  if (nl >= 0) termLinked(full.slice(0, nl + 1));
+  if (nl >= 0) termLinked(full.slice(0, nl + 1), target);
   const rest = full.slice(nl + 1);
-  if (rest) term.pending = { el: termWrite(rest), text: rest }; // termWrite cleared `pending`; set it after
+  if (rest && target) target.pending = { el: termWrite(rest, '', target), text: rest }; // termWrite cleared `pending`; set it after
 }
 
-function termLinked(text: string): void {
-  const refs = rootInfo ? parseErrorRefs(text, term.runCwd, rootInfo.root) : [];
-  term.refs.push(...refs.filter(r => r.error));
+function termLinked(text: string, session: TermSession = activeTermSession): void {
+  const target = session || activeTermSession;
+  const refs = rootInfo && target ? parseErrorRefs(text, target.runCwd, rootInfo.root) : [];
+  if (target) target.refs.push(...refs.filter(r => r.error));
   const span = document.createElement('span');
   let at = 0;
   for (const r of refs) {
@@ -5151,9 +6183,9 @@ function termLinked(text: string): void {
     chunkSpan.innerHTML = parseAnsiToHtml(text.slice(at));
     span.append(chunkSpan);
   }
-  termAppend(span);
+  termAppend(span, target);
 }
-termOut.addEventListener('click', e => {
+$('#termBody').addEventListener('click', e => {
   const a = (e.target as HTMLElement).closest<HTMLElement>('.term-ref');
   if (a) openFile(a.dataset.path as string, { line: Number(a.dataset.line), col: Number(a.dataset.col) });
 });
@@ -5191,32 +6223,40 @@ function showRunErrors(refs: ErrorRef[]): void {
   }
 }
 function killCommand(): void {
-  if (term.proc == null) return;
-  background(api.term.kill(term.proc));
-  termWrite('^C\n');
+  const session = activeTermSession;
+  if (!session || session.proc == null) return;
+  background(api.term.kill(session.proc));
+  termWrite('^C\n', '', session);
 }
-function termWriteCommand(cmd: string): void {
+function termWriteCommand(cmd: string, session: TermSession = activeTermSession): void {
+  const target = session || activeTermSession;
   const span = document.createElement('span');
   span.className = 'cmd';
   span.innerHTML = `${formatCommandSyntax(cmd)}\n`;
-  termAppend(span);
+  termAppend(span, target);
 }
 async function runCommand(cmd: string): Promise<void> {
-  if (term.proc != null) { background(api.term.write(term.proc, cmd + '\n')); termWrite(cmd + '\n', 'cmd'); return; }
-  termAppend(createPromptElement(term.cwd));
-  termWriteCommand(cmd);
+  const session = activeTermSession;
+  if (!session) return;
+  if (session.proc != null) { background(api.term.write(session.proc, cmd + '\n')); termWrite(cmd + '\n', 'cmd', session); return; }
+  termAppend(createPromptElement(session.cwd), session);
+  termWriteCommand(cmd, session);
   if (!cmd.trim()) return;
-  if (!term.history.length || term.history.at(-1) !== cmd) {
-    term.history.push(cmd);
-    if (term.history.length > 200) term.history.shift();
-    store.set('breeze.termHistory', term.history);
+  if (!session.history.length || session.history.at(-1) !== cmd) {
+    session.history.push(cmd);
+    if (session.history.length > 200) session.history.shift();
+    store.set('breeze.termHistory', session.history);
   }
-  term.hIdx = term.history.length;
-  if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { termOut.innerHTML = ''; return; }
+  session.hIdx = session.history.length;
+  if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { if (session.paneEl) session.paneEl.innerHTML = ''; return; }
   const r = await api.term.run(cmd).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; cwd?: string; error?: string });
-  if (r.error) termWrite(r.error + '\n', 'err');
-  if (r.cwd) { term.cwd = r.cwd; renderPs(); }
-  if (r.id != null) { term.proc = r.id; $('#termPs').classList.add('busy'); }
+  if (r.error) termWrite(r.error + '\n', 'err', session);
+  if (r.cwd) { session.cwd = r.cwd; renderPs(); }
+  if (r.id != null) {
+    session.proc = r.id;
+    $('#termPs').classList.add('busy');
+    renderTermTabs();
+  }
 }
 // C, C++, C#, Java, Python and Rust files run in the terminal; their input comes from the terminal's input line.
 function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|cc|cxx|cs|java|py|rs)$/i.test(path); }
@@ -5227,7 +6267,11 @@ async function runFile(): Promise<void> {
   if (term.runId != null) { // a run is going: main refuses and says so; leave the running program's output and the file alone
     const busy = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
     if (busy.error) termWrite(busy.error + '\n', 'err');
-    else if (busy.id != null) { term.proc = term.runId = busy.id; $('#termPs').classList.add('busy'); } // it had just finished
+    else if (busy.id != null) {
+      term.proc = term.runId = busy.id;
+      $('#termPs').classList.add('busy');
+      renderTermTabs();
+    } // it had just finished
     return;
   }
   if (isDirty(b) && !(await saveFile(active))) return;
@@ -5237,7 +6281,12 @@ async function runFile(): Promise<void> {
   const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; cwd?: string; error?: string });
   if (r.cwd) term.runCwd = r.cwd; // a Cargo project runs from its own folder
   if (r.error) termWrite(r.error + '\n', 'err');
-  else if (r.id != null) { term.proc = term.runId = r.id; $('#termPs').classList.add('busy'); sfx.play('build'); }
+  else if (r.id != null) {
+    term.proc = term.runId = r.id;
+    $('#termPs').classList.add('busy');
+    renderTermTabs();
+    sfx.play('build');
+  }
   termInput.focus();
 }
 termInput.addEventListener('keydown', e => {
@@ -5258,39 +6307,52 @@ termInput.addEventListener('keydown', e => {
 });
 
 api.term.onData((id, chunk) => {
-  if (id !== term.proc) return;
-  if (id === term.runId) {
-    runOutput(chunk);
+  const session = termSessions.find(s => s.proc === id);
+  if (!session) return;
+  if (id === session.runId) {
+    runOutput(chunk, session);
   } else {
-    termWrite(chunk);
+    termWrite(chunk, '', session);
   }
 });
 
 api.term.onExit((id, code) => {
-  if (id !== term.proc) return;
-  const runId = term.runId;
-  term.proc = null; term.runId = null; $('#termPs').classList.remove('busy');
+  const session = termSessions.find(s => s.proc === id);
+  if (!session) return;
+  const runId = session.runId;
+  session.proc = null; session.runId = null;
+  if (session === activeTermSession) {
+    $('#termPs').classList.remove('busy');
+  }
+  renderTermTabs();
   if (id !== runId) {
     if (code === 0) {
       const okDiv = document.createElement('div');
       okDiv.className = 'term-exit-ok';
       okDiv.textContent = '✓ process completed (exit code 0)';
-      termAppend(okDiv);
+      termAppend(okDiv, session);
     } else if (code) {
       const errDiv = document.createElement('div');
       errDiv.className = 'term-exit-err';
       errDiv.textContent = `✕ process failed with exit code ${code}`;
-      termAppend(errDiv);
+      termAppend(errDiv, session);
     }
   }
   if (id !== runId) return;
   if (code === 0) sfx.play('success');
-  if (term.pending) { const rest = term.pending.text; term.pending.el.remove(); term.pending = null; termLinked(rest); }
-  clearRunDiags();
-  if (code) showRunErrors(term.refs);
+  if (session.pending) {
+    const rest = session.pending.text;
+    session.pending.el.remove();
+    session.pending = null;
+    termLinked(rest, session);
+  }
+  if (session === activeTermSession) {
+    clearRunDiags();
+    if (code) showRunErrors(session.refs);
+  }
 });
 $('#termBody').addEventListener('mouseup', () => { if (!getSelection()?.toString()) termInput.focus(); });
-$('#termToggle').addEventListener('click', e => { if (!(e.target as HTMLElement).closest('button')) run('term.toggle'); });
+$('#termToggle').addEventListener('click', e => { if (!(e.target as HTMLElement).closest('button, .term-tabs, .term-tab')) run('term.toggle'); });
 
 /* ================= Autofill ================= */
 // One suggestion list, used by the code editor (words and keywords) and the terminal (files, commands, history).
@@ -5717,7 +6779,17 @@ const commands: Record<string, () => unknown> = {
     if (layout.termOpen) termInput.focus();
   },
   'term.focus': () => { layout.termOpen = true; applyLayoutAnimated(); termInput.focus(); },
-  'term.clear': () => { termOut.innerHTML = ''; },
+  'term.new': () => {
+    layout.termOpen = true;
+    applyLayoutAnimated();
+    createTermSession();
+    termInput.focus();
+  },
+  'term.clear': () => {
+    if (activeTermSession?.paneEl) {
+      activeTermSession.paneEl.innerHTML = '';
+    }
+  },
   'term.kill': () => { if (term.proc == null) toast('Nothing is running'); else killCommand(); },
   'explorer.refresh': refreshTree,
   'explorer.collapse': () => { expanded.clear(); renderTree(); saveSession(); },
@@ -5742,7 +6814,15 @@ function run(act: string): void {
 // Undo and redo in the code editor use its own history; everything else goes to the focused field.
 function editRole(role: string): void {
   const b = activeText();
+  const topAction = actionUndoStack[actionUndoStack.length - 1];
+  const isRecentTreeAction = topAction && topAction.type.startsWith('tree-') &&
+    ((topAction as any).timestamp ?? 0) > (lastUserTypeAt || 0);
+
   if (role === 'undo') {
+    if (isRecentTreeAction) {
+      void undoAppAction();
+      return;
+    }
     if (b && b.undo.length > 0) {
       stepHistory(b, true);
       b.ta.focus();
@@ -5759,6 +6839,12 @@ function editRole(role: string): void {
     }
   }
   if (role === 'redo') {
+    const topRedo = actionRedoStack[actionRedoStack.length - 1];
+    const isRecentTreeRedo = topRedo && topRedo.type.startsWith('tree-');
+    if (isRecentTreeRedo) {
+      void redoAppAction();
+      return;
+    }
     if (b && b.redo.length > 0) {
       stepHistory(b, false);
       b.ta.focus();
@@ -5905,7 +6991,7 @@ const MENUS: Menu[] = [
   },
   {
     name: 'Terminal', items: [
-      { label: 'Open Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
+      { label: 'New Terminal', act: 'term.new', key: 'Ctrl+Shift+`' },
       { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
       { sep: true },
       { label: 'Clear Terminal', act: 'term.clear' },
@@ -6180,6 +7266,15 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (el?.classList.contains('ta')) {
+      const topAction = actionUndoStack[actionUndoStack.length - 1];
+      const isRecentTreeAction = topAction && topAction.type.startsWith('tree-') &&
+        ((topAction as any).timestamp ?? 0) > (lastUserTypeAt || 0);
+      if (isRecentTreeAction) {
+        e.preventDefault();
+        e.stopPropagation();
+        void undoAppAction();
+        return;
+      }
       const b = activeText();
       if (b && b.undo.length > 0) {
         return;
@@ -6206,6 +7301,14 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (el?.classList.contains('ta')) {
+      const topRedo = actionRedoStack[actionRedoStack.length - 1];
+      const isRecentTreeRedo = topRedo && topRedo.type.startsWith('tree-');
+      if (isRecentTreeRedo) {
+        e.preventDefault();
+        e.stopPropagation();
+        void redoAppAction();
+        return;
+      }
       const b = activeText();
       if (b && b.redo.length > 0) {
         return;
@@ -7042,11 +8145,12 @@ commands['chat.history'] = () => showHistory(surface, surface.name === 'box' ? $
 function renderAttachments(s: Surface): void {
   const list = attachmentsMap[s.name] || [];
   if (!list.length) {
+    s.attachmentsEl.classList.remove('collapsing');
     s.attachmentsEl.classList.add('hidden');
     s.attachmentsEl.innerHTML = '';
     return;
   }
-  s.attachmentsEl.classList.remove('hidden');
+  s.attachmentsEl.classList.remove('hidden', 'collapsing');
   s.attachmentsEl.innerHTML = list.map(a => {
     const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
     let thumbHtml = '';
@@ -7086,13 +8190,17 @@ function renderAttachments(s: Surface): void {
         index: idx,
       });
 
+      sfx.play('close');
+      const isLast = list.length <= 1;
       if (chip) {
         chip.classList.add('leaving');
-        await new Promise(r => setTimeout(r, 200));
+        if (isLast) s.attachmentsEl.classList.add('collapsing');
+        await new Promise(r => setTimeout(r, 270));
       }
 
       attachmentsMap[s.name] = (attachmentsMap[s.name] || []).filter(x => x.id !== id);
       tab.attachments = [...(attachmentsMap[s.name] || [])];
+      s.attachmentsEl.classList.remove('collapsing');
       renderAttachments(s);
       toast(`Removed · ${att.name}`);
     };
@@ -7192,6 +8300,7 @@ async function attachPathToAgent(rawPath: string, isDir: boolean, s: Surface, ta
 }
 
 async function handleAgentDrop(e: DragEvent, ag: AgentDropTargetInfo): Promise<void> {
+  clearAgentDropMarks();
   let targetTab: AgentTabState;
   if (ag.isNewTab) {
     targetTab = createAgentTab(ag.surface, undefined, undefined, null, true);
@@ -7282,6 +8391,7 @@ for (const s of Object.values(SURFACES)) {
     });
     box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
     box.addEventListener('drop', async e => {
+      clearAgentDropMarks();
       box.classList.remove('drag-over');
       e.preventDefault();
       e.stopPropagation();
