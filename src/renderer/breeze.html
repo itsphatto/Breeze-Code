@@ -374,6 +374,7 @@
         <div class="work" id="work">
           <div class="pane" id="editorPane">
             <div class="tabs" id="tabs"></div>
+            <div class="editor-row" id="editorRow">
             <div class="editor" id="editor">
               <div class="gutter" id="gutter"></div>
               <div class="code">
@@ -388,12 +389,33 @@
               </div>
               <div class="empty editor-empty" id="editorEmpty"></div>
             </div>
+            <!-- Split editor: a second file on the right, editing the same buffers as the tabs -->
+            <div class="split hidden" id="split">
+              <div class="sash sash-v sash-left" id="splitSash"></div>
+              <div class="split-bar">
+                <span class="split-ico" id="splitIco"></span>
+                <select class="select split-file" id="splitFile" aria-label="File in the right split"></select>
+                <span class="split-dirty hidden" id="splitDirty" title="Unsaved changes">●</span>
+                <span class="spacer"></span>
+                <button class="icon-btn" id="splitSwap" title="Swap Sides"><svg data-i="arrowLeftRight"></svg></button>
+                <button class="icon-btn" id="splitClose" title="Close Split (Ctrl+\)"><svg data-i="x"></svg></button>
+              </div>
+              <div class="editor split-editor">
+                <div class="gutter" id="splitGutter"></div>
+                <div class="code">
+                  <pre class="hl" id="splitHl" aria-hidden="true"></pre>
+                  <textarea class="split-ta" id="splitTa" spellcheck="false" wrap="off" autocomplete="off"
+                    aria-label="Right split editor"></textarea>
+                </div>
+              </div>
+            </div>
+            </div>
           </div>
           <div class="pane preview" id="previewPane">
             <div class="sash sash-v sash-left" data-sash="preview"></div>
             <div class="preview-bar">
               <span class="preview-label">Preview</span>
-              <span class="url" id="previewUrl"><span class="live hidden" id="liveDot"></span><span id="urlText">Not
+              <span class="url" id="previewUrl"><span id="urlText">Not
                   running</span></span>
               <button class="icon-btn" title="Reload Preview" data-act="run.reload"><svg width="13" height="13">
                   <use href="#i-refresh" />
@@ -407,7 +429,7 @@
                   <use href="#i-play" />
                 </svg>
                 <h4>Nothing to preview yet</h4>
-                <div>Press <b>F5</b> to preview the project's index.html.</div>
+                <div id="previewHint">Add an <b>index.html</b> to preview it here.</div>
               </div>
             </div>
             <iframe class="preview-frame hidden" id="previewFrame" title="Preview"></iframe>

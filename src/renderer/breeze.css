@@ -1747,6 +1747,147 @@ body.resizing-h iframe {
   color: #f87171;
 }
 
+/* ---------- split editor (left and right) ---------- */
+.editor-row {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+.editor-row>.editor {
+  min-width: 0;
+}
+
+.split {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 50%;
+  min-width: 200px;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.split.hidden {
+  display: none;
+}
+
+/* Opening: the split grows from the right edge while its content slides right to left. */
+.split.opening {
+  animation: splitIn .34s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.split.closing {
+  animation: splitIn .26s cubic-bezier(.4, 0, .6, 1) reverse both;
+  pointer-events: none;
+}
+
+.split.opening>*,
+.split.closing>* {
+  min-width: 260px;
+}
+
+@keyframes splitIn {
+  from {
+    flex-basis: 0;
+    min-width: 0;
+    opacity: 0;
+    transform: translateX(60px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .split.opening,
+  .split.closing {
+    animation: none;
+  }
+}
+
+.split-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 6px 0 10px;
+  flex-shrink: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.split-ico {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.split-ico svg,
+.split-ico img {
+  width: 16px;
+  height: 16px;
+}
+
+.split-file {
+  max-width: 60%;
+  min-width: 0;
+  height: 26px;
+}
+
+.split-dirty {
+  color: var(--text-2);
+  font-size: 10px;
+}
+
+.split-ta {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 10px 24px 10px 4px;
+  font: inherit;
+  tab-size: 4;
+  white-space: pre;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  overflow: auto;
+}
+
+.split-ta::selection {
+  background: rgba(0, 94, 255, .4);
+  color: transparent;
+}
+
+.split .sash-v {
+  z-index: 3;
+}
+
+.tabs .tab-split {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.tabs .tab-run + .tab-split {
+  margin-left: 4px;
+}
+
+.tabs .tab-split.on {
+  color: var(--accent, #7aa9ff);
+}
+
 /* ---------- code editor ---------- */
 .editor {
   flex: 1;
@@ -1860,6 +2001,30 @@ body.resizing-h iframe {
   background: rgba(122, 169, 255, .2);
   box-shadow: 0 0 0 1px rgba(122, 169, 255, .6);
   animation: fade .15s ease;
+}
+
+/* The agent's caret while it types an edit into the file. */
+.type-caret {
+  position: absolute;
+  width: 2px;
+  height: 19px;
+  margin-top: 1px;
+  border-radius: 1px;
+  background: #7aa9ff;
+  box-shadow: 0 0 8px rgba(122, 169, 255, .8);
+  pointer-events: none;
+}
+
+/* Scope guides: a hairline from a tag's or block's opening line down to where it ends. */
+.guide {
+  position: absolute;
+  width: 0;
+  border-left: 1px solid rgba(255, 255, 255, .1);
+  pointer-events: none;
+}
+
+.guide.on {
+  border-left-color: rgba(122, 169, 255, .7);
 }
 
 .hit.cur {
@@ -3969,6 +4134,34 @@ body.vibing .ide {
   opacity: .8;
 }
 
+/* M↓: changed on the remote and not pulled yet. Sits after the local letter when both apply. */
+.tree-item .gst.gst-in {
+  color: #6cb6ff;
+}
+
+.tree-item .gst + .gst.gst-in {
+  margin-left: 0;
+  padding-left: 4px;
+}
+
+.tree-item.has-incoming:not(.has-changes)::after {
+  content: "↓";
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #6cb6ff;
+  font: 600 10px var(--font-code);
+  opacity: .85;
+}
+
+.scm-row.git-in .st {
+  width: auto;
+  color: #6cb6ff;
+}
+
+.scm-row.git-in {
+  cursor: default;
+}
+
 .tree-item.git-ignored {
   opacity: .62;
 }
@@ -5063,7 +5256,8 @@ body.vibing .ide {
 /* ================= Breeze Box (chat only) ================= */
 .box {
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr) auto;
+  /* title bar · chat tabs · conversation (takes the rest) · composer */
+  grid-template-rows: 44px auto minmax(0, 1fr) auto;
   height: 100vh;
   transition: filter .6s ease, opacity .6s ease, transform .6s cubic-bezier(.2, .8, .2, 1);
   background: radial-gradient(900px 420px at 50% -12%, rgba(0, 94, 255, .16), transparent 70%), var(--bg);
@@ -5412,6 +5606,26 @@ body.vibing .box {
   background: rgba(34, 197, 94, .12);
 }
 
+/* The split button sits at the far right, so Run / Preview stick just before it. */
+.tabs .tab-run {
+  right: 34px;
+}
+
+.tab-run.tab-preview {
+  border-color: rgba(122, 169, 255, .4);
+  color: #7aa9ff;
+}
+
+.tab-run.tab-preview:hover {
+  background: rgba(122, 169, 255, .12);
+}
+
+.tabs .tab-split {
+  position: sticky;
+  right: 0;
+  background: var(--bg-1);
+}
+
 /* ================= No scrollbars anywhere (wheel, trackpad and keyboard scrolling still work) ================= */
 * {
   scrollbar-width: none;
@@ -5421,6 +5635,42 @@ body.vibing .box {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* Editor scroll slider (right edge) */
+.v-slider {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  display: none;
+  z-index: 5;
+}
+
+.v-slider.on {
+  display: block;
+}
+
+.v-slider-thumb {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 8px;
+  border-radius: 4px;
+  background: var(--text-3);
+  opacity: 0.35;
+  transition: opacity .15s, background .15s;
+  cursor: pointer;
+}
+
+.v-slider:hover .v-slider-thumb,
+.v-slider.drag .v-slider-thumb {
+  opacity: 0.7;
+}
+
+.v-slider.drag .v-slider-thumb {
+  background: var(--accent, #7aa9ff);
 }
 
 /* ================= Agents panel: cards appear once a task needs them ================= */

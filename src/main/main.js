@@ -197,13 +197,23 @@ function createWindow() {
 // stylesheets, scripts or images. So the preview is served from breeze-preview://project/<path> instead.
 const PREVIEW_SCHEME = 'breeze-preview';
 protocol.registerSchemesAsPrivileged([{ scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
+const PREVIEW_STYLE = '<style data-breeze-preview>html,body{scrollbar-width:none}::-webkit-scrollbar{display:none;width:0;height:0}</style>';
+// Goes right after <head> (or <html>) so the doctype stays first and the page keeps standards mode.
+function withHiddenScrollbars(html) {
+  const at = /<head\b[^>]*>/i.exec(html) || /<html\b[^>]*>/i.exec(html);
+  return at ? html.slice(0, at.index + at[0].length) + PREVIEW_STYLE + html.slice(at.index + at[0].length) : html + PREVIEW_STYLE;
+}
 async function servePreview(req) {
   try {
     const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
     let abs = resolveIn(rel);
     if ((await fsp.stat(abs)).isDirectory()) abs = resolveIn(path.join(rel, 'index.html')); // it may be a link too
     const res = await net.fetch(pathToFileURL(abs).href);
-    return new Response(res.body, { status: res.status, headers: { 'Content-Type': res.headers.get('content-type') || 'application/octet-stream', 'Cache-Control': 'no-store' } });
+    const type = res.headers.get('content-type') || 'application/octet-stream';
+    const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+    // Pages scroll without a scrollbar in the preview, like the rest of Breeze (the sandboxed frame can't be styled from outside).
+    if (/text\/html/i.test(type)) return new Response(withHiddenScrollbars(await res.text()), { status: res.status, headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8' } });
+    return new Response(res.body, { status: res.status, headers });
   } catch {
     return new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } });
   }
@@ -847,7 +857,17 @@ const AGENTS = [
     url: 'https://developers.openai.com/codex/cli',
     paths: () => isWin ? [path.join(APPDATA, 'npm', 'codex.cmd')] : ['/usr/local/bin/codex', '/opt/homebrew/bin/codex'],
   },
+  {
+    id: 'claude', name: 'Claude Code', vendor: 'Anthropic', commands: ['claude'],
+    url: 'https://claude.com/claude-code',
+    paths: () => isWin ? [
+      path.join(HOME, '.local', 'bin', 'claude.exe'),
+      path.join(APPDATA, 'npm', 'claude.cmd'),
+    ] : [path.join(HOME, '.local', 'bin', 'claude'), path.join(HOME, '.claude', 'local', 'claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude'],
+  },
 ];
+// Claude Code takes these aliases for --model; "default" leaves the choice to its own settings.
+const CLAUDE_MODELS = ['default', 'opus', 'sonnet', 'haiku'];
 const agentBins = new Map(); // agent id -> executable found by the last scan
 // Folders of the agents found off PATH, so the Terminal panel can run them by name.
 const agentDirs = () => [...new Set([...agentBins.values()].filter(b => !b.endsWith('.app')).map(b => path.dirname(b)))];
@@ -888,7 +908,7 @@ function versionIn(text) {
 }
 function versionOf(bin) {
   // Launching a GUI app's .exe would open its window, so only ask CLIs for a version.
-  if (bin.endsWith('.app') || (isWin && /\.exe$/i.test(bin) && !/(?:codex|git|node)\.exe$/i.test(bin))) return Promise.resolve(null);
+  if (bin.endsWith('.app') || (isWin && /\.exe$/i.test(bin) && !/(?:codex|claude|git|node)\.exe$/i.test(bin))) return Promise.resolve(null);
   return new Promise(res => {
     exec(`"${bin}" --version`, { windowsHide: true, timeout: 8000 }, (err, stdout) => res(err ? null : versionIn(stdout)));
   });
@@ -922,6 +942,9 @@ async function detectAgent(a) {
       'gpt-oss-120b-medium',
     ];
     version = loadState().antigravityModel || models[0] || 'claude-sonnet-4-6';
+  } else if (a.id === 'claude') {
+    models = CLAUDE_MODELS;
+    version = loadState().claudeModel || 'default';
   } else if (bin) {
     version = await versionOf(bin);
   }
@@ -973,6 +996,12 @@ handle('agent:setModel', async (_e, { agent, model, effort }) => {
   if (agent === 'antigravity') {
     const nextState = { antigravityModel: model || null };
     if (effort !== undefined) nextState.antigravityEffort = effort || null;
+    saveState(nextState);
+    return true;
+  }
+  if (agent === 'claude') {
+    const nextState = { claudeModel: CLAUDE_MODELS.includes(model) ? model : null };
+    if (effort !== undefined) nextState.claudeEffort = effort || null;
     saveState(nextState);
     return true;
   }
@@ -1199,6 +1228,7 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
 }
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
 function cliArgs(agent, mode, prompt, session) {
+  if (agent === 'claude') return claudeArgs(mode, prompt, session);
   const build = mode === 'build';
   const args = ['exec', '--json', '-s', build ? 'workspace-write' : 'read-only', '--skip-git-repo-check'];
   const st = loadState();
@@ -1214,6 +1244,60 @@ function cliArgs(agent, mode, prompt, session) {
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
+// Claude Code in print mode: one JSON event per line. Build mode may edit files without asking; ask and plan
+// modes can read and search but every tool that changes files is switched off.
+const NO_SESSION = /No conversation found with session ID/i;
+const CLAUDE_WRITE_TOOLS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'];
+function claudeArgs(mode, prompt, session) {
+  const build = mode === 'build';
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', build ? 'acceptEdits' : 'default'];
+  if (!build) args.push('--disallowedTools', ...CLAUDE_WRITE_TOOLS);
+  const model = loadState().claudeModel;
+  if (model && model !== 'default' && CLAUDE_MODELS.includes(model)) args.push('--model', model);
+  if (session) args.push('--resume', session);
+  if (build) return { args, prompt };
+  const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
+  return { args, prompt: `${ask}\n\n${prompt}` };
+}
+// What each Claude Code tool call looks like in the chat.
+const CLAUDE_TOOLS = {
+  Read: i => ['read', `Read ${relOut(i.file_path)}`],
+  Edit: i => ['edit', `Edited ${relOut(i.file_path)}`, i.file_path],
+  MultiEdit: i => ['edit', `Edited ${relOut(i.file_path)}`, i.file_path],
+  Write: i => ['edit', `Wrote ${relOut(i.file_path)}`, i.file_path],
+  NotebookEdit: i => ['edit', `Edited ${relOut(i.notebook_path)}`, i.notebook_path],
+  Bash: i => ['run', `$ ${i.command}`],
+  Grep: i => ['search', `Searched for ${i.pattern}`],
+  Glob: i => ['search', `Listed ${i.pattern}`],
+  WebSearch: i => ['web', `Searched the web for ${i.query}`],
+  WebFetch: i => ['web', `Read ${i.url}`],
+  TodoWrite: () => ['todo', 'Updated its to-do list'],
+};
+function claudeEvent(runId, d, ctx, mode) {
+  if (d.type === 'system' && d.subtype === 'init' && d.session_id) emit(runId, { t: 'session', id: d.session_id });
+  else if (d.type === 'assistant') {
+    for (const c of d.message?.content || []) {
+      if (c.type === 'text' && c.text?.trim()) { ctx.lastText = c.text; emit(runId, { t: 'text', text: c.text }); }
+      else if (c.type === 'tool_use') {
+        const [kind, label, file] = CLAUDE_TOOLS[c.name]?.(c.input || {}) ?? ['tool', c.name];
+        emit(runId, { t: 'tool', kind, label });
+        if (file) emit(runId, { t: 'file', path: relOut(file) });
+      }
+    }
+  } else if (d.type === 'result') {
+    if (d.is_error || d.subtype !== 'success') {
+      // Reported when the process exits (streamCli): the reason may only be on stderr, and a stale
+      // session gets one retry as a fresh chat there.
+      ctx.lastError = d.result || (d.errors || []).join('\n') || '';
+      return;
+    }
+    ctx.done = true;
+    const text = d.result || ctx.lastText;
+    if (mode === 'plan' && text) emit(runId, { t: 'plan', text });
+    emit(runId, { t: 'done', ok: true, tokens: (d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0) });
+  }
+}
+
 // Codex's config may name a model the signed-in account can't use (e.g. a ChatGPT plan without API models).
 // Breeze then retries once with the best model from Codex's own model list and keeps using it.
 const SAFE_MODEL = /^[\w.:-]{1,64}$/;
@@ -1253,11 +1337,19 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
     run.child = child;
     child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
     child.stdin.end(cli.prompt ?? undefined);
-    streamCli(runId, run, child, codexEvent, mode, retryModel);
+    streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode, retryModel);
   };
-  // Called once when Codex refuses its configured model.
+  // Called once when Codex refuses its configured model, or Claude Code can't find the chat to resume.
   let retried = false;
   const retryModel = errText => {
+    if (!retried && agent === 'claude' && session && NO_SESSION.test(errText)) {
+      retried = true;
+      session = null;
+      emit(runId, { t: 'note', text: 'Claude Code couldn’t find the earlier conversation, so this message starts a new one.' });
+      runs.set(runId, run);
+      launch();
+      return true;
+    }
     const model = !retried && agent === 'codex' ? codexFallback(errText) : null;
     if (!model) return false;
     retried = true;
@@ -1290,6 +1382,7 @@ function streamCli(runId, run, child, parse, mode, retryModel) {
   child.on('error', err => { ctx.lastError = err.message; });
   child.on('close', code => {
     runs.delete(runId);
+    if (!ctx.done && !ctx.retry && NO_SESSION.test(ctx.lastError + ctx.stderr)) ctx.retry = ctx.lastError + ctx.stderr;
     if (ctx.retry && !run.stopped && ctx.retryModel?.(ctx.retry)) return;
     if (ctx.done) return;
     if (run.stopped) { emit(runId, { t: 'done', ok: false, stopped: true }); return; }
@@ -1642,7 +1735,11 @@ handle('git:status', async () => {
     git(['remote']).catch(() => ''),
   ]);
   const parsed = parseGitStatusPorcelain(out, top, root);
-  return { repo: true, ...parsed, hasCommits: true, hasRemote: !!remotes.trim() };
+  // Files changed on the upstream branch that are not pulled yet (known since the last fetch).
+  const incoming = parsed.behind && parsed.upstream
+    ? (await git(['diff', '--name-only', '-z', '--relative', 'HEAD...@{u}']).catch(() => '')).split('\0').filter(Boolean)
+    : [];
+  return { repo: true, ...parsed, incoming, hasCommits: true, hasRemote: !!remotes.trim() };
 });
 
 handle('git:log', async () => {
@@ -1753,6 +1850,7 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
   if (!targetAgent) {
     if (agentBins.get('antigravity')) targetAgent = 'antigravity';
     else if (agentBins.get('codex')) targetAgent = 'codex';
+    else if (agentBins.get('claude')) targetAgent = 'claude';
     else {
       const cfg = await llmConfig(true).catch(() => null);
       if (cfg) targetAgent = 'local';
@@ -1848,6 +1946,35 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
       child.stdin.end(prompt);
       child.on('close', () => {
         let clean = outText.trim();
+        if (clean.startsWith('```') && clean.endsWith('```')) {
+          clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+        }
+        if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
+          clean = clean.slice(1, -1).trim();
+        }
+        resolve(clean || 'chore: update project');
+      });
+      child.on('error', reject);
+    });
+  }
+
+  if (targetAgent === 'claude') {
+    const bin = agentBins.get('claude');
+    if (!bin) throw new Error('Claude Code was not found');
+    const targetModel = CLAUDE_MODELS.includes(model) && model !== 'default' ? model : 'haiku';
+    const args = ['-p', '--output-format', 'json', '--model', targetModel, '--disallowedTools', ...CLAUDE_WRITE_TOOLS];
+    return new Promise((resolve, reject) => {
+      const child = /\.(?:cmd|bat)$/i.test(bin)
+        ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
+        : spawn(bin, args, { cwd: base, windowsHide: true, env: process.env });
+      let out = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', chunk => { out += chunk; });
+      child.stdin.on('error', () => { /* exited early; close reports it */ });
+      child.stdin.end(prompt);
+      child.on('close', () => {
+        let clean = '';
+        try { clean = String(JSON.parse(out).result || '').trim(); } catch { clean = out.trim(); }
         if (clean.startsWith('```') && clean.endsWith('```')) {
           clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
         }

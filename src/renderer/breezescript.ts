@@ -24,7 +24,7 @@ type AgentMode = 'plan' | 'build' | 'ask';
 interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done' | 'auth' | 'auth-required'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; url?: string; command?: string; }
 interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
 interface GitFile { path: string; x: string; y: string; }
-interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; ignored?: string[]; }
+interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; incoming?: string[]; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; ignored?: string[]; }
 interface GitCommit { hash: string; parents: string[]; author: string; when: string; refs: string[]; subject: string; }
 interface GitCommitDetail { hash: string; author: string; email: string; when: string; message: string; files: { path: string; added: number; removed: number }[]; }
 
@@ -508,6 +508,7 @@ function demoApi(): BreezeApi {
           agents: [
             { id: 'antigravity', name: 'Antigravity', vendor: 'Google DeepMind', url: 'https://antigravity.google/', found: false, path: null, version: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'claude-opus-4-6-thinking', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gpt-oss-120b-medium'] },
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
+            { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', url: 'https://claude.com/claude-code', found: false, path: null, version: 'default', models: ['default', 'opus', 'sonnet', 'haiku'] },
             { id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
@@ -562,7 +563,7 @@ function demoApi(): BreezeApi {
     git: {
       async status() {
         return {
-          repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 0, hasCommits: true, hasRemote: true,
+          repo: true, branch: 'main', upstream: 'origin/main', ahead: 1, behind: 1, incoming: ['index.html', 'script.js'], hasCommits: true, hasRemote: true,
           files: [{ path: 'styles.css', x: ' ', y: 'M' }, { path: 'index.html', x: 'M', y: ' ' }, { path: 'assets/new-logo.svg', x: '?', y: '?' }], ignored: []
         };
       },
@@ -659,6 +660,7 @@ const SOCIAL_SITES: SocialSite[] = [
 // Brand artwork for agents and feeds, keyed by the same id as the tint class. Anything without a file falls back to its letter or symbol.
 const BRAND_ICONS: Record<string, string> = {
   codex: 'codex.png',
+  claude: 'claude.svg',
   antigravity: 'antigravity.png',
   instagram: 'instagram.png', facebook: 'facebook.png',
   local: 'ollama.svg',
@@ -687,6 +689,8 @@ const LINE_ICONS: Record<string, IconNode> = {
   send: [['path', { d: 'M3.714 3.048a.498.498 0 0 0-.683.627l2.843 7.627a2 2 0 0 1 0 1.396l-2.842 7.627a.498.498 0 0 0 .682.627l18-8.5a.5.5 0 0 0 0-.904z' }], ['path', { d: 'M6 12h16' }]],
   more: [['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }], ['circle', { cx: 5, cy: 12, r: 1 }]],
   up: [['path', { d: 'm5 12 7-7 7 7' }], ['path', { d: 'M12 19V5' }]],
+  arrowLeftRight: [['path', { d: 'M8 3 4 7l4 4' }], ['path', { d: 'M4 7h16' }], ['path', { d: 'm16 21 4-4-4-4' }], ['path', { d: 'M20 17H4' }]],
+  columns: [['rect', { x: 3, y: 3, width: 18, height: 18, rx: 2 }], ['path', { d: 'M12 3v18' }]],
   down: [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]],
   chevronRight: [['path', { d: 'm9 18 6-6-6-6' }]],
   chevronDown: [['path', { d: 'm6 9 6 6 6-6' }]],
@@ -997,6 +1001,7 @@ async function toggleFeed(id: string): Promise<void> {
 /* ----- AI agent detection ----- */
 const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
   codex: { letter: 'Cx', tint: 'codex' },
+  claude: { letter: 'Cc', tint: 'claude' },
   antigravity: { letter: 'Ag', tint: 'antigravity' },
   local: { letter: 'Ol', tint: 'local' },
   ollama: { letter: 'Ol', tint: 'local' },
@@ -1056,7 +1061,7 @@ function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean
     : `<button class="get side" data-get="${escAttr(a.url)}"><span class="get-label">Get it</span></button>`;
   const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
   let modelOptions = '';
-  if (a.found && a.models?.length && a.id !== 'codex' && a.id !== 'antigravity') {
+  if (a.found && a.models?.length && a.id !== 'codex' && a.id !== 'antigravity' && a.id !== 'claude') {
     const opts = a.models.map(m => {
       const sel = m === a.version ? ' selected' : '';
       return `<option value="${escAttr(m)}"${sel}>${esc(m)}</option>`;
@@ -1139,12 +1144,12 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
         saveApp();
         renderAgentPill();
         toast(`Codex model · ${modelVal}`);
-      } else if (agId === 'antigravity') {
-        await api.agent.setModel('antigravity', modelVal);
+      } else if (agId === 'antigravity' || agId === 'claude') {
+        await api.agent.setModel(agId, modelVal);
         if (targetAgent) targetAgent.version = modelVal;
         saveApp();
         renderAgentPill();
-        toast(`Antigravity model · ${modelVal}`);
+        toast(`${targetAgent?.name ?? agId} model · ${modelVal}`);
       }
     };
   });
@@ -1240,12 +1245,12 @@ async function applyModelAndEffort(a: DetectedAgent, model: string, effort: Effo
     saveApp();
     renderAgentPill();
     toast(`Codex model set to ${model} (${effort} effort)`);
-  } else if (a.id === 'antigravity') {
-    await api.agent.setModel('antigravity', model, effort.toLowerCase());
+  } else if (a.id === 'antigravity' || a.id === 'claude') {
+    await api.agent.setModel(a.id, model, effort.toLowerCase());
     a.version = model;
     saveApp();
     renderAgentPill();
-    toast(`Antigravity model set to ${model} (${effort} effort)`);
+    toast(`${a.name} model set to ${model} (${effort} effort)`);
   } else if (a.api) {
     await api.llm.setModel(model);
     a.version = model;
@@ -1498,7 +1503,8 @@ const LEXERS: Record<string, RegExp> = {
   js: lexer([['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['str', either(QUOTED, BACKTICKED)], ['num', NUMBER], ['kw', keywords(JS_KW)], ['prop', CALL]]),
   css: lexer([
     ['com', BLOCK_COMMENT], ['str', QUOTED], ['kw', /@[\w-]+|!important/],
-    ['prop', /--?[A-Za-z_][\w-]*(?=\s*:)/],
+    // A property is a name followed by ':' and a value ending in ';' or '}' (a:hover { … } reaches '{' first, so it stays a selector).
+    ['prop', /(?<![\w-])-{0,2}[A-Za-z_][\w-]*(?=\s*:(?!:)[^;{}]*[;}])/],
     ['num', either(/#[\da-fA-F]{3,8}\b/, /-?\b\d+(?:\.\d+)?(?:%|[a-z]{1,3})?/)],
   ]),
   json: lexer([['prop', /"(?:\\.|[^"\\\n])*"(?=\s*:)/], ['str', /"(?:\\.|[^"\\\n])*"?/], ['num', either(/-/, NUMBER)], ['kw', /\b(?:true|false|null)\b/]]),
@@ -1561,11 +1567,31 @@ function markSelectors(toks: Tok[]): Tok[] {
   }
   return out;
 }
+// HTML with its <style> and <script> blocks coloured as CSS and JavaScript (TS/JSX and JSON scripts too).
+// Comments come first in the pattern, so a commented-out <script> stays a comment.
+const EMBEDDED = /<!--[\s\S]*?(?:-->|$)|(<(style|script)\b(?:"[^"]*"|'[^']*'|[^>"'])*>)([\s\S]*?)(?=<\/\2\s*>|$)/gi;
+function htmlToks(text: string): Tok[] {
+  const out: Tok[] = [];
+  let last = 0;
+  for (const m of text.matchAll(EMBEDDED)) {
+    if (!m[1]) continue; // a comment: lexed as HTML with the text around it
+    const start = (m.index ?? 0) + m[1].length, inner = m[3];
+    out.push(...lex(text.slice(last, start), LEXERS.html));
+    const type = (/\b(?:type|lang)\s*=\s*["']?([^"'\s>]+)/i.exec(m[1])?.[1] ?? '').toLowerCase();
+    if (m[2].toLowerCase() === 'style') out.push(...markSelectors(lex(inner, LEXERS.css)));
+    else if (!type || /javascript|ecmascript|module|babel|jsx|tsx?$|typescript/.test(type)) out.push(...lex(inner, LEXERS.js));
+    else if (type.includes('json')) out.push(...lex(inner, LEXERS.json));
+    else out.push([null, inner]); // templates and other data blocks stay plain
+    last = start + inner.length;
+  }
+  out.push(...lex(text.slice(last), LEXERS.html));
+  return out;
+}
 // Highlight a whole document and return one HTML string per line (tokens can span lines).
 function highlightLines(text: string, lexerName: string): string[] {
   if (!LEXERS[lexerName] || text.length > 400000) return text.split('\n').map(esc);
   const lines: string[] = [''];
-  const toks = lex(text, LEXERS[lexerName]);
+  const toks = lexerName === 'html' ? htmlToks(text) : lex(text, LEXERS[lexerName]);
   for (const [cls, t] of lexerName === 'css' ? markSelectors(toks) : toks) {
     t.split('\n').forEach((part, i) => {
       if (i > 0) lines.push('');
@@ -2954,6 +2980,7 @@ function createTextarea(b: EditorBuffer): HTMLTextAreaElement {
     const wasDirty = isDirty(b);
     b.text = ta.value;
     if (wasDirty !== isDirty(b)) { renderTabs(); renderTree(); }
+    if (b.path === splitPath) renderSplit();
     if (findOpen) runFind(false);
     queueRender(); saveSession(); scheduleLint(b);
     // Suggest words while typing one; any other edit closes the list.
@@ -3008,6 +3035,7 @@ function stepHistory(b: EditorBuffer, back: boolean): void {
 
 /* ================= Explorer ================= */
 const GIT_LETTER: Record<string, string> = { 'git-m': 'M', 'git-u': 'U', 'git-a': 'A', 'git-d': 'D' };
+const INCOMING_TAG = '<span class="gst gst-in" title="Changed on the remote · not pulled yet">M↓</span>';
 function chevClass(e: DirEntry, open: boolean): string {
   if (!e.dir) return 'none';
   return open ? 'open' : '';
@@ -3042,11 +3070,13 @@ function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof
   const g = e.dir ? (decor.dirs.has(p) && 'has-changes') || '' : decor.files.get(p) ?? '';
   const isIgnored = isIgnoredPath(p, decor.ignored);
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
-  const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, isIgnored ? 'git-ignored' : '', enter ? 'enter' : ''].filter(Boolean).join(' ');
+  // Changed on the remote and not pulled yet; shows beside the local letter when both apply.
+  const inTag = !e.dir && decor.incoming.has(p) && !lock ? INCOMING_TAG : '';
+  const cls = ['tree-item', p === active ? 'on' : '', isDirty(buffers.get(p)) ? 'dirty' : '', p === ctxPath ? 'ctx' : '', g, e.dir && decor.incomingDirs.has(p) ? 'has-incoming' : '', isIgnored ? 'git-ignored' : '', enter ? 'enter' : ''].filter(Boolean).join(' ');
   const icon = e.dir ? folderIcon(e.name, open) : fileIcon(e.name);
   const nameHtml = e.dir ? `<span class="nm-base">${esc(e.name)}</span>` : fileNameHtml(e.name);
   return `<div class="${cls}" data-depth="${depth}" data-path="${escAttr(p)}" ${e.dir ? 'data-dir="1" ' : ''}draggable="true" title="${escAttr(p)}">
-    <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${nameHtml}</span>${lockTag}${gitTag}</div>`;
+    <span class="chev ${chevClass(e, open)}">${CHEV}</span><span class="ico">${icon}</span><span class="nm">${nameHtml}</span>${lockTag}${gitTag}${inTag}</div>`;
 }
 function renderTree(): void {
   const el = $('#tree');
@@ -3172,6 +3202,7 @@ $('#tree').addEventListener('contextmenu', e => {
   ctxPath = p || null; renderTree();
   const dir = isDir ? p : dirName(p);
   const fileItems: MenuItem[] = p ? [
+    ...(isDir ? [] : [{ label: 'Open in Split View', run: () => background(openFileInSplit(p)) }]),
     { sep: true },
     { label: 'Rename…', key: 'F2', run: () => background(renameEntry(p)) },
     { label: 'Delete', key: 'Delete', run: () => deleteEntry(p, isDir) },
@@ -3321,13 +3352,102 @@ async function reloadText(b: EditorBuffer): Promise<void> {
   const r = await api.fs.readFile(b.path).catch(() => null); // deleted or unreadable: keep the buffer
   if (r?.text == null) return;
   const text = r.text.replaceAll('\r\n', '\n');
+  if (typingTo.has(b.path)) { typingTo.set(b.path, text); return; } // the running animation heads for the newest text
   if (text === b.saved || isDirty(b)) return;
+  // While an agent works, its edits are typed out instead of swapped in.
+  if (hasAnyActiveRun()) { void typeAgentEdit(b, text); return; }
   remember(b, 'reload');
   b.text = b.saved = text;
   if (b.ta) { const s = b.ta.selectionStart; b.ta.value = text; b.ta.setSelectionRange(s, s); }
   if (b.path === active) renderCode();
   scheduleLint(b, 0);
 }
+/* ----- Agent edits, typed out: the old text goes, the new text arrives a few characters at a time ----- */
+const typingTo = new Map<string, string>();   // path -> the text the animation is heading for
+const typingCaret = new Map<string, number>(); // path -> where the agent's caret is while it types
+let lastUserTypeAt = 0;
+const sleepMs = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
+// Follow the agent to the file it edits, unless the person is busy typing somewhere.
+function mayFollowAgent(): boolean {
+  if ($('#ide').classList.contains('hidden') || modalOpen()) return false;
+  return Date.now() - lastUserTypeAt > 3000;
+}
+function followAgentTo(path: string): void {
+  if (active === path || !mayFollowAgent()) return;
+  if (!openTabs.includes(path)) openTabs.push(path);
+  setActive(path);
+}
+async function typeAgentEdit(b: EditorBuffer, text: string): Promise<void> {
+  typingTo.set(b.path, text);
+  remember(b, 'reload');
+  try {
+    // Keep going while newer text arrives (the agent edited the file again meanwhile).
+    for (let target = text; b.text !== target; target = typingTo.get(b.path) ?? target) {
+      if (!await typeOut(b, target)) break;
+    }
+  } finally {
+    typingTo.delete(b.path);
+    typingCaret.delete(b.path);
+    if (b.path === active) renderCode();
+    if (b.path === splitPath) renderSplit();
+    scheduleLint(b, 0);
+    // The new lines stay lit for a moment, then fade back to normal.
+    setTimeout(() => { if (!typingTo.has(b.path)) { delete added[b.path]; if (b.path === active) renderCode(); } }, 2500);
+  }
+}
+// Types `after` into the buffer; false when the person started editing it (the rest then lands at once).
+async function typeOut(b: EditorBuffer, after: string): Promise<boolean> {
+  const before = b.text;
+  let s = 0;
+  while (s < before.length && s < after.length && before[s] === after[s]) s++;
+  let e = 0;
+  while (e < before.length - s && e < after.length - s && before[before.length - 1 - e] === after[after.length - 1 - e]) e++;
+  const head = after.slice(0, s), mid = after.slice(s, after.length - e), tail = after.slice(after.length - e);
+  // An insertion that starts with a line break begins on the next line; the line above stays unlit.
+  const firstLine = lineAt(after, s) + (mid.startsWith('\n') ? 1 : 0);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Short edits type at a natural pace; long ones speed up so none takes more than ~2.5 s.
+  // Very large files would re-highlight every frame, so they change at once.
+  const step = reduce || after.length > 150000 ? mid.length : Math.max(3, Math.ceil(mid.length / 150));
+  followAgentTo(b.path);
+  let shown = before, frames = 0;
+  for (let i = 0; ; i = Math.min(mid.length, i + step)) {
+    if (b.text !== shown) { // typed over by the person: stop animating; their edit now differs from the disk
+      b.saved = after;
+      return false;
+    }
+    const text = head + mid.slice(0, i) + tail;
+    const caret = s + i;
+    shown = text;
+    setBuffer(b, text);
+    const last = lineAt(text, caret);
+    added[b.path] = new Set(Array.from({ length: last - firstLine + 1 }, (_, n) => firstLine + n));
+    typingCaret.set(b.path, caret);
+    if (b.path === active) { renderCode(); revealOffset(b, caret); }
+    if (b.path === splitPath) renderSplit();
+    if (i >= mid.length) break;
+    if (++frames % 3 === 0) sfx.play('key');
+    await sleepMs(16);
+  }
+  if (running && previewPath && /\.(html?|css|js)$/i.test(b.path)) void reloadPreview();
+  return true;
+}
+// Replaces the buffer's text as saved on disk, keeping the person's caret where it was.
+function setBuffer(b: EditorBuffer, text: string): void {
+  b.text = b.saved = text;
+  if (b.ta && b.ta.value !== text) {
+    const { selectionStart: st, selectionEnd: en } = b.ta;
+    b.ta.value = text;
+    b.ta.setSelectionRange(Math.min(st, text.length), Math.min(en, text.length));
+  }
+}
+function typingCaretBox(b: EditorBuffer, cw: number): HTMLElement[] {
+  const off = typingCaret.get(b.path);
+  if (off == null) return [];
+  const ls = lineStart(b.text, off);
+  return [box('type-caret', lineAt(b.text, off) * LINE_H, visualCol(b.text.slice(ls, lineEnd(b.text, ls)), off - ls) * cw)];
+}
+
 api.fs.onChange(paths => background((async () => {
   queueGitRefresh();
   // Reload changed folders, and changed paths that are themselves cached folders (e.g. created then filled).
@@ -3365,6 +3485,17 @@ async function actuallyOpen(path: string, at?: Spot): Promise<void> {
     revealOffset(b, off);
   }
 }
+// Opens a file on the right side of the split; the left keeps its file (or shows this one too if it had none).
+async function openFileInSplit(path: string): Promise<void> {
+  if (baseName(path).startsWith('.env') && !buffers.has(path)) { toast('Open this protected file in a tab first'); return; }
+  const b = await loadBuffer(path);
+  if (!b) return;
+  if (b.kind !== 'text') { toast('Only text files open in the split view'); return; }
+  if (!openTabs.includes(path)) openTabs.push(path);
+  if (!active) setActive(path); else renderEditor();
+  openSplit(path, true);
+  renderTabs();
+}
 function setActive(path: string | null): void {
   const changed = active !== path;
   active = path;
@@ -3396,10 +3527,14 @@ function renderTabs(): void {
   if (!hasTabs) {
     tabsEl.innerHTML = '';
   } else {
-    const runBtn = runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '';
-    tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn;
+    const runBtn = runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>`
+      : isHtml(active) ? `<button class="tab-run tab-preview" data-preview-file="1" title="Preview this page (F5)">${svgIcon('play', 12)}<span>Preview</span></button>` : '';
+    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitPath ? 'Close Split' : 'Split Editor Right'} (Ctrl+\\)">${svgIcon('columns', 14)}</button>`;
+    tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn + splitBtn;
   }
   placeTabInk();
+  if (!running) renderPreviewEmpty();
+  renderSplit();
 }
 // The blue line under the open tab is one element that glides from the last tab to the new one.
 // Tabs are re-rendered, so the line restarts from where it was drawn last and then moves.
@@ -3425,6 +3560,8 @@ function placeTabInk(): void {
 $('#tabs').addEventListener('animationend', e => { if ((e.target as HTMLElement).classList.contains('tab')) placeTabInk(); });
 $('#tabs').addEventListener('click', e => {
   if ((e.target as HTMLElement).closest('[data-run-file]')) { run('run.file'); return; }
+  if ((e.target as HTMLElement).closest('[data-preview-file]')) { if (active) void startPreview(active); return; }
+  if ((e.target as HTMLElement).closest('[data-split]')) { run('view.splitEditor'); return; }
   const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
   if (!tab || justDragged) return;
   const p = tab.dataset.tab as string;
@@ -3505,6 +3642,8 @@ $('#tabs').addEventListener('contextmenu', e => {
     { label: 'Close Tabs to the Right', enabled: () => right.length > 0, run: () => closeTabs(right) },
     { label: 'Close Saved Tabs', enabled: () => saved.length > 0, run: () => closeTabs(saved) },
     { label: 'Close All Tabs', run: () => closeTabs([...openTabs]) },
+    { sep: true },
+    { label: 'Open in Split Right', enabled: () => buffers.get(p)?.kind === 'text', run: () => { openSplit(p, true); renderTabs(); } },
     { sep: true },
     { label: 'Copy Relative Path', run: () => background(navigator.clipboard.writeText(p).then(() => toast('Path copied'))) },
     { label: 'Reveal in Explorer', run: () => revealInTree(p) },
@@ -3865,6 +4004,92 @@ function tagBoxes(b: EditorBuffer, cw: number): HTMLElement[] {
     return box('tagpair', ln * LINE_H, x, Math.max(visualCol(lt, to - ls) * cw - x, 2));
   });
 }
+/* ----- Scope guides: a thin line from a tag's or block's first line down to its end ----- */
+// from/to are lines: the guide runs below line `from` and stops at the top of line `to`.
+interface Block { from: number; to: number; start: number; end: number; col: number; }
+const blockCache = new WeakMap<EditorBuffer, { text: string; blocks: Block[] }>();
+function lineStarts(text: string): number[] {
+  const s = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) s.push(i + 1);
+  return s;
+}
+function lineOfOffset(starts: number[], off: number): number {
+  let lo = 0, hi = starts.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= off) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+// Every {} [] () pair as [open, close] offsets, skipping strings and comments.
+const OPENER: Record<string, string> = { '}': '{', ']': '[', ')': '(' };
+function bracketPairs(text: string): [number, number][] {
+  const pairs: [number, number][] = [], stack: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') { const nl = text.indexOf('\n', i); if (nl === -1) break; i = nl; continue; }
+    if (c === '/' && text[i + 1] === '*') { const e = text.indexOf('*/', i + 2); if (e === -1) break; i = e + 1; continue; }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c && (c === '`' || text[j] !== '\n')) j += text[j] === '\\' ? 2 : 1;
+      i = j;
+      continue;
+    }
+    if (c === '{' || c === '[' || c === '(') stack.push(i);
+    else if (OPENER[c]) {
+      let at = stack.length - 1;
+      while (at >= 0 && text[stack[at]] !== OPENER[c]) at--;
+      if (at !== -1) { pairs.push([stack[at], i]); stack.length = at; }
+    }
+  }
+  return pairs;
+}
+function blocksOf(b: EditorBuffer): Block[] {
+  const c = blockCache.get(b);
+  if (c?.text === b.text) return c.blocks;
+  const text = b.text, lexer = langOf(b.path)[0], ext = extOf(b.path);
+  const blocks: Block[] = [];
+  if (text.length <= 200000) {
+    const starts = lineStarts(text);
+    const indentOf = (ln: number) => {
+      const lt = text.slice(starts[ln], lineEnd(text, starts[ln]));
+      return visualCol(lt, lt.length - lt.trimStart().length);
+    };
+    const add = (open: number, close: number) => {
+      const from = lineOfOffset(starts, open), to = lineOfOffset(starts, close);
+      if (to - from >= 2) blocks.push({ from, to, start: open, end: close + 1, col: Math.min(indentOf(from), indentOf(to)) });
+    };
+    if (lexer === 'html' || ext === 'jsx' || ext === 'tsx') {
+      for (const [o, cl] of tagPairs(text, lexer !== 'html' || ext === 'xml' || ext === 'svg')) add(o.start, cl.start);
+    }
+    if (['js', 'css', 'json', 'java', 'rs', 'cs'].includes(lexer)) for (const [o, cl] of bracketPairs(text)) add(o, cl);
+    if (lexer === 'py') {
+      // Python blocks are the lines indented under a line that ends with ':'.
+      const raw = text.split('\n');
+      raw.forEach((lt, i) => {
+        if (!/:\s*(?:#.*)?$/.test(lt) || !lt.trim()) return;
+        const ind = indentOf(i);
+        let last = i;
+        for (let j = i + 1; j < raw.length; j++) {
+          if (!raw[j].trim()) continue;
+          if (indentOf(j) <= ind) break;
+          last = j;
+        }
+        if (last > i) blocks.push({ from: i, to: last + 1, start: starts[i], end: starts[last] + raw[last].length, col: ind });
+      });
+    }
+  }
+  blockCache.set(b, { text, blocks });
+  return blocks;
+}
+// Guides for the blocks in view; the innermost one around the caret is brighter.
+function guideBoxes(b: EditorBuffer, caret: number, cw: number, first = winFirst, last = winLast): HTMLElement[] {
+  const blocks = blocksOf(b);
+  let on: Block | undefined;
+  for (const k of blocks) if (k.start <= caret && caret <= k.end && (!on || k.end - k.start < on.end - on.start)) on = k;
+  return blocks.filter(k => k.to > first && k.from < last).map(k => {
+    const d = box(k === on ? 'guide on' : 'guide', (k.from + 1) * LINE_H, k.col * cw);
+    d.style.height = `${(k.to - k.from - 1) * LINE_H}px`;
+    return d;
+  });
+}
 let tagKey = '';
 function lineHtml(h: string, i: number, add: Set<number> | undefined, d: Diag | undefined): string {
   const cls = ['ln', add?.has(i) ? 'added' : '', d ? 'err' : '', i === curLine ? 'cur-line' : ''].filter(Boolean).join(' ');
@@ -3916,7 +4141,7 @@ function renderCode(): void {
   hlLines.style.top = `${winFirst * LINE_H}px`;
   gutLines.innerHTML = nums.join('');
   gutLines.style.top = `${winFirst * LINE_H}px`;
-  hlBoxes.replaceChildren(...findBoxes(b, cw), ...squiggles(b, lines.length, cw), ...tagBoxes(b, cw));
+  hlBoxes.replaceChildren(...guideBoxes(b, b.ta.selectionStart, cw), ...findBoxes(b, cw), ...squiggles(b, lines.length, cw), ...tagBoxes(b, cw), ...typingCaretBox(b, cw));
   tagKey = `${b.path}:${b.ta.selectionStart}:${b.text.length}`;
   $('#gutter').style.width = `${Math.max(3, String(lines.length).length) * 8 + 32}px`;
   syncScroll();
@@ -3930,9 +4155,210 @@ function syncScroll(): void {
   if (vf < winFirst || vl > winLast) { renderCode(); return; }
   hlInner.style.transform = `translate(${-b.ta.scrollLeft}px, ${-b.ta.scrollTop}px)`;
   gutInner.style.transform = `translateY(${-b.ta.scrollTop}px)`;
+  updateVSlider(b.ta);
 }
 
+/* ----- Vertical scroll slider on the right edge of the editor (native scrollbars are hidden) ----- */
+const vTrack = document.createElement('div');
+vTrack.className = 'v-slider';
+const vThumb = document.createElement('div');
+vThumb.className = 'v-slider-thumb';
+vTrack.append(vThumb);
+$('#editor').append(vTrack);
+function updateVSlider(ta: HTMLTextAreaElement): void {
+  const room = vTrack.clientHeight;
+  const overflow = ta.scrollHeight - ta.clientHeight;
+  vTrack.classList.toggle('on', overflow > 0 && room > 0);
+  if (overflow <= 0 || room <= 0) return;
+  const h = Math.max(32, room * ta.clientHeight / ta.scrollHeight);
+  vThumb.style.height = `${h}px`;
+  vThumb.style.transform = `translateY(${(room - h) * ta.scrollTop / overflow}px)`;
+}
+vThumb.addEventListener('pointerdown', e => {
+  const b = activeText();
+  if (!b) return;
+  const ta = b.ta;
+  const startY = e.clientY, startTop = ta.scrollTop;
+  vThumb.setPointerCapture(e.pointerId);
+  vTrack.classList.add('drag');
+  const move = (ev: PointerEvent): void => {
+    const travel = vTrack.clientHeight - vThumb.offsetHeight;
+    if (travel > 0) ta.scrollTop = startTop + (ev.clientY - startY) * (ta.scrollHeight - ta.clientHeight) / travel;
+  };
+  const up = (): void => {
+    vTrack.classList.remove('drag');
+    vThumb.removeEventListener('pointermove', move);
+    vThumb.removeEventListener('pointerup', up);
+  };
+  vThumb.addEventListener('pointermove', move);
+  vThumb.addEventListener('pointerup', up);
+  e.preventDefault();
+});
+vTrack.addEventListener('pointerdown', e => {
+  if (e.target !== vTrack) return;
+  const b = activeText();
+  if (!b) return;
+  const r = vTrack.getBoundingClientRect();
+  b.ta.scrollTop = (e.clientY - r.top) / r.height * (b.ta.scrollHeight - b.ta.clientHeight);
+});
 
+
+
+/* ----- Split editor: a second text file on the right, editing the same buffer as its tab ----- */
+let splitPath: string | null = null;
+const splitTa = $<HTMLTextAreaElement>('#splitTa');
+const splitLines = document.createElement('div');
+splitLines.style.position = 'relative';
+const splitInner = document.createElement('div');
+splitInner.style.position = 'relative';
+splitInner.append(splitLines);
+$('#splitHl').appendChild(splitInner);
+const splitGutInner = document.createElement('div');
+const splitGutLines = document.createElement('div');
+splitGutLines.style.position = 'relative';
+splitGutInner.append(splitGutLines);
+$('#splitGutter').appendChild(splitGutInner);
+let splitWin = { first: 0, last: 0, total: 1 };
+const splitBuf = () => { const b = splitPath ? buffers.get(splitPath) : undefined; return b?.kind === 'text' ? b : undefined; };
+const textTabs = () => openTabs.filter(p => buffers.get(p)?.kind === 'text');
+
+function openSplit(path: string | null = active, exact = false): void {
+  // Split the file next to the open one when possible, so the two sides start out different.
+  const others = textTabs().filter(p => p !== active);
+  const target = exact || (path && path !== active) ? path : others[0] ?? path;
+  if (!target || buffers.get(target)?.kind !== 'text') { toast('Open a text file to split the editor'); return; }
+  splitPath = target;
+  const split = $('#split');
+  // Slides in from the right edge (only when it wasn't already showing).
+  if (split.classList.contains('hidden') || split.classList.contains('closing')) {
+    split.classList.remove('hidden', 'closing');
+    split.classList.add('opening');
+    const end = (e?: AnimationEvent) => { if (!e || e.target === split) { split.classList.remove('opening'); split.removeEventListener('animationend', end); } };
+    split.addEventListener('animationend', end);
+    setTimeout(end, 450); // the animation didn't run (hidden window, reduced motion): settle anyway
+  }
+  $('#editorRow').classList.add('is-split');
+  splitTa.value = '';
+  renderSplit();
+  splitTa.scrollTop = 0;
+  splitTa.focus({ preventScroll: true });
+  syncScroll();
+}
+function closeSplit(): void {
+  splitPath = null;
+  const split = $('#split');
+  if (split.classList.contains('hidden')) return;
+  // Slides back out to the right, then hides.
+  split.classList.remove('opening');
+  split.classList.add('closing');
+  const done = () => {
+    if (splitPath || !split.classList.contains('closing')) return; // reopened meanwhile
+    split.classList.remove('closing');
+    split.classList.add('hidden');
+    $('#editorRow').classList.remove('is-split');
+    splitLines.replaceChildren(); splitGutLines.replaceChildren();
+    queueRender();
+  };
+  const end = (e: AnimationEvent) => { if (e.target === split) { split.removeEventListener('animationend', end); done(); } };
+  split.addEventListener('animationend', end);
+  setTimeout(done, 400); // no animation (reduced motion): hide anyway
+}
+// Brings the right side up to date with its buffer (after edits on the left, a save, or an agent's change).
+function renderSplit(): void {
+  if (!splitPath) return;
+  const b = splitBuf();
+  if (!b) { closeSplit(); return; }
+  const sel = $<HTMLSelectElement>('#splitFile');
+  const opts = textTabs();
+  const html = opts.map(p => `<option value="${escAttr(p)}"${p === splitPath ? ' selected' : ''}>${esc(baseName(p))}${dirName(p) ? ` — ${esc(dirName(p))}` : ''}</option>`).join('');
+  if (sel.innerHTML !== html) sel.innerHTML = html;
+  sel.value = splitPath;
+  $('#splitIco').innerHTML = fileIcon(baseName(splitPath));
+  $('#splitDirty').classList.toggle('hidden', !isDirty(b));
+  if (splitTa.value !== b.text) {
+    const { selectionStart: s, selectionEnd: e, scrollTop } = splitTa;
+    splitTa.value = b.text;
+    splitTa.setSelectionRange(Math.min(s, b.text.length), Math.min(e, b.text.length));
+    splitTa.scrollTop = scrollTop;
+  }
+  paintSplit();
+}
+function paintSplit(): void {
+  const b = splitBuf();
+  if (!b) return;
+  const lines = highlighted(b);
+  const cur = lineAt(b.text, splitTa.selectionStart);
+  const [vf, vl] = visibleLines(splitTa, lines.length);
+  splitWin = { first: Math.max(0, vf - OVERSCAN), last: Math.min(lines.length, vl + OVERSCAN), total: lines.length };
+  const rows: string[] = [], nums: string[] = [];
+  for (let i = splitWin.first; i < splitWin.last; i++) {
+    rows.push(`<div class="ln${i === cur ? ' cur-line' : ''}">${lines[i]}</div>`);
+    nums.push(`<div${i === cur ? ' class="cur"' : ''}>${i + 1}</div>`);
+  }
+  splitLines.innerHTML = rows.join('');
+  splitLines.style.top = splitGutLines.style.top = `${splitWin.first * LINE_H}px`;
+  splitGutLines.innerHTML = nums.join('');
+  $('#splitGutter').style.width = `${Math.max(3, String(lines.length).length) * 8 + 32}px`;
+  splitInner.querySelectorAll('.guide').forEach(g => g.remove());
+  splitInner.append(...guideBoxes(b, splitTa.selectionStart, measureChar(), splitWin.first, splitWin.last));
+  syncSplitScroll();
+}
+function syncSplitScroll(): void {
+  const [vf, vl] = visibleLines(splitTa, splitWin.total);
+  if (vf < splitWin.first || vl > splitWin.last) { paintSplit(); return; }
+  splitInner.style.transform = `translate(${-splitTa.scrollLeft}px, ${-splitTa.scrollTop}px)`;
+  splitGutInner.style.transform = `translateY(${-splitTa.scrollTop}px)`;
+}
+splitTa.addEventListener('scroll', syncSplitScroll);
+splitTa.addEventListener('input', () => {
+  const b = splitBuf();
+  if (!b) return;
+  const wasDirty = isDirty(b);
+  b.text = splitTa.value;
+  // The same file open on the left follows along, keeping its own caret.
+  if (b.ta && b.ta.value !== b.text) {
+    const { selectionStart: s, selectionEnd: e } = b.ta;
+    b.ta.value = b.text;
+    b.ta.setSelectionRange(Math.min(s, b.text.length), Math.min(e, b.text.length));
+  }
+  if (wasDirty !== isDirty(b)) { renderTabs(); renderTree(); }
+  if (b.path === active) queueRender();
+  paintSplit(); saveSession(); scheduleLint(b);
+  $('#splitDirty').classList.toggle('hidden', !isDirty(b));
+});
+for (const ev of ['click', 'keyup', 'select'] as const) splitTa.addEventListener(ev, paintSplit);
+splitTa.addEventListener('keydown', e => {
+  const b = splitBuf();
+  if (!b) return;
+  // Ctrl+S goes through file.save, which saves this side's file while it has focus.
+  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    document.execCommand('insertText', false, INDENT);
+  }
+});
+$<HTMLSelectElement>('#splitFile').onchange = e => { splitPath = (e.target as HTMLSelectElement).value; splitTa.value = ''; renderSplit(); splitTa.scrollTop = 0; };
+$('#splitClose').onclick = closeSplit;
+$('#splitSwap').onclick = () => {
+  if (!splitPath) return;
+  const left = active, right = splitPath;
+  setActive(right);
+  if (left && left !== right) { splitPath = left; splitTa.value = ''; renderSplit(); }
+};
+// Drag the split's left edge to share the width between the two sides.
+$('#splitSash').addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const row = $('#editorRow'), split = $('#split');
+  const sx = e.clientX, startW = split.getBoundingClientRect().width;
+  document.body.classList.add('resizing');
+  const move = (ev: PointerEvent) => {
+    const w = clamp(startW - (ev.clientX - sx), 200, row.clientWidth - 200);
+    split.style.flexBasis = `${w}px`;
+    paintSplit(); syncScroll();
+  };
+  const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); document.body.classList.remove('resizing'); };
+  addEventListener('pointermove', move); addEventListener('pointerup', up);
+});
 
 function updateCaret(): void {
   const b = activeText();
@@ -3949,7 +4375,8 @@ function updateCaret(): void {
   const key = `${b.path}:${b.ta.selectionStart}:${b.text.length}`;
   if (key !== tagKey) {
     tagKey = key;
-    $$('.tagpair', hlBoxes).forEach(x => x.remove());
+    $$('.tagpair, .guide', hlBoxes).forEach(x => x.remove());
+    hlBoxes.prepend(...guideBoxes(b, b.ta.selectionStart, measureChar()));
     hlBoxes.append(...tagBoxes(b, measureChar()));
   }
   updateStatus();
@@ -4064,6 +4491,7 @@ function editorKeys(e: KeyboardEvent): void {
   const ta = e.target as HTMLTextAreaElement;
   const b = textareaOwner.get(ta);
   const k = e.key.toLowerCase();
+  lastUserTypeAt = Date.now();
   if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')) sfx.play('key');
   if (suggestKeys(e, ta)) return;
   if (b && pairKey(e, ta)) { e.preventDefault(); return; }
@@ -4321,17 +4749,34 @@ let running = false;
 let previewPath: string | null = null;
 const frame = $<HTMLIFrameElement>('#previewFrame');
 frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
+function isHtml(p: string | null): p is string { return !!p && /\.html?$/i.test(p); }
+// The page Preview opens by default: the open HTML file, else the project's index.html.
+function previewTarget(): string | null {
+  if (isHtml(active)) return active;
+  return (dirCache.get('') ?? []).find(e => !e.dir && /^index\.html?$/i.test(e.name))?.name ?? null;
+}
 function renderPreview(): void {
   $('#previewEmpty').classList.toggle('hidden', running);
   frame.classList.toggle('hidden', !running);
-  $('#liveDot').classList.toggle('hidden', !running);
   if (!running) { $('#urlText').textContent = 'Not running'; frame.removeAttribute('src'); frame.removeAttribute('srcdoc'); }
+  renderPreviewEmpty();
 }
-async function startPreview(): Promise<void> {
+// With an HTML page in the project, the empty preview offers a button for it instead of a key to remember.
+function renderPreviewEmpty(): void {
+  const target = rootInfo ? previewTarget() : null;
+  const hint = $('#previewHint');
+  hint.innerHTML = target
+    ? `<button class="btn btn-primary btn-sm" data-preview-file="1">${svgIcon('play', 12)} Preview ${esc(baseName(target))}</button>`
+    : 'Add an <b>index.html</b> to preview it here.';
+}
+$('#previewEmpty').addEventListener('click', e => {
+  if (!(e.target as HTMLElement).closest('[data-preview-file]')) return;
+  const target = previewTarget();
+  if (target) void startPreview(target);
+});
+async function startPreview(path?: string): Promise<void> {
   if (!rootInfo) { toast('Open a folder first'); return; }
-  const entry = (dirCache.get('') ?? []).find(e => !e.dir && /^index\.html?$/i.test(e.name));
-  const htmlOpen = active && /\.html?$/i.test(active) ? active : null;
-  const target = entry?.name ?? htmlOpen;
+  const target = path ?? previewTarget();
   if (!target) { toast('Add an index.html (or open an .html file) to preview it'); return; }
   previewPath = target;
   if (!running) sfx.play('launch');
@@ -4351,7 +4796,7 @@ async function reloadPreview(): Promise<void> {
     // Browser demo: no file URLs, so inline the saved HTML.
     const r = await api.fs.readFile(previewPath).catch(() => null);
     $('#urlText').textContent = previewPath;
-    frame.srcdoc = r?.text ?? '';
+    frame.srcdoc = (r?.text ?? '') + '<style>html,body{scrollbar-width:none}::-webkit-scrollbar{display:none}</style>';
   }
 }
 function stopPreview(): void { running = false; previewPath = null; renderPreview(); }
@@ -5187,7 +5632,7 @@ const commands: Record<string, () => unknown> = {
   'file.newFolder': () => newEntry(targetDir(), true),
   'file.openFolder': openFolderCmd,
   'file.openRecent': openRecentPicker,
-  'file.save': () => saveFile().then(ok => { if (ok) sfx.play('save'); }),
+  'file.save': () => saveFile(focused() === splitTa ? splitPath : active).then(ok => { if (ok) sfx.play('save'); }),
   'file.saveAll': saveAll,
   'file.closeEditor': () => { if (active) closeTab(active); },
   'file.closeFolder': closeFolderCmd,
@@ -5227,6 +5672,7 @@ const commands: Record<string, () => unknown> = {
     pushAppAction({ type: 'layout', prev, next: { ...layout } });
     applyLayoutAnimated();
   },
+  'view.splitEditor': () => { if (splitPath) closeSplit(); else openSplit(); renderTabs(); },
   'view.resetLayout': () => {
     const prev = { ...layout };
     Object.assign(layout, DEFAULT_LAYOUT, { view: layout.view });
@@ -5243,7 +5689,7 @@ const commands: Record<string, () => unknown> = {
   'run.file': runFile,
   'run.start': () => {
     if (runnable(active)) return run('run.file');
-    return running ? reloadPreview() : startPreview();
+    return running && previewPath === previewTarget() ? reloadPreview() : startPreview();
   },
   'run.reload': reloadPreview,
   'run.stop': () => { if (term.runId != null) killCommand(); else { stopPreview(); toast('Preview stopped'); } },
@@ -5430,6 +5876,7 @@ const MENUS: Menu[] = [
       { label: 'Agents Panel', act: 'view.toggleAgents', key: 'Ctrl+Alt+B', checked: () => layout.agentsOpen },
       { label: 'Terminal', act: 'term.toggle', key: 'Ctrl+`', checked: () => layout.termOpen },
       { label: 'Preview', act: 'view.togglePreview', checked: () => layout.previewOpen },
+      { label: 'Split Editor Right', act: 'view.splitEditor', key: 'Ctrl+\\', checked: () => !!splitPath },
       { label: 'Reset Layout', act: 'view.resetLayout' },
       { sep: true },
       { label: 'Reload Window', act: 'win.reload', key: 'Ctrl+R' },
@@ -5458,7 +5905,7 @@ const MENUS: Menu[] = [
   },
   {
     name: 'Terminal', items: [
-      { label: 'Focus Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
+      { label: 'Open Terminal', act: 'term.focus', key: 'Ctrl+Shift+`' },
       { label: 'Toggle Terminal', act: 'term.toggle', key: 'Ctrl+`' },
       { sep: true },
       { label: 'Clear Terminal', act: 'term.clear' },
@@ -5496,7 +5943,7 @@ const canonKey = (combo: string): string => {
 const keymap = new Map<string, string>();
 for (const { items } of MENUS) for (const it of items) if (it.key && it.act && !it.native) keymap.set(canonKey(it.key), it.act);
 for (const [k, act] of EXTRA_KEYS) keymap.set(canonKey(k), act);
-const KEY_BY_CODE: Record<string, string> = { Backquote: '`', Slash: '/' };
+const KEY_BY_CODE: Record<string, string> = { Backquote: '`', Slash: '/', Backslash: '\\' };
 function keyName(e: KeyboardEvent): string {
   if (KEY_BY_CODE[e.code]) return KEY_BY_CODE[e.code];
   if (e.key.startsWith('Arrow')) return e.key.slice(5);
@@ -5867,6 +6314,12 @@ const TEAM_LINE: Record<string, string> = {
   build: '1 agent on this: <b>Builder</b> makes the changes',
   plan: '2 agents on this: <b>Planner</b> writes a plan, then <b>Builder</b> builds it once you approve',
 };
+// Planner, Builder and Assistant wear the logo of the agent doing the work (Codex, Claude Code…).
+function roleMark(k: AgentKey): { letter: string; tint: string } {
+  const chosen = selectedAgent();
+  if (!chosen) return { letter: agentsDef[k].letter, tint: agentsDef[k].tint };
+  return AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: chosen.id };
+}
 function teamLineHtml(mode: string): string {
   const chosen = selectedAgent();
   const agentName = chosen?.name ?? 'Assistant';
@@ -5881,8 +6334,9 @@ function renderAgents(): void {
   cards.classList.toggle('hidden', !team.length);
   cards.innerHTML = team.map(k => {
     const a = agentsDef[k];
+    const m = roleMark(k);
     return `<div class="agent ${a.status}${shown.has(k) ? '' : ' enter'}" data-agent-card="${k}">
-      ${brandMark('ava', a.tint, a.letter)}
+      ${brandMark('ava', m.tint, m.letter)}
       <div><span class="name">${a.name}</span> <span class="fs-11 text-3">${esc(a.model)}</span></div>
       <div class="row gap-4"><span class="status ${a.status}">${statusLabel[a.status]}</span>
         ${a.status === 'working' ? `<button class="icon-btn" title="Stop" data-act="agent.stop">${svgIcon('stop')}</button>` : ''}</div>
@@ -5966,6 +6420,7 @@ interface AgentTabState {
   runId: number | null;
   run: Run | null;
   session: string | null;
+  sessionAgent?: string | null; // the agent that started `session`: another agent can't resume it
   agentId: string;
   uiMode: string;
   promptDraft: string;
@@ -6014,6 +6469,7 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
     runId: null,
     run: null,
     session: session ?? null,
+    sessionAgent: session ? appState.agent : null,
     agentId: appState.agent || 'antigravity',
     uiMode: s.mode?.value || 'plan',
     promptDraft: '',
@@ -6324,8 +6780,7 @@ function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: 
     const st = AGENT_STYLE[chosen.id] ?? { letter: chosen.name[0], tint: chosen.id };
     return { name: chosen.name, ...st };
   }
-  const { name, letter, tint } = agentsDef[k];
-  return { name, letter, tint };
+  return { name: agentsDef[k].name, ...roleMark(k) };
 }
 
 function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
@@ -6551,6 +7006,7 @@ function openChat(s: Surface, e: ChatEntry): void {
   tab.title = e.title;
   tab.historyId = e.id;
   tab.session = (e.session && e.agent === appState.agent) ? e.session : null;
+  tab.sessionAgent = tab.session ? e.agent : null;
   tab.panel.innerHTML = e.html;
   $$('[data-live]', tab.panel).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
   switchAgentTab(s, tab.id);
@@ -6956,6 +7412,8 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
 
   try {
     const box = tab.surfaceName === 'box';
+    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
+    if (tab.sessionAgent !== agentId) tab.session = null;
     const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.session, box });
     const run: Run = {
       id,
@@ -7005,6 +7463,20 @@ function onAgentFile(r: Run, path: string): void {
   locks[path] = r.phase;
   renderTree(); renderTabs();
   queueGitRefresh();
+  if (r.surfaceName === 'ide') background(openAgentFile(path));
+}
+// Opens the file an agent is editing and shows it, so its changes type out in front of the person.
+async function openAgentFile(path: string): Promise<void> {
+  if (baseName(path).startsWith('.env') || !rootInfo) return;
+  if (!buffers.has(path)) {
+    const r = await api.fs.readFile(path).catch(() => null);
+    if (r?.text == null || kindOf(r) !== 'text') return; // deleted, binary or too large
+    if (!await loadBuffer(path)) return;
+  }
+  followAgentTo(path);
+  // Some agents report the file before writing it: catch a write that landed while it was opening.
+  const b = buffers.get(path);
+  if (b?.kind === 'text') for (const ms of [400, 1500]) setTimeout(() => { if (!isDirty(b)) void reloadText(b); }, ms);
 }
 
 function onAgentError(r: Run, ev: AgentEvent, tab: AgentTabState): void {
@@ -7023,6 +7495,7 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
   session: (_r, ev, tab) => {
     if (ev.id) {
       tab.session = ev.id;
+      tab.sessionAgent = tab.agentId;
       store.set(agentSessionKey(SURFACES[tab.surfaceName]), ev.id);
     }
   },
@@ -7314,15 +7787,25 @@ function renderBranch(): void {
   renderPs();
 }
 // Explorer decorations: path -> status class, plus every folder that contains a change.
-function gitDecor(): { files: Map<string, string>; dirs: Set<string>; ignored: Set<string> } {
+function gitDecor(): { files: Map<string, string>; dirs: Set<string>; ignored: Set<string>; incoming: Set<string>; incomingDirs: Set<string> } {
   const files = new Map<string, string>(), dirs = new Set<string>();
   const ignored = new Set<string>(gitState.ignored ?? []);
   for (const f of gitState.files ?? []) {
     files.set(f.path, statusOf(f).cls);
     for (let d = dirName(f.path); d; d = dirName(d)) dirs.add(d);
   }
-  return { files, dirs, ignored };
+  const incoming = new Set<string>(gitState.incoming ?? []), incomingDirs = new Set<string>();
+  for (const p of incoming) for (let d = dirName(p); d; d = dirName(d)) incomingDirs.add(d);
+  return { files, dirs, ignored, incoming, incomingDirs };
 }
+// Fetches quietly now and then, so files changed on the remote show M↓ before anyone pulls.
+let lastFetch = 0;
+function backgroundFetch(): void {
+  if (!rootInfo || !gitState.repo || !gitState.upstream || Date.now() - lastFetch < 5 * 60_000) return;
+  lastFetch = Date.now();
+  api.git.sync('fetch').then(() => queueGitRefresh(), () => { /* offline or no access: try again later */ });
+}
+setInterval(backgroundFetch, 60_000);
 const GIT_STATUS: Record<string, { letter: string; cls: string; title: string }> = {
   A: { letter: 'A', cls: 'git-a', title: 'Added' },
   D: { letter: 'D', cls: 'git-d', title: 'Deleted' },
@@ -7375,6 +7858,7 @@ function lowestModelFor(a: DetectedAgent): { model?: string } {
     const low = models.find(m => /mini/i.test(m)) || models.at(-1);
     return { model: low || 'gpt-4o-mini' };
   }
+  if (a.id === 'claude') return { model: 'haiku' };
   if (a.api) {
     const models = a.models ?? [];
     const low = models.find(m => /(1\.5b|3b|mini|small)/i.test(m)) || models[0];
@@ -7566,6 +8050,7 @@ function renderScm(): void {
     </div>
     ${scmSectionHtml('staged', 'Staged Changes', staged, true, `<button class="icon-btn" data-scm-all="unstage" title="Unstage All">${svgIcon('minus')}</button>`)}
     ${scmSectionHtml('changes', 'Changes', changes, false, `<button class="icon-btn" data-scm-all="discard" title="Discard All Changes">${svgIcon('undo')}</button><button class="icon-btn" data-scm-all="stage" title="Stage All Changes">${svgIcon('plus')}</button>`)}
+    ${incomingSectionHtml()}
     ${empty}
     <div class="scm-sec graph ${scmCollapsed.has('graph') ? 'closed' : ''}" data-sec="graph">
       <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">Checkpoints</span><span class="count">${gitLog.commits.length}</span></div>
@@ -7584,6 +8069,16 @@ function renderScm(): void {
   msg.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run('git.commit'); } };
 
   updateScmGenBtn();
+}
+// Files the remote changed since this branch last pulled; Sync brings them in.
+function incomingSectionHtml(): string {
+  const list = gitState.incoming ?? [];
+  if (!list.length) return '';
+  const rows = list.map(p => `<div class="scm-row git-in" title="${escAttr(p)} · Changed on the remote, not pulled yet">
+    <span class="ico">${fileIcon(baseName(p))}</span><span class="nm">${fileNameHtml(baseName(p))}</span><span class="dir">${esc(dirName(p))}</span><span class="st">M↓</span></div>`).join('');
+  return `<div class="scm-sec ${scmCollapsed.has('incoming') ? 'closed' : ''}" data-sec="incoming">
+    <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">Incoming (not pulled)</span><span class="acts"><button class="icon-btn" data-act="git.sync" title="Pull">${svgIcon('down')}</button></span><span class="count">${list.length}</span></div>
+    <div class="scm-list">${rows}</div></div>`;
 }
 let scmDraft = '';
 const seenScm = new Set<string>();
