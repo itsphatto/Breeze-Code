@@ -5759,9 +5759,18 @@ function activateTermSession(id: number): void {
   termInput.focus();
 }
 
+// The first free name: "Terminal", then "Terminal 2", "Terminal 3"… reusing numbers of closed ones.
+function nextTermName(): string {
+  const used = new Set(termSessions.map(s => s.name));
+  if (!used.has('Terminal')) return 'Terminal';
+  let n = 2;
+  while (used.has(`Terminal ${n}`)) n++;
+  return `Terminal ${n}`;
+}
+
 function createTermSession(name?: string): TermSession {
   const id = nextTermSessionId++;
-  const sessionName = name || `Terminal ${id}`;
+  const sessionName = name || nextTermName();
 
   let paneEl: HTMLElement;
   const initialPane = $('#termOut');
@@ -5821,7 +5830,7 @@ function closeTermSession(id: number, e?: MouseEvent): void {
   termSessions.splice(idx, 1);
 
   if (termSessions.length === 0) {
-    createTermSession('Terminal 1');
+    createTermSession();
   } else if (activeTermSession?.id === id) {
     const nextIdx = Math.min(idx, termSessions.length - 1);
     activateTermSession(termSessions[nextIdx].id);
@@ -5834,6 +5843,10 @@ function renderTermTabs(): void {
   const tabsContainer = $('#termTabs');
   if (!tabsContainer) return;
   tabsContainer.innerHTML = '';
+  // With one terminal the panel's own "Terminal" title is enough; from two on, the tabs replace it.
+  const many = termSessions.length > 1;
+  tabsContainer.classList.toggle('hidden', !many);
+  $('#termTitleText')?.classList.toggle('hidden', many);
 
   for (const s of termSessions) {
     const tab = document.createElement('div');
@@ -5868,7 +5881,7 @@ function renderTermTabs(): void {
 
 // Initialise default session if none exists
 if (termSessions.length === 0) {
-  createTermSession('Terminal 1');
+  createTermSession();
 }
 
 // Colour codes and lone carriage returns don't render in the panel.
