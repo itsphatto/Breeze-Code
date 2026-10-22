@@ -58,6 +58,12 @@ function agentBlocked(base, abs) {
   return blockedRel(path.relative(base, abs)) ?? blockedRel(realRelative(base, abs));
 }
 
+// A request to a local server is only Breeze's own when its Host header names this computer. Any other name
+// is a web page that pointed its domain at 127.0.0.1 (DNS rebinding) to read the project.
+function isLocalHost(host, port) {
+  return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(String(host || '').toLowerCase());
+}
+
 /* ----- Git ----- */
 // A repository's own config can name commands git runs by itself (core.fsmonitor on status, diff.external and
 // textconv drivers on diff and show). Breeze runs git whenever files change, so those are off for every call it makes.
@@ -78,4 +84,4 @@ function shellCommand(bin, args) {
   return [`"${bin}"`, ...args].join(' ');
 }
 
-module.exports = { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand, OUTSIDE };
+module.exports = { isFileUrl, resolveUnder, blockedRel, agentBlocked, isLocalHost, safeGitArgs, shellCommand, OUTSIDE };

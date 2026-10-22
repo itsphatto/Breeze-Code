@@ -46,7 +46,7 @@ contextBridge.exposeInMainWorld('breeze', {
     file: rel => invoke('run:file', rel),
   },
   sys: {
-    detect: () => invoke('sys:detect'),
+    detect: force => invoke('sys:detect', !!force),
     openExternal: url => invoke('sys:openExternal', url),
     runCommand: cmd => invoke('sys:runCommand', cmd),
     getPathForFile: file => {

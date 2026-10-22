@@ -11,7 +11,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked } = require('./toolchains');
-const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
+const { isFileUrl, resolveUnder, blockedRel, agentBlocked, isLocalHost, safeGitArgs, shellCommand } = require('./guard');
 const { AntigravityAgentService } = require('./antigravityAgentService.js');
 
 let autoUpdater = null;
@@ -349,6 +349,11 @@ async function hasLiveIndex() {
   return !!(await findLiveIndex());
 }
 async function serveLive(req, res) {
+  if (!isLocalHost(req.headers.host, LIVE_PORT)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden');
+    return;
+  }
   try {
     const parsed = new URL(req.url || '/', LIVE_URL);
     if (parsed.pathname === LIVE_RELOAD_PATH) {
@@ -367,6 +372,7 @@ async function serveLive(req, res) {
       st = await fsp.stat(abs);
     }
     if (!st.isFile()) throw new Error('Not a file');
+    if (agentBlocked(liveRoot, abs)) throw new Error('Not shared'); // .env files and .git stay private: answered as Not found
     const type = MIME_TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream';
     let body = await fsp.readFile(abs);
     if (type.startsWith('text/html')) {
@@ -952,7 +958,8 @@ async function detectAgent(a) {
   return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
 }
 
-handle('sys:detect', async () => {
+// `force` (the Rescan buttons) looks for the compilers again; otherwise the lookup made at startup is reused.
+handle('sys:detect', async (_e, force) => {
   const agents = await Promise.all(AGENTS.map(detectAgent));
   // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
   let llm = await llmConfig(true).catch(() => null);
@@ -963,7 +970,7 @@ handle('sys:detect', async () => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
   }));
-  const found = (await getTools(true)).tools;
+  const found = (await getTools(!!force)).tools;
   for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py'], ['dotnet', 'C#', found.dotnet, 'cs'], ['java', 'Java', found.java, 'java'], ['rust', 'Rust', found.rustc, 'rs']]) {
     tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform), cmd: t ? null : installCmd(kind, process.platform), url: t ? null : installUrl(kind, process.platform) });
   }
@@ -972,10 +979,13 @@ handle('sys:detect', async () => {
 
 /* ================= Window & shell IPC ================= */
 handle('sys:openExternal', (_e, url) => openInBrowser(url));
+// Opens a terminal running one of the tools list's install commands; anything else is refused.
 handle('sys:runCommand', async (_e, cmd) => {
-  if (typeof cmd !== 'string' || !cmd.trim()) return false;
+  if (typeof cmd !== 'string') return false;
   const command = cmd.trim();
-  const escaped = command.replaceAll('"', String.raw`\"`);
+  const allowed = ['c', 'py', 'cs', 'java', 'rs'].map(kind => installCmd(kind, process.platform)).filter(Boolean);
+  if (!allowed.includes(command)) return false;
+  const escaped = command.replaceAll(/[\\"]/g, String.raw`\$&`);
   if (process.platform === 'win32') {
     const comspec = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
     spawn(comspec, ['/c', 'start', 'cmd.exe', '/k', command], { detached: true, stdio: 'ignore' }).unref();
@@ -1226,6 +1236,9 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
     runs.delete(runId);
   }
 }
+// The CLI name for a Breeze effort level: Codex and Claude Code call the top level "xhigh", Breeze shows "Extra".
+const EFFORT_ARGS = { low: 'low', medium: 'medium', high: 'high', extra: 'xhigh' };
+const effortArg = effort => EFFORT_ARGS[String(effort || '').toLowerCase()] || null;
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
 function cliArgs(agent, mode, prompt, session) {
   if (agent === 'claude') return claudeArgs(mode, prompt, session);
@@ -1234,10 +1247,8 @@ function cliArgs(agent, mode, prompt, session) {
   const st = loadState();
   const model = st.codexModel;
   if (model && SAFE_MODEL.test(model)) args.push('-m', model);
-  const effort = st.codexEffort;
-  if (effort && /^(low|medium|high|extra)$/i.test(effort)) {
-    args.push('-c', `model_reasoning_effort="${effort.toLowerCase()}"`);
-  }
+  const effort = effortArg(st.codexEffort);
+  if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
   if (session) args.push('resume', session);
   args.push('-');
   if (build) return { args, prompt };
@@ -1252,8 +1263,11 @@ function claudeArgs(mode, prompt, session) {
   const build = mode === 'build';
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', build ? 'acceptEdits' : 'default'];
   if (!build) args.push('--disallowedTools', ...CLAUDE_WRITE_TOOLS);
-  const model = loadState().claudeModel;
+  const st = loadState();
+  const model = st.claudeModel;
   if (model && model !== 'default' && CLAUDE_MODELS.includes(model)) args.push('--model', model);
+  const effort = effortArg(st.claudeEffort);
+  if (effort) args.push('--effort', effort);
   if (session) args.push('--resume', session);
   if (build) return { args, prompt };
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
@@ -1920,8 +1934,8 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     if (!bin) throw new Error('Codex was not found');
     const targetModel = model || 'gpt-4o-mini';
     const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', ...(targetModel ? ['-m', targetModel] : [])];
-    if (effort && /^(o1|o3|o4)/i.test(targetModel)) {
-      args.push('-c', `model_reasoning_effort="${effort.toLowerCase()}"`);
+    if (effortArg(effort) && /^(o1|o3|o4)/i.test(targetModel)) {
+      args.push('-c', `model_reasoning_effort="${effortArg(effort)}"`);
     }
     return new Promise((resolve, reject) => {
       const child = /\.(?:cmd|bat)$/i.test(bin)

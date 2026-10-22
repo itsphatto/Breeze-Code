@@ -102,3 +102,14 @@ test('main.js checks every navigation of the window against breeze.html', () => 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
   assert.match(src, /win\.webContents\.on\('will-navigate', \(e, url\) => \{\s*if \(!isFileUrl\(url, APP_PAGE\)\) e\.preventDefault\(\);/);
 });
+
+test('main.js only runs the install commands the tools list offers', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  assert.match(src, /handle\('sys:runCommand'[\s\S]*?if \(!allowed\.includes\(command\)\) return false;[\s\S]*?spawn\(/);
+});
+
+test('main.js passes Extra effort to Codex and Claude Code as xhigh', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'main.js'), 'utf8');
+  assert.match(src, /extra: 'xhigh'/);
+  assert.match(src, /args\.push\('--effort', effort\)/);
+});

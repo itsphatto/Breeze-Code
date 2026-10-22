@@ -420,6 +420,12 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-family: var(--font-ui) !important;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: none !important;
+  letter-spacing: normal !important;
 }
 
 /* Brand artwork replaces the tinted letter; the image carries its own background. */
@@ -2360,14 +2366,15 @@ body.resizing-h iframe {
 .term-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 30px;
+  gap: 8px;
+  height: 32px;
   padding: 0 10px;
   color: var(--text-3);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  font-weight: 600;
+  font-family: var(--font-ui) !important;
+  font-size: 11.5px;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  font-weight: 500;
   cursor: pointer;
   user-select: none;
 }
@@ -2379,6 +2386,121 @@ body.resizing-h iframe {
 .term-head .icon-btn {
   height: 22px;
   text-transform: none;
+}
+
+.term-head span:last-child {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.term-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  overflow-x: auto;
+  max-width: 60%;
+  scrollbar-width: none;
+}
+.term-tabs::-webkit-scrollbar { display: none; }
+
+.term-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  height: 22px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+.term-tab:hover {
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.term-tab.active {
+  background: var(--bg-2);
+  color: var(--text);
+  border-color: var(--line);
+  font-weight: 600;
+}
+
+.term-tab-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+  opacity: 0.5;
+  transition: background .2s ease, opacity .2s ease;
+}
+
+.term-tab.busy .term-tab-dot {
+  background: var(--c-builder);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--c-builder);
+  animation: pulseDot 1.4s infinite alternate;
+}
+
+.term-tab-title {
+  white-space: nowrap;
+}
+
+.term-tab-close {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+
+.term-tab:hover .term-tab-close,
+.term-tab.active .term-tab-close {
+  opacity: 0.75;
+}
+
+.term-tab-close:hover {
+  opacity: 1;
+  color: var(--err);
+  background: rgba(239, 68, 68, .15);
+}
+
+.term-new-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-3);
+  transition: color .15s ease, background .15s ease;
+}
+
+.term-new-btn:hover {
+  color: var(--text);
+  background: var(--bg-2);
+}
+
+.term-out-pane {
+  min-height: 0;
 }
 
 .term-body {
@@ -3656,7 +3778,7 @@ body.vibing .ide {
   }
 }
 
-/* Opening animation, every launch (3.5s): the blue glow slowly comes up and the logo fades up through it. Then the
+/* Opening animation, every launch (about 1s): the blue glow slowly comes up and the logo fades up through it. Then the
    logo glides into the welcome page's logo (first run) or the splash fades out over the app. The 6s fade is only a
    failsafe in case the script never hands off. */
 .splash {
@@ -3676,7 +3798,7 @@ body.vibing .ide {
   inset: 0;
   background: radial-gradient(900px 520px at 50% 58%, rgba(0, 94, 255, .38), rgba(0, 94, 255, .1) 45%, transparent 72%);
   opacity: 0;
-  animation: splashGlow 1.8s ease-out forwards;
+  animation: splashGlow 1s ease-out forwards;
 }
 
 .splash-logo {
@@ -3687,7 +3809,7 @@ body.vibing .ide {
   opacity: 0;
   transform: translateY(18px);
   filter: drop-shadow(0 10px 40px rgba(0, 94, 255, .45));
-  animation: splashLogo 1.3s cubic-bezier(.2, .8, .2, 1) .7s forwards;
+  animation: splashLogo .8s cubic-bezier(.2, .8, .2, 1) .15s forwards;
 }
 
 /* A slim loading bar under the logo: it shows while Breeze is still getting ready and goes when the app fades in. */
@@ -3702,7 +3824,7 @@ body.vibing .ide {
   overflow: hidden;
   background: rgba(255, 255, 255, .08);
   opacity: 0;
-  animation: splashLoaderIn .4s ease 1.7s forwards;
+  animation: splashLoaderIn .4s ease 1s forwards;
 }
 
 .splash-loader::after {
@@ -6253,8 +6375,8 @@ body.vibing .box {
 }
 
 .drop-over {
-  outline: 2px dashed var(--blue);
-  outline-offset: -3px;
+  outline: none !important;
+  box-shadow: inset 0 0 0 1.5px var(--blue), inset 0 0 18px rgba(0, 94, 255, 0.22), 0 0 12px rgba(0, 94, 255, 0.25) !important;
 }
 
 /*drag and drop file & rearrange*/
@@ -6461,7 +6583,7 @@ button.pill:active, .pill-btn:active {
 
 /* Composer attachments */
 .composer-attachments { display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
-.attachment-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px 3px 3px; font-size: 11px; color: var(--text-2); max-width: 240px; animation: chipSpringIn .24s cubic-bezier(.175, .885, .32, 1.275) both; cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease; }
+.attachment-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px 3px 3px; font-size: 11px; color: var(--text-2); max-width: 240px; box-sizing: border-box; overflow: hidden; animation: chipSpringIn .24s cubic-bezier(.175, .885, .32, 1.275) both; cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease; }
 .attachment-chip:hover { background: var(--bg-3); border-color: var(--blue); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
 .attachment-chip.folder-chip { border-color: rgba(245, 158, 11, .3); }
 .attachment-chip.folder-chip:hover { border-color: rgba(245, 158, 11, .6); }
@@ -6473,59 +6595,76 @@ button.pill:active, .pill-btn:active {
 .attachment-thumb.folder-icon { color: #f59e0b; background: rgba(245, 158, 11, .12); }
 .attachment-thumb.file-icon { color: var(--blue); background: rgba(0, 94, 255, .12); }
 .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.attachment-del { width: 18px; height: 18px; border-radius: 50%; border: none; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; font-size: 11px; cursor: pointer; flex-shrink: 0; transition: background .15s, color .15s, transform .12s; }
-.attachment-del:hover { background: rgba(239, 68, 68, .2); color: var(--err); transform: scale(1.1); }
-.composer-box.drag-over { border-color: var(--blue) !important; box-shadow: 0 0 0 3px rgba(0, 94, 255, .25), 0 4px 16px rgba(0, 94, 255, 0.12) !important; transform: translateY(-1px); }
+.attachment-del { width: 18px; height: 18px; border-radius: 0; border: none; background: transparent !important; color: var(--text-3); display: grid; place-items: center; padding: 0; font-size: 12px; cursor: pointer; flex-shrink: 0; box-shadow: none !important; outline: none !important; transition: color .15s ease, transform .12s ease; }
+.attachment-del:hover { background: transparent !important; color: var(--err) !important; box-shadow: none !important; transform: scale(1.22); }
+.attachment-del:focus, .attachment-del:active { background: transparent !important; box-shadow: none !important; outline: none !important; }
+.composer-box.drag-over { border-color: var(--line) !important; box-shadow: none !important; outline: none !important; transform: translateY(-1px); }
 
-/* Agents drag and drop feedback with smooth animations */
+/* Drag and drop fluid glow following pointer */
+#sidebar,
+#editorPane,
 #agents,
 #box {
-  outline: 2px dashed transparent;
-  outline-offset: -8px;
-  box-shadow: inset 0 0 0 rgba(0, 94, 255, 0);
-  transition: outline-color .28s cubic-bezier(.16, 1, .3, 1),
-              outline-offset .28s cubic-bezier(.16, 1, .3, 1),
-              box-shadow .28s cubic-bezier(.16, 1, .3, 1);
+  position: relative;
+  outline: none !important;
 }
+
+.agent-fluid-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity .45s cubic-bezier(.22, 1, .36, 1);
+}
+
+#sidebar.drop-over-active .agent-fluid-canvas,
+#editorPane.drop-over-active .agent-fluid-canvas,
+#sidebar.agent-drop-over .agent-fluid-canvas,
+#editorPane.agent-drop-over .agent-fluid-canvas,
+#agents.agent-drop-over .agent-fluid-canvas,
+#box.agent-drop-over .agent-fluid-canvas {
+  opacity: 1;
+}
+
+#sidebar.drop-over,
+#editorPane.drop-over,
+#sidebar.drop-over-active,
+#editorPane.drop-over-active,
+#sidebar.agent-drop-over,
+#editorPane.agent-drop-over,
+#tree.drop-over,
+#agents.drop-over,
+#agents.drop-over-active,
 #agents.agent-drop-over,
-#box.agent-drop-over {
-  outline: 2px dashed var(--blue) !important;
-  outline-offset: -4px !important;
-  box-shadow: inset 0 0 28px rgba(0, 94, 255, 0.08);
-  animation: agentDashedIn .28s cubic-bezier(.16, 1, .3, 1), agentPulseBorder 1.6s infinite alternate ease-in-out .28s;
+#box.drop-over,
+#box.drop-over-active,
+#box.agent-drop-over,
+.composer-box.drag-over,
+.composer-box.drop-over {
+  box-shadow: none !important;
+  outline: none !important;
+  border-color: var(--line) !important;
 }
-@keyframes agentDashedIn {
-  0% {
-    outline-color: transparent;
-    outline-offset: -12px;
-    box-shadow: inset 0 0 0 rgba(0, 94, 255, 0);
-  }
-  65% {
-    outline-color: var(--blue);
-    outline-offset: -3px;
-    box-shadow: inset 0 0 34px rgba(0, 94, 255, 0.16);
-  }
-  100% {
-    outline-color: var(--blue);
-    outline-offset: -4px;
-    box-shadow: inset 0 0 28px rgba(0, 94, 255, 0.08);
-  }
-}
-@keyframes agentPulseBorder {
-  0% { outline-color: var(--blue); }
-  100% { outline-color: rgba(0, 94, 255, 0.4); }
-}
+
 .agent-tab.agent-drop-over {
   background: var(--blue-soft) !important;
-  outline: 2px dashed var(--blue) !important;
-  outline-offset: -2px;
+  box-shadow: 0 0 20px rgba(0, 94, 255, 0.45), inset 0 0 12px rgba(0, 94, 255, 0.3) !important;
+  outline: none !important;
   transform: scale(1.03) translateY(-1px);
+  transition: background .4s ease, box-shadow .6s ease, transform .4s ease !important;
 }
+
 .agent-tab-new.agent-drop-over {
   background: var(--blue-soft) !important;
   color: var(--blue) !important;
-  outline: 2px dashed var(--blue) !important;
+  box-shadow: 0 0 20px rgba(0, 94, 255, 0.45), inset 0 0 12px rgba(0, 94, 255, 0.3) !important;
+  outline: none !important;
   transform: scale(1.04);
+  transition: background .4s ease, box-shadow .6s ease, transform .4s ease !important;
 }
 @keyframes chipSpringIn {
   0% { opacity: 0; transform: scale(0.65) translateY(6px); }
@@ -6533,8 +6672,13 @@ button.pill:active, .pill-btn:active {
   100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 .attachment-chip.leaving {
-  animation: chipSpringOut .22s cubic-bezier(.4, 0, 1, 1) forwards !important;
-  pointer-events: none;
+  animation: chipSpringOut .28s cubic-bezier(.22, 1, .36, 1) forwards !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+}
+.attachment-chip.leaving > * {
+  opacity: 0 !important;
+  transition: opacity .14s ease !important;
 }
 @keyframes chipSpringOut {
   0% {
@@ -6543,20 +6687,34 @@ button.pill:active, .pill-btn:active {
     max-width: 240px;
     margin-right: 0;
   }
-  40% {
-    opacity: 0.35;
-    transform: scale(0.85) translateY(-3px);
+  35% {
+    opacity: 0.65;
+    transform: scale(0.92) translateY(-2px);
   }
   100% {
     opacity: 0;
-    transform: scale(0.4) translateY(-6px);
+    transform: scale(0.6) translateY(-6px);
     max-width: 0;
+    min-width: 0;
+    padding-top: 3px;
+    padding-bottom: 3px;
     padding-left: 0;
     padding-right: 0;
     margin-left: 0;
     margin-right: -6px;
-    border-width: 0;
+    border-color: transparent !important;
+    border-width: 0 !important;
   }
+}
+.composer-attachments.collapsing {
+  opacity: 0 !important;
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  border-bottom-color: transparent !important;
+  transition: opacity .22s ease, max-height .28s cubic-bezier(.22, 1, .36, 1), padding .28s ease, margin .28s ease, border-color .22s ease !important;
+  overflow: hidden !important;
 }
 
 /* Layout undo animation */
