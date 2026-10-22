@@ -398,12 +398,11 @@ button.bz-pill:hover {
   gap: 8px;
   min-height: 40px;
   padding: 6px 10px 6px 12px;
-  font-size: 11.5px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--text-3);
+  color: var(--text-2);
   white-space: nowrap;
-  text-transform: uppercase;
-  letter-spacing: .06em;
 }
 
 .bz-head-actions {
@@ -412,8 +411,6 @@ button.bz-pill:hover {
   margin-left: auto;
   opacity: .55;
   transition: opacity .15s;
-  text-transform: none;
-  letter-spacing: normal;
 }
 
 .bz-sidebar:hover .bz-head-actions,
@@ -635,6 +632,19 @@ button.bz-pill:hover {
 }
 
 .bz-scm-done b {
+  color: #86efac;
+}
+
+.bz-scm-done .bz-btn {
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.bz-scm-pushed {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
   color: #86efac;
 }
 
@@ -1464,8 +1474,9 @@ button.bz-pill:hover {
   transition: border-color .15s;
 }
 
-.bz-composer-box:focus-within {
-  border-color: var(--blue);
+/* The composer has no blue focus outline; its blue glow is only the tour's pulsing guide (.bz-coach-target). */
+.bz-composer-box :focus-visible {
+  outline: none;
 }
 
 .bz-composer textarea {
@@ -1740,6 +1751,11 @@ button.bz-sb:hover {
   top: calc(var(--arrow, 50%) - 6px);
 }
 
+.bz-coach[data-side="right"]::before {
+  left: -6px;
+  top: calc(var(--arrow, 50%) - 6px);
+}
+
 .bz-coach.pop {
   animation: bzCoachIn .35s var(--ease);
 }
@@ -1792,7 +1808,8 @@ button.bz-sb:hover {
   background: rgba(255, 255, 255, .22);
 }
 
-.bz-coach-target {
+/* Only the composer glows; the tour's other targets are pointed at by the bubble alone. */
+.bz-composer-box.bz-coach-target {
   animation: bzCoachRing 1.6s ease-out infinite;
 }
 

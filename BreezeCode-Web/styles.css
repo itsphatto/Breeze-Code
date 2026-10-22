@@ -370,9 +370,9 @@ p {
 }
 
 /* .wrap centres it; .shot alone would reset the side margins to 0. */
-/* As wide as the screen allows while the 16:9 window still fits under the 60px top bar when pinned */
+/* As wide as the screen allows while the 16:9 window still fits, centred, clear of the top bar when pinned */
 .shot.hero-shot {
-  width: min(1520px, 100%, calc((100vh - 84px) * 16 / 9 + 2 * var(--gutter)));
+  width: min(1520px, 100%, calc((100vh - 152px) * 16 / 9 + 2 * var(--gutter)));
   margin: clamp(96px, 12vw, 160px) auto 0;
 }
 

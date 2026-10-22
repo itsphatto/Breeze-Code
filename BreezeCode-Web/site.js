@@ -16,9 +16,9 @@ const pinShot = $('.hero-shot', pin);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 function placePin() {
   if (!pin) return;
-  // The window itself is centred (its caption hangs below), in the space under the 60px top bar.
+  // The window sits dead centre of the screen, never higher than the 72px that clears the top bar.
   const h = $('.frame', pinShot).offsetHeight;
-  pin.style.setProperty('--pin-top', `${Math.max(72, 60 + (window.innerHeight - 60 - h) / 2)}px`);
+  pin.style.setProperty('--pin-top', `${Math.max(72, (window.innerHeight - h) / 2)}px`);
 }
 function scalePin() {
   // Once the city backdrop has dropped in, the window holds still like a picture.
@@ -34,6 +34,8 @@ scalePin();
 window.addEventListener('resize', () => { placePin(); scalePin(); });
 window.addEventListener('scroll', () => requestAnimationFrame(scalePin), { passive: true });
 $('img', pinShot)?.addEventListener('load', () => { placePin(); scalePin(); });
+// The window is built after this script runs, so re-centre whenever its size settles.
+if (pin) new ResizeObserver(placePin).observe($('.frame', pinShot));
 
 /* ----- City backdrop: ripples out of black across the screen once the window locks in place, then stays as a
    full-width band behind the window and scrolls on with it ----- */
@@ -204,7 +206,6 @@ if (downloadBg) {
   const wipe = new IntersectionObserver(([e]) => {
     if (!e.isIntersecting) return;
     downloadBg.classList.add('in');
-    window.sfx?.play('plane');
     wipe.disconnect();
   }, { threshold: 0.35 });
   wipe.observe(downloadBg);
