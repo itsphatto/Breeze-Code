@@ -76,8 +76,8 @@ interface BreezeApi {
     onExit(cb: (id: number, code: number | null) => void): () => void;
   };
   run: { file(rel: string): Promise<{ id?: number; error?: string }>; };
-  sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; runCommand(cmd: string): Promise<boolean>; };
-  live: { status(): Promise<LiveStatus>; start(): Promise<LiveStatus>; };
+  sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; runCommand(cmd: string): Promise<boolean>; getPathForFile?(file: File): string; };
+  live: { status(): Promise<LiveStatus>; start(): Promise<LiveStatus>; stop(): Promise<LiveStatus>; };
   // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
   // An empty url makes the desktop app look for Ollama or LM Studio at their usual addresses.
   llm: { connect(url: string, key: string): Promise<{ url?: string; model: string; models: string[] }>; setModel(model: string): Promise<void>; disconnect(): Promise<void>; };
@@ -408,19 +408,28 @@ function demoApi(): BreezeApi {
       async openExternal(url) { window.open(url, '_blank', 'noopener'); },
       async runCommand(cmd) { window.open('https://www.google.com/search?q=' + encodeURIComponent(cmd)); return true; },
     },
-    live: {
-      async status() {
-        const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
-        return { available: !!index, running: false, url: `http://127.0.0.1:2026/${index?.replace(/index\.html$/, '') ?? ''}` };
-      },
-      async start() {
-        const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
-        if (!index) throw new Error('Live Share needs an index.html file in the project');
-        const url = `http://127.0.0.1:2026/${index.replace(/index\.html$/, '')}`;
-        window.open(url, '_blank', 'noopener');
-        return { available: true, running: true, url };
-      },
-    },
+    live: (() => {
+      let mockLiveRunning = false;
+      return {
+        async status() {
+          const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+          return { available: !!index, running: mockLiveRunning, url: `http://127.0.0.1:2026/${index?.replace(/index\.html$/, '') ?? ''}` };
+        },
+        async start() {
+          const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+          if (!index) throw new Error('Live Share needs an index.html file in the project');
+          const url = `http://127.0.0.1:2026/${index.replace(/index\.html$/, '')}`;
+          window.open(url, '_blank', 'noopener');
+          mockLiveRunning = true;
+          return { available: true, running: true, url };
+        },
+        async stop() {
+          const index = [...files.keys()].find(path => path === 'index.html' || path.endsWith('/index.html'));
+          mockLiveRunning = false;
+          return { available: !!index, running: false, url: `http://127.0.0.1:2026/${index?.replace(/index\.html$/, '') ?? ''}` };
+        },
+      };
+    })(),
     // Browser preview only: canned answers so every panel can be tried without the desktop app.
     llm: {
       async connect(url) {
@@ -595,8 +604,14 @@ const LINE_ICONS: Record<string, IconNode> = {
   trash: [['path', { d: 'M3 6h18' }], ['path', { d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' }], ['path', { d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' }], ['path', { d: 'M10 11v6' }], ['path', { d: 'M14 11v6' }]],
   folder: [['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }]],
 };
+const formatAttr = ([k, v]: [string, string | number]): string => `${k}="${v}"`;
 const iconBody = (name: string): string =>
-  (LINE_ICONS[name] ?? LINE_ICONS.dot).map(([tag, a]) => `<${tag} ${Object.entries(a).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`).join('');
+  (LINE_ICONS[name] ?? LINE_ICONS.dot)
+    .map(([tag, a]) => {
+      const attrs = Object.entries(a).map(formatAttr).join(' ');
+      return `<${tag} ${attrs}/>`;
+    })
+    .join('');
 function svgIcon(name: string, size = 16): string {
   return `<svg class="ico-svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-icon="${name}" aria-hidden="true">${iconBody(name)}</svg>`;
 }
@@ -609,7 +624,7 @@ function paintIcons(root: ParentNode = document): void {
     for (const [k, v] of Object.entries({ width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) s.setAttribute(k, v);
     s.dataset.icon = name;
     s.innerHTML = iconBody(name);
-    s.removeAttribute('data-i');
+    delete s.dataset.i;
   });
 }
 // A control that changes state morphs its icon; without the library (or offline) the icon just swaps.
@@ -818,9 +833,10 @@ function feedCardHtml(s: SocialSite): string {
   const cls = ['social-card', connected ? 'connected' : '', s.id === appState.vibeSite ? 'on' : ''].filter(Boolean).join(' ');
   let sub = 'Not connected';
   if (connected) sub = 'Signed in';
+  const connectLabel = connected ? 'Disconnect' : 'Connect ' + svgIcon('external', 12);
   return `<div class="${cls}" data-site="${s.id}" role="button" tabindex="0">
     ${brandMark('mark', s.id, s.mark)}<span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
-    <button class="btn btn-sm" data-connect="${s.id}">${connected ? 'Disconnect' : `Connect ${svgIcon('external', 12)}`}</button></div>`;
+    <button class="btn btn-sm" data-connect="${s.id}">${connectLabel}</button></div>`;
 }
 async function renderFeedChoices(root: HTMLElement): Promise<void> {
   signedIn = await api.vibe.status().catch(() => ({}));
@@ -879,7 +895,7 @@ const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
 let detecting: Promise<Detection> | null = null;
 
 function detectTools(): Promise<Detection> {
-  if (detecting) return detecting;
+  if (detecting !== null) return detecting;
   $('#aiPill').className = 'pill'; $('#aiPill').textContent = 'Scanning…';
   $('#toolsPill').className = 'pill'; $('#toolsPill').textContent = 'Scanning…';
   if (!appState.detect) $('#agentList').innerHTML = '<div class="row text-3"><div class="spinner sm"></div>Checking this computer…</div>';
@@ -909,7 +925,7 @@ function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
   const name = `<span class="nm">${esc(a.name)} <small>API</small></span>`;
   if (!a.found) {
     return `<div class="agent-opt api missing">${mark}${name}
-      <button class="get side" data-get="${escAttr(a.url)}">Get Ollama ${svgIcon('external', 12)}</button>
+      <button class="get side" data-get="${escAttr(a.url)}"><span class="get-label">Get Ollama</span></button>
       <span class="sub">Finds Ollama or LM Studio running on this computer</span>
       <div class="key-row"><input class="input" type="password" data-llm-key aria-label="API key" placeholder="API key" autocomplete="off" spellcheck="false"><button class="btn btn-sm" data-llm-connect>Connect</button></div>
       <div class="key-err hidden"></div></div>`;
@@ -917,7 +933,7 @@ function localAgentHtml(a: DetectedAgent, on: boolean, mark: string): string {
   const label = on ? 'Selected' : 'Ready';
   const options = (a.models ?? []).map(m => `<option value="${escAttr(m)}"${m === a.version ? ' selected' : ''}>${esc(m)}</option>`).join('');
   return `<div class="agent-opt api ${on ? 'on' : ''}" role="button" tabindex="0" data-agent="${a.id}">${mark}${name}
-    <span class="side row gap-6"><span class="pill ${pillClass(on)}">${label}</span><button class="get" data-llm-off title="Forget this server">Remove</button></span>
+    <span class="side row gap-6"><span class="pill ${pillClass(on)}">${label}</span><button class="get" data-llm-off title="Forget this server"><span class="get-label">Remove</span></button></span>
     <span class="sub" title="${escAttr(a.path ?? '')}">${esc(a.path ?? '')}</span>
     <div class="key-row"><select class="select" data-llm-model aria-label="Model">${options}</select></div></div>`;
 }
@@ -928,11 +944,16 @@ function cliAgentHtml(a: DetectedAgent, on: boolean, mark: string, demo: boolean
   const label = on ? 'Selected' : 'Detected';
   const side = a.found
     ? `<span class="pill ${pillClass(on)} side">${label}</span>`
-    : `<button class="get side" data-get="${escAttr(a.url)}">Get it ${svgIcon('external', 12)}</button>`;
+    : `<button class="get side" data-get="${escAttr(a.url)}"><span class="get-label">Get it</span></button>`;
   const attrs = a.found ? `role="button" tabindex="0" data-agent="${a.id}"` : '';
-  const modelOptions = (a.found && a.models && a.models.length && a.id !== 'codex' && a.id !== 'antigravity')
-    ? `<div class="key-row"><select class="select" data-agent-model="${a.id}" aria-label="Model">${a.models.map(m => `<option value="${escAttr(m)}"${m === a.version ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>`
-    : '';
+  let modelOptions = '';
+  if (a.found && a.models?.length && a.id !== 'codex' && a.id !== 'antigravity') {
+    const opts = a.models.map(m => {
+      const sel = m === a.version ? ' selected' : '';
+      return `<option value="${escAttr(m)}"${sel}>${esc(m)}</option>`;
+    }).join('');
+    modelOptions = `<div class="key-row"><select class="select" data-agent-model="${a.id}" aria-label="Model">${opts}</select></div>`;
+  }
   return `<div class="agent-opt ${a.found ? '' : 'missing'} ${on ? 'on' : ''}" ${attrs}>
     ${mark}<span class="nm">${esc(a.name)}</span>${side}
     <span class="sub" title="${escAttr(sub)}">${esc(sub)}</span>${modelOptions}</div>`;
@@ -1030,7 +1051,9 @@ function toolHtml(t: DetectedTool): string {
     const url = t.url || TOOL_DOWNLOADS[t.id] || null;
     const label = t.optional ? `${t.name} not found` : `${t.name} missing`;
     const cls = `pill pill-btn tool-pill-missing ${t.optional ? '' : 'warn'}`.trim();
-    return `<button type="button" class="${cls}" data-tool-id="${escAttr(t.id)}" ${cmd ? `data-run-cmd="${escAttr(cmd)}"` : ''} ${(!cmd && url) ? `data-get="${escAttr(url)}"` : ''}>${esc(label)}</button>`;
+    const runAttr = cmd ? `data-run-cmd="${escAttr(cmd)}"` : '';
+    const getAttr = (!cmd && url) ? `data-get="${escAttr(url)}"` : '';
+    return `<button type="button" class="${cls}" data-tool-id="${escAttr(t.id)}" ${runAttr} ${getAttr}>${esc(label)}</button>`;
   }
   const version = t.version ? ' ' + esc(t.version) : '';
   return `<span class="pill ok">${esc(t.name)}${version} ready</span>`;
@@ -1149,7 +1172,7 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
   const sel = $('#agentModelSelect') as HTMLSelectElement | null;
   if (!sel) return;
   const btn = sel.nextElementSibling?.classList.contains('dd-btn') ? (sel.nextElementSibling as HTMLElement) : null;
-  if (!a || !a.found || !a.models || !a.models.length) {
+  if (!a?.found || !a.models?.length) {
     sel.classList.add('hidden');
     if (btn) btn.classList.add('hidden');
     sel.innerHTML = '';
@@ -1157,9 +1180,8 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
   }
   sel.classList.remove('hidden');
   if (btn) {
-    btn.classList.remove('hidden');
-    btn.classList.remove('model-swap');
-    void btn.offsetWidth;
+    btn.classList.remove('hidden', 'model-swap');
+    const _reflow = btn.offsetWidth;
     btn.classList.add('model-swap');
   }
   const current = a.version || a.models[0];
@@ -1198,8 +1220,7 @@ function agentPillMenuItems(): MenuItem[] {
       }
     });
   }
-  items.push({ sep: true });
-  items.push({ label: 'Manage agents…', run: openAgentPicker });
+  items.push({ sep: true }, { label: 'Manage agents…', run: openAgentPicker });
   return items;
 }
 
@@ -1211,7 +1232,8 @@ function renderAgentPill(): void {
   pill.removeAttribute('title');
   delete pill.dataset.tooltip;
   const model = a?.api && a.version ? ' · ' + a.version : '';
-  $('#boxModel').innerHTML = `${esc(a ? `${a.name}${model}` : 'Choose an agent')}${svgIcon('chevronDown', 12)}`;
+  const label = a ? a.name + model : 'Choose an agent';
+  $('#boxModel').innerHTML = `${esc(label)}${svgIcon('chevronDown', 12)}`;
   for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
   updateComposerModelSelect(a);
@@ -1959,18 +1981,34 @@ async function refreshLiveShare(): Promise<void> {
   const button = $('#liveShare');
   const status = await api.live.status().catch(() => null);
   const show = !!rootInfo && !!status?.available;
+  const running = !!status?.running;
   button.classList.toggle('hidden', !show);
-  button.classList.toggle('live', !!status?.running);
-  button.title = status?.running ? `Live Share is running at ${status.url}` : 'Host index.html locally and open it in your browser';
-  $('span', button).textContent = status?.running ? 'Live Share: on' : 'Live Share';
+  button.classList.toggle('live', running);
+  button.title = running
+    ? `Live Share is running at ${status?.url ?? ''} · Click to turn off`
+    : 'Host index.html locally and open it in your browser';
+  $('span', button).textContent = running ? 'Live Share: on' : 'Live Share';
+  void setIcon(button, running ? 'stop' : 'play');
 }
-$('#liveShare').onclick = () => background((async () => {
+
+async function toggleLiveShare(): Promise<void> {
   try {
+    const current = await api.live.status().catch(() => null);
+    if (current?.running) {
+      await api.live.stop();
+      await refreshLiveShare();
+      toast('Live Share turned off');
+      return;
+    }
     const live = await api.live.start();
     await refreshLiveShare();
     toast(`Live Share opened at ${live.url}`);
-  } catch (e) { toast(errMsg(e)); }
-})());
+  } catch (e) {
+    toast(errMsg(e));
+  }
+}
+
+$('#liveShare').onclick = () => background(toggleLiveShare());
 
 const sessionKey = () => `breeze.session:${rootInfo?.root ?? ''}`;
 const hotExitKey = () => `breeze.dirty:${rootInfo?.root ?? ''}`;
@@ -2001,12 +2039,80 @@ const DROP_SKIP = new Set(['.git', 'node_modules']);
 interface Dropped { rel: string; file: File; }
 let dropMark: HTMLElement | null = null;
 let draggedTreePath: string | null = null;
+let draggedTreeIsDir = false;
+let agentDropMark: HTMLElement | null = null;
 const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
 function markDrop(el: HTMLElement | null): void {
   if (dropMark === el) return;
   dropMark?.classList.remove('drop-over');
   dropMark = el;
   el?.classList.add('drop-over');
+}
+function markAgentDrop(el: HTMLElement | null): void {
+  if (agentDropMark === el) return;
+  agentDropMark?.classList.remove('agent-drop-over', 'drag-over');
+  agentDropMark = el;
+  if (el) {
+    if (el.classList.contains('composer-box')) el.classList.add('drag-over');
+    else el.classList.add('agent-drop-over');
+  }
+}
+function clearAgentDropMarks(): void {
+  if (agentDropMark) {
+    agentDropMark.classList.remove('agent-drop-over', 'drag-over');
+    agentDropMark = null;
+  }
+}
+interface AgentDropTargetInfo {
+  el: HTMLElement;
+  surface: Surface;
+  tab?: AgentTabState;
+  isNewTab?: boolean;
+}
+function agentDropTarget(e: DragEvent): AgentDropTargetInfo | null {
+  const t = e.target as HTMLElement | null;
+  if (!t) return null;
+  if (t.closest('#tglAgents')) {
+    if (!layout.agentsOpen) {
+      layout.agentsOpen = true;
+      applyLayout();
+    }
+    return { el: $('#agents'), surface: SURFACES.ide };
+  }
+  const inBox = t.closest('#box');
+  const inAgents = t.closest('#agents');
+  if (!inBox && !inAgents) return null;
+  const s = inBox ? SURFACES.box : SURFACES.ide;
+  const tabEl = t.closest<HTMLElement>('.agent-tab');
+  if (tabEl?.dataset.agentTab) {
+    const tab = surfaceTabs[s.name]?.find(x => x.id === tabEl.dataset.agentTab);
+    if (tab) return { el: tabEl, surface: s, tab };
+  }
+  const newTabBtn = t.closest<HTMLElement>('#agentNewTab, #boxNewTab');
+  if (newTabBtn) {
+    return { el: newTabBtn, surface: s, isNewTab: true };
+  }
+  const composerBox = t.closest<HTMLElement>('.composer-box');
+  if (composerBox) {
+    return { el: composerBox, surface: s, tab: getActiveTab(s) };
+  }
+  return { el: inBox ? $('#box') : $('#agents'), surface: s, tab: getActiveTab(s) };
+}
+function toRelProject(absPath: string): string | null {
+  if (!rootInfo || !absPath) return null;
+  const normRoot = rootInfo.root.replaceAll('\\', '/').replace(/\/$/, '').toLowerCase();
+  const normAbs = absPath.replaceAll('\\', '/').toLowerCase();
+  if (normAbs === normRoot) return '';
+  if (normAbs.startsWith(normRoot + '/')) {
+    return absPath.slice(rootInfo.root.length).replace(/^[\\/]/, '').replaceAll('\\', '/');
+  }
+  return null;
+}
+function getDroppedFilePath(file: File): string {
+  try {
+    if (api.sys.getPathForFile) return api.sys.getPathForFile(file) || '';
+  } catch {}
+  return (file as any).path || '';
 }
 function dropTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
   if (!rootInfo) return null;
@@ -2016,6 +2122,425 @@ function dropTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
   if (row) { const p = row.dataset.path as string; return { el: row, dir: row.dataset.dir ? p : dirName(p) }; }
   return t.closest('#tree') ? { el: $('#tree'), dir: '' } : null;
 }
+type TreeDropPos = 'before' | 'after' | 'into';
+interface TreeDropTargetInfo {
+  el: HTMLElement;
+  path: string;
+  isDir: boolean;
+  pos: TreeDropPos;
+  parentDir: string;
+}
+
+let currentTreeDropMark: { el: HTMLElement; pos: TreeDropPos } | null = null;
+
+function markTreeDrop(el: HTMLElement | null, pos?: TreeDropPos): void {
+  if (currentTreeDropMark && (currentTreeDropMark.el !== el || currentTreeDropMark.pos !== pos)) {
+    currentTreeDropMark.el.classList.remove('drop-line-above', 'drop-line-below', 'drop-into');
+    currentTreeDropMark = null;
+  }
+  if (!el || !pos) return;
+  if (pos === 'before') el.classList.add('drop-line-above');
+  else if (pos === 'after') el.classList.add('drop-line-below');
+  else if (pos === 'into') el.classList.add('drop-into');
+  currentTreeDropMark = { el, pos };
+}
+
+function clearTreeDropMarks(): void {
+  if (currentTreeDropMark) {
+    currentTreeDropMark.el.classList.remove('drop-line-above', 'drop-line-below', 'drop-into');
+    currentTreeDropMark = null;
+  }
+  for (const el of $$<HTMLElement>('#tree .drop-line-above, #tree .drop-line-below, #tree .drop-into')) {
+    el.classList.remove('drop-line-above', 'drop-line-below', 'drop-into');
+  }
+}
+
+function treeDropTarget(e: DragEvent): TreeDropTargetInfo | null {
+  if (!rootInfo) return null;
+  const target = e.target as HTMLElement | null;
+  if (!target) return null;
+  const tree = target.closest<HTMLElement>('#tree');
+  if (!tree) return null;
+
+  const row = target.closest<HTMLElement>('#tree .tree-item[data-path]');
+  const from = draggedTreePath;
+
+  if (row?.dataset.path) {
+    const path = row.dataset.path;
+    const isDir = !!row.dataset.dir;
+    const parentDir = dirName(path);
+
+    // Cannot drop on oneself
+    if (from && path === from) return null;
+    // Cannot drop a directory into itself or into one of its children
+    if (from && draggedTreeIsDir && (path === from || path.startsWith(from + '/'))) return null;
+
+    const rect = row.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const h = rect.height || 24;
+    const ratio = Math.max(0, Math.min(1, y / h));
+
+    let pos: TreeDropPos;
+    if (isDir) {
+      if (ratio < 0.28) pos = 'before';
+      else if (ratio > 0.72) pos = 'after';
+      else pos = 'into';
+    } else {
+      pos = ratio < 0.5 ? 'before' : 'after';
+    }
+
+    return { el: row, path, isDir, pos, parentDir };
+  }
+
+  // Hovering on empty area of #tree
+  const items = $$<HTMLElement>('#tree .tree-item[data-path]');
+  if (items.length > 0) {
+    const last = items.at(-1);
+    if (last?.dataset.path && last.dataset.path !== from) {
+      return {
+        el: last,
+        path: last.dataset.path,
+        isDir: !!last.dataset.dir,
+        pos: 'after',
+        parentDir: dirName(last.dataset.path),
+      };
+    }
+  }
+
+  return { el: tree, path: '', isDir: true, pos: 'into', parentDir: '' };
+}
+
+const treeOrderKey = () => `breeze.treeOrder:${rootInfo?.root ?? ''}`;
+let treeOrder: Record<string, string[]> = {};
+
+function loadTreeOrder(): void {
+  if (!rootInfo) { treeOrder = {}; return; }
+  treeOrder = store.get<Record<string, string[]>>(treeOrderKey(), {});
+}
+
+function saveTreeOrder(rel: string, names: string[]): void {
+  if (!rootInfo) return;
+  treeOrder[rel] = names;
+  store.set(treeOrderKey(), treeOrder);
+}
+
+function sortDirEntries(rel: string, entries: DirEntry[]): DirEntry[] {
+  const custom = treeOrder[rel];
+  if (!custom?.length) return entries;
+  const map = new Map<string, number>();
+  custom.forEach((n, i) => map.set(n, i));
+  return [...entries].sort((a, b) => {
+    const hasA = map.has(a.name);
+    const hasB = map.has(b.name);
+    if (hasA && hasB) return map.get(a.name)! - map.get(b.name)!;
+    if (hasA && !hasB) return -1;
+    if (!hasA && hasB) return 1;
+    if (a.dir !== b.dir) return a.dir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+interface LayoutAction {
+  type: 'layout';
+  prev: Layout;
+  next: Layout;
+}
+
+interface TreeOrderAction {
+  type: 'tree-order';
+  dir: string;
+  prevOrder: string[];
+  newOrder: string[];
+  name: string;
+}
+
+interface TreeMoveAction {
+  type: 'tree-move';
+  from: string;
+  to: string;
+  fromDir: string;
+  targetDir: string;
+  prevFromOrder?: string[];
+  prevTargetOrder?: string[];
+  name: string;
+}
+
+interface RemoveAttachmentAction {
+  type: 'remove-attachment';
+  surface: 'ide' | 'box';
+  tabId: string;
+  attachment: AgentAttachment;
+  index: number;
+}
+
+type AppUndoAction = LayoutAction | TreeOrderAction | TreeMoveAction | RemoveAttachmentAction;
+
+const actionUndoStack: AppUndoAction[] = [];
+const actionRedoStack: AppUndoAction[] = [];
+const APP_UNDO_MAX = 50;
+
+function pushAppAction(action: AppUndoAction): void {
+  actionUndoStack.push(action);
+  if (actionUndoStack.length > APP_UNDO_MAX) actionUndoStack.shift();
+  actionRedoStack.length = 0;
+}
+
+function flashUndoItem(path: string): void {
+  const row = $(`#tree .tree-item[data-path="${escAttr(path)}"]`);
+  if (!row) return;
+  row.classList.remove('undo-target');
+  const _reflow = row.offsetWidth;
+  row.classList.add('undo-target');
+  setTimeout(() => row.classList.remove('undo-target'), 800);
+}
+
+let layoutAnimTimer: TimeoutId | undefined;
+function applyLayoutAnimated(): void {
+  clearTimeout(layoutAnimTimer);
+  document.body.classList.add('layout-animating');
+  applyLayout();
+  layoutAnimTimer = setTimeout(() => {
+    document.body.classList.remove('layout-animating');
+  }, 350);
+}
+
+async function undoAppAction(): Promise<boolean> {
+  const action = actionUndoStack.pop();
+  if (!action) return false;
+  actionRedoStack.push(action);
+
+  if (action.type === 'tree-order') {
+    if (action.dir) expanded.add(action.dir);
+    treeOrder[action.dir] = [...action.prevOrder];
+    saveTreeOrder(action.dir, action.prevOrder);
+    if (dirCache.has(action.dir)) {
+      const list = dirCache.get(action.dir)!;
+      dirCache.set(action.dir, sortDirEntries(action.dir, list));
+    }
+    renderTreeAnimated();
+    flashUndoItem(joinPath(action.dir, action.name));
+    toast(`Undid rearrange · ${action.name}`);
+    return true;
+  }
+
+  if (action.type === 'tree-move') {
+    if (action.prevFromOrder) {
+      treeOrder[action.fromDir] = [...action.prevFromOrder];
+      saveTreeOrder(action.fromDir, action.prevFromOrder);
+    }
+    if (action.prevTargetOrder) {
+      treeOrder[action.targetDir] = [...action.prevTargetOrder];
+      saveTreeOrder(action.targetDir, action.prevTargetOrder);
+    }
+    if (action.fromDir) expanded.add(action.fromDir);
+    await moveEntry(action.from, action.to);
+    flashUndoItem(action.to);
+    toast(`Undid move · ${action.name}`);
+    return true;
+  }
+
+  if (action.type === 'layout') {
+    Object.assign(layout, action.prev);
+    applyLayoutAnimated();
+    toast('Undid layout');
+    return true;
+  }
+
+  if (action.type === 'remove-attachment') {
+    const list = attachmentsMap[action.surface] || [];
+    list.splice(action.index, 0, action.attachment);
+    attachmentsMap[action.surface] = list;
+    const tab = surfaceTabs[action.surface]?.find(x => x.id === action.tabId) || getActiveTab(SURFACES[action.surface]);
+    if (tab) tab.attachments = [...list];
+    renderAttachments(SURFACES[action.surface]);
+    toast(`Restored attachment · ${action.attachment.name}`);
+    return true;
+  }
+
+  return false;
+}
+
+async function redoAppAction(): Promise<boolean> {
+  const action = actionRedoStack.pop();
+  if (!action) return false;
+  actionUndoStack.push(action);
+
+  if (action.type === 'tree-order') {
+    if (action.dir) expanded.add(action.dir);
+    treeOrder[action.dir] = [...action.newOrder];
+    saveTreeOrder(action.dir, action.newOrder);
+    if (dirCache.has(action.dir)) {
+      const list = dirCache.get(action.dir)!;
+      dirCache.set(action.dir, sortDirEntries(action.dir, list));
+    }
+    renderTreeAnimated();
+    flashUndoItem(joinPath(action.dir, action.name));
+    toast(`Redid rearrange · ${action.name}`);
+    return true;
+  }
+
+  if (action.type === 'tree-move') {
+    await moveEntry(action.to, action.from);
+    await refreshTree();
+    flashUndoItem(action.from);
+    toast(`Redid move · ${action.name}`);
+    return true;
+  }
+
+  if (action.type === 'layout') {
+    Object.assign(layout, action.next);
+    applyLayoutAnimated();
+    toast('Redid layout');
+    return true;
+  }
+
+  if (action.type === 'remove-attachment') {
+    attachmentsMap[action.surface] = (attachmentsMap[action.surface] || []).filter(x => x.id !== action.attachment.id);
+    const tab = surfaceTabs[action.surface]?.find(x => x.id === action.tabId) || getActiveTab(SURFACES[action.surface]);
+    if (tab) tab.attachments = [...attachmentsMap[action.surface]];
+    renderAttachments(SURFACES[action.surface]);
+    toast(`Removed · ${action.attachment.name}`);
+    return true;
+  }
+
+  return false;
+}
+
+async function rearrangeTreeItem(fromPath: string, targetPath: string, pos: TreeDropPos): Promise<void> {
+  if (!fromPath || !rootInfo) return;
+  if (fromPath === targetPath && pos !== 'into') return;
+
+  const fromDir = dirName(fromPath);
+  const fromName = baseName(fromPath);
+
+  if (pos === 'into') {
+    const destDir = targetPath;
+    if (fromPath === destDir || destDir.startsWith(fromPath + '/')) return;
+    const destPath = destDir ? joinPath(destDir, fromName) : fromName;
+    if (destPath === fromPath) {
+      const entries = dirCache.get(fromDir);
+      if (entries) {
+        const fromEntry = entries.find(e => e.name === fromName);
+        if (fromEntry) {
+          const prevOrder = entries.map(e => e.name);
+          const remaining = entries.filter(e => e.name !== fromName);
+          remaining.push(fromEntry);
+          const newOrder = remaining.map(e => e.name);
+          pushAppAction({
+            type: 'tree-order',
+            dir: fromDir,
+            prevOrder,
+            newOrder,
+            name: fromName,
+          });
+          dirCache.set(fromDir, remaining);
+          saveTreeOrder(fromDir, newOrder);
+          renderTreeAnimated();
+          toast(`Moved to end · ${fromName}`);
+        }
+      }
+      return;
+    }
+
+    const prevFromOrder = (dirCache.get(fromDir) || []).map(e => e.name);
+    const prevDestOrder = (dirCache.get(destDir) || []).map(e => e.name);
+
+    if (destDir) expanded.add(destDir);
+    const destOrder = treeOrder[destDir] ? [...treeOrder[destDir]] : (dirCache.get(destDir) || []).map(e => e.name);
+    if (!destOrder.includes(fromName)) destOrder.push(fromName);
+    saveTreeOrder(destDir, destOrder);
+    if (treeOrder[fromDir]) {
+      saveTreeOrder(fromDir, treeOrder[fromDir].filter(n => n !== fromName));
+    }
+
+    pushAppAction({
+      type: 'tree-move',
+      from: destPath,
+      to: fromPath,
+      fromDir,
+      targetDir: destDir,
+      prevFromOrder,
+      prevTargetOrder: prevDestOrder,
+      name: fromName,
+    });
+
+    await moveEntry(fromPath, destPath);
+    toast(`Moved ${fromName} into ${destDir ? baseName(destDir) : 'project root'}`);
+    return;
+  }
+
+  // Dropping before or after targetPath
+  const targetDir = dirName(targetPath);
+  const targetName = baseName(targetPath);
+
+  if (fromDir === targetDir) {
+    // Same directory reordering
+    const entries = dirCache.get(fromDir);
+    if (!entries) return;
+    const fromEntry = entries.find(e => e.name === fromName);
+    if (!fromEntry) return;
+
+    const prevOrder = entries.map(e => e.name);
+    const remaining = entries.filter(e => e.name !== fromName);
+    const targetIdx = remaining.findIndex(e => e.name === targetName);
+    if (targetIdx === -1) return;
+
+    const insertIdx = pos === 'before' ? targetIdx : targetIdx + 1;
+    remaining.splice(insertIdx, 0, fromEntry);
+    const newOrder = remaining.map(e => e.name);
+
+    pushAppAction({
+      type: 'tree-order',
+      dir: fromDir,
+      prevOrder,
+      newOrder,
+      name: fromName,
+    });
+
+    dirCache.set(fromDir, remaining);
+    saveTreeOrder(fromDir, newOrder);
+    renderTreeAnimated();
+    toast(`Reordered · ${fromName}`);
+    return;
+  }
+
+  // Moving across directories to a specific position
+  const destPath = joinPath(targetDir, fromName);
+  if (fromPath === destPath) return;
+  if (fromPath === targetDir || targetDir.startsWith(fromPath + '/')) return;
+
+  const prevFromOrder = (dirCache.get(fromDir) || []).map(e => e.name);
+  const prevTargetOrder = (dirCache.get(targetDir) || []).map(e => e.name);
+
+  if (targetDir) expanded.add(targetDir);
+  const currentTargetOrder = treeOrder[targetDir] ? [...treeOrder[targetDir]] : (dirCache.get(targetDir) || []).map(e => e.name);
+  const filtered = currentTargetOrder.filter(n => n !== fromName);
+  const tIdx = filtered.indexOf(targetName);
+  let insIdx = filtered.length;
+  if (tIdx !== -1) {
+    insIdx = pos === 'before' ? tIdx : tIdx + 1;
+  }
+  filtered.splice(insIdx, 0, fromName);
+  saveTreeOrder(targetDir, filtered);
+  if (treeOrder[fromDir]) {
+    saveTreeOrder(fromDir, treeOrder[fromDir].filter(n => n !== fromName));
+  }
+
+  pushAppAction({
+    type: 'tree-move',
+    from: destPath,
+    to: fromPath,
+    fromDir,
+    targetDir,
+    prevFromOrder,
+    prevTargetOrder,
+    name: fromName,
+  });
+
+  await moveEntry(fromPath, destPath);
+  toast(`Moved ${fromName} to ${targetDir ? baseName(targetDir) : 'project root'}`);
+}
+
 // A row drops into that folder (or a file's folder), empty explorer space into the project root.
 // A folder can't go into itself or anything inside it, and dropping where it already is does nothing.
 function moveTarget(e: DragEvent): { el: HTMLElement; dir: string } | null {
@@ -2065,19 +2590,81 @@ async function importDropped(entries: FileSystemEntry[], dir: string): Promise<v
     found.length >= DROP_MAX_FILES ? `stopped at ${DROP_MAX_FILES} files` : '',
     failed.length ? `${failed.length} failed: ${failed[0]}` : '',
   ].filter(Boolean);
-  toast(`Added ${plural(saved.length, 'file')}${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+  const noteText = notes.length ? ' · ' + notes.join(' · ') : '';
+  toast(`Added ${plural(saved.length, 'file')}${noteText}`);
 }
 document.addEventListener('dragover', e => {
   if (!hasFiles(e) && !draggedTreePath) return;
+
+  const ag = agentDropTarget(e);
+  if (ag) {
+    e.preventDefault();
+    markDrop(null);
+    clearTreeDropMarks();
+    markAgentDrop(ag.el);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    return;
+  }
+  clearAgentDropMarks();
+
+  if (draggedTreePath) {
+    const treeTarget = treeDropTarget(e);
+    if (treeTarget) {
+      e.preventDefault();
+      markDrop(null);
+      markTreeDrop(treeTarget.el, treeTarget.pos);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      return;
+    }
+  }
+
+  clearTreeDropMarks();
   e.preventDefault();
   const t = hasFiles(e) ? dropTarget(e) : moveTarget(e);
   markDrop(t?.el ?? null);
-  if (e.dataTransfer) e.dataTransfer.dropEffect = t ? (hasFiles(e) ? 'copy' : 'move') : 'none';
+  if (e.dataTransfer) {
+    let effect: 'copy' | 'move' | 'none' = 'none';
+    if (t) effect = hasFiles(e) ? 'copy' : 'move';
+    e.dataTransfer.dropEffect = effect;
+  }
 });
-document.addEventListener('dragleave', e => { if (!e.relatedTarget) markDrop(null); });
+document.addEventListener('dragleave', e => {
+  if (!e.relatedTarget) {
+    markDrop(null);
+    clearTreeDropMarks();
+    clearAgentDropMarks();
+  }
+});
 document.addEventListener('drop', e => {
   if (!hasFiles(e) && !draggedTreePath) return;
+
+  const ag = agentDropTarget(e);
+  if (ag) {
+    e.preventDefault();
+    clearAgentDropMarks();
+    clearTreeDropMarks();
+    markDrop(null);
+    background(handleAgentDrop(e, ag));
+    return;
+  }
+  clearAgentDropMarks();
+
+  if (draggedTreePath) {
+    const treeTarget = treeDropTarget(e);
+    const from = draggedTreePath;
+    draggedTreePath = null;
+    draggedTreeIsDir = false;
+    clearTreeDropMarks();
+    markDrop(null);
+    if (treeTarget) {
+      e.preventDefault();
+      background(rearrangeTreeItem(from, treeTarget.path, treeTarget.pos));
+      return;
+    }
+  }
+
   e.preventDefault();
+  clearTreeDropMarks();
   const external = hasFiles(e);
   const t = external ? dropTarget(e) : moveTarget(e);
   markDrop(null);
@@ -2085,6 +2672,7 @@ document.addEventListener('drop', e => {
   if (!external) {
     const from = draggedTreePath;
     draggedTreePath = null;
+    draggedTreeIsDir = false;
     if (t.dir) expanded.add(t.dir);
     if (from) background(moveEntry(from, joinPath(t.dir, baseName(from))));
     return;
@@ -2103,6 +2691,7 @@ function restoreBuffer(b: EditorBuffer, s: Session, dirty: Record<string, string
 async function loadWorkspace(info: RootInfo): Promise<void> {
   if (rootInfo) { flushSession(); resetWorkspace(); }
   rootInfo = info;
+  loadTreeOrder();
   background(loadNpmScripts());
   $('#projectName').textContent = info.name;
   $('#projectName').title = info.root;
@@ -2130,6 +2719,7 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
 function resetWorkspace(): void {
   for (const b of buffers.values()) b.ta?.remove();
   buffers.clear(); dirCache.clear(); expanded.clear();
+  treeOrder = {};
   openTabs = []; active = null; rootInfo = null;
   stopPreview();
   $('#projectName').textContent = 'No folder';
@@ -2140,7 +2730,7 @@ function resetWorkspace(): void {
 }
 
 async function loadDir(rel: string): Promise<void> {
-  try { dirCache.set(rel, await api.fs.readDir(rel)); }
+  try { dirCache.set(rel, sortDirEntries(rel, await api.fs.readDir(rel))); }
   catch { dirCache.delete(rel); expanded.delete(rel); } // gone or unreadable: show it collapsed
 }
 
@@ -2334,6 +2924,53 @@ function renderTree(): void {
   for (const row of $$('[data-depth]', el)) row.style.paddingLeft = `${4 + Number(row.dataset.depth) * 12}px`;
   justExpanded = null;
 }
+
+function captureTreePositions(): Map<string, number> {
+  const map = new Map<string, number>();
+  const rows = $$<HTMLElement>('#tree .tree-item[data-path]');
+  for (const r of rows) {
+    const p = r.dataset.path;
+    if (p) map.set(p, r.getBoundingClientRect().top);
+  }
+  return map;
+}
+
+function playTreeAnimation(oldPositions: Map<string, number>): void {
+  const rows = $$<HTMLElement>('#tree .tree-item[data-path]');
+  for (const r of rows) {
+    const p = r.dataset.path;
+    if (!p) continue;
+    if (oldPositions.has(p)) {
+      const oldTop = oldPositions.get(p)!;
+      const newTop = r.getBoundingClientRect().top;
+      const dy = oldTop - newTop;
+      if (Math.abs(dy) > 1) {
+        r.animate([
+          { transform: `translateY(${dy}px)` },
+          { transform: 'translateY(0)' },
+        ], {
+          duration: 220,
+          easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+        });
+      }
+    } else if (!r.classList.contains('enter')) {
+      r.animate([
+        { opacity: 0, transform: 'scale(0.96) translateY(-4px)' },
+        { opacity: 1, transform: 'scale(1) translateY(0)' },
+      ], {
+        duration: 180,
+        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+      });
+    }
+  }
+}
+
+function renderTreeAnimated(): void {
+  const oldPositions = captureTreePositions();
+  renderTree();
+  playTreeAnimation(oldPositions);
+}
+
 // The folder whose children should animate in on the next render.
 let justExpanded: string | null = null;
 async function renderRecent(): Promise<void> {
@@ -2354,14 +2991,30 @@ $('#tree').addEventListener('dragstart', e => {
   const row = (e.target as HTMLElement).closest<HTMLElement>('[data-path][draggable="true"]');
   if (!row) return;
   draggedTreePath = row.dataset.path as string;
+  draggedTreeIsDir = !!row.dataset.dir;
   row.classList.add('dragging');
-  e.dataTransfer?.setData('text/plain', draggedTreePath);
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'all';
+    e.dataTransfer.setData('text/plain', draggedTreePath);
+    e.dataTransfer.setData('application/x-breeze-tree-path', draggedTreePath);
+    e.dataTransfer.setData('application/x-breeze-is-dir', draggedTreeIsDir ? '1' : '0');
+  }
 });
 $('#tree').addEventListener('dragend', e => {
   (e.target as HTMLElement).closest<HTMLElement>('[data-path]')?.classList.remove('dragging');
   draggedTreePath = null;
+  draggedTreeIsDir = false;
   markDrop(null);
+  clearTreeDropMarks();
+  clearAgentDropMarks();
+});
+document.addEventListener('dragend', () => {
+  for (const el of $$<HTMLElement>('#tree .tree-item.dragging')) el.classList.remove('dragging');
+  draggedTreePath = null;
+  draggedTreeIsDir = false;
+  markDrop(null);
+  clearTreeDropMarks();
+  clearAgentDropMarks();
 });
 $('#tree').addEventListener('contextmenu', e => {
   e.preventDefault();
@@ -2410,12 +3063,12 @@ async function toggleDir(p: string): Promise<void> {
     if (!dirCache.has(p)) await loadDir(p);
     justExpanded = p;
   }
-  renderTree(); saveSession();
+  renderTreeAnimated(); saveSession();
 }
 async function refreshTree(): Promise<void> {
   if (!rootInfo) return;
   await Promise.all(['', ...expanded].map(loadDir));
-  renderTree();
+  renderTreeAnimated();
 }
 // The folder new files go into: right-clicked folder, else the active file's folder, else the root.
 const targetDir = () => (active ? dirName(active) : '');
@@ -2462,6 +3115,11 @@ async function renameEntry(p: string): Promise<void> {
   if (!name || name === baseName(p)) return;
   if (/[\\/]/.test(name)) { toast('Names cannot contain slashes'); return; }
   const to = joinPath(dirName(p), name);
+  const dir = dirName(p);
+  if (treeOrder[dir]) {
+    treeOrder[dir] = treeOrder[dir].map(n => n === baseName(p) ? name : n);
+    saveTreeOrder(dir, treeOrder[dir]);
+  }
   await moveEntry(p, to);
 }
 async function moveEntry(p: string, to: string): Promise<void> {
@@ -2491,6 +3149,11 @@ function deleteEntry(p: string, isDir: boolean): void {
     $('#delOk', m).onclick = () => background((async () => {
       closeModal();
       await api.fs.trash(p);
+      const dir = dirName(p);
+      if (treeOrder[dir]) {
+        treeOrder[dir] = treeOrder[dir].filter(n => n !== baseName(p));
+        saveTreeOrder(dir, treeOrder[dir]);
+      }
       for (const path of openTabs.filter(x => x === p || x.startsWith(p + '/'))) dropTab(path);
       expanded.delete(p);
       await refreshTree(); renderTabs(); renderEditor(); saveSession();
@@ -2523,7 +3186,7 @@ api.fs.onChange(paths => background((async () => {
   // Reload changed folders, and changed paths that are themselves cached folders (e.g. created then filled).
   const dirs = new Set([...paths.map(dirName), ...paths].filter(d => dirCache.has(d)));
   await Promise.all([...dirs].map(loadDir));
-  renderTree();
+  renderTreeAnimated();
   const changed = paths.map(p => buffers.get(p)).filter((b): b is EditorBuffer => !!b);
   await Promise.all(changed.map(b => {
     if (b.kind === 'image' && b.url?.startsWith('file:')) return reloadImage(b);
@@ -2582,7 +3245,12 @@ function renderTabs(): void {
   const tabsEl = $('#tabs');
   const hasTabs = openTabs.length > 0;
   tabsEl.classList.toggle('hidden', !hasTabs);
-  tabsEl.innerHTML = hasTabs ? openTabs.map(tabHtml).join('') + (runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '') : '';
+  if (!hasTabs) {
+    tabsEl.innerHTML = '';
+  } else {
+    const runBtn = runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>` : '';
+    tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn;
+  }
   placeTabInk();
 }
 // The blue line under the open tab is one element that glides from the last tab to the new one.
@@ -2599,7 +3267,7 @@ function placeTabInk(): void {
   if (inkAt) {
     ink.style.transition = 'none';
     draw(inkAt);
-    void ink.offsetWidth; // commit the old spot so the move animates
+    const _reflow = ink.offsetWidth; // commit the old spot so the move animates
     ink.style.transition = '';
   }
   draw(next);
@@ -2635,7 +3303,7 @@ function closeTabs(paths: string[]): void {
         const w = el.getBoundingClientRect().width;
         el.style.width = `${w}px`;
         el.style.maxWidth = `${w}px`;
-        void el.offsetWidth;
+        const _reflow = el.offsetWidth;
         el.classList.add('closing');
       });
       if (isClosingAll) {
@@ -2741,6 +3409,12 @@ function dragTabEnd(e: PointerEvent): void {
   setActive(d.path);
   const landed = $$('#tabs [data-tab]').find(t => t.dataset.tab === d.path);
   if (landed && rest) landed.animate([{ transform: `translateX(${rest}px)` }, { transform: 'none' }], { duration: 160, easing: 'cubic-bezier(.2,.8,.2,1)' });
+
+  const dropEl = document.elementFromPoint(e.clientX, e.clientY);
+  if (dropEl?.closest('#agents, #box')) {
+    const s = dropEl.closest('#box') ? SURFACES.box : SURFACES.ide;
+    void attachPathToAgent(d.path, false, s);
+  }
 }
 $('#tabs').addEventListener('pointerdown', e => {
   const t = e.target as HTMLElement;
@@ -2769,7 +3443,7 @@ function closeTab(path: string): void {
       const w = tabEl.getBoundingClientRect().width;
       tabEl.style.width = `${w}px`;
       tabEl.style.maxWidth = `${w}px`;
-      void tabEl.offsetWidth;
+      const _reflow = tabEl.offsetWidth;
       tabEl.classList.add('closing');
       if (isLastTab) {
         const ink = $('#tabs .tab-ink');
@@ -2896,7 +3570,7 @@ function renderEditor(): void {
     }
     if (wasHidden || !b) {
       empty.classList.remove('enter');
-      void empty.offsetWidth;
+      const _reflow = empty.offsetWidth;
       empty.classList.add('enter');
       empty.addEventListener('animationend', () => empty.classList.remove('enter'), { once: true });
     }
@@ -3062,7 +3736,7 @@ const hlCache = new WeakMap<EditorBuffer, { text: string; lexer: string; lines: 
 function highlighted(b: EditorBuffer): string[] {
   const lexer = langOf(b.path)[0];
   const c = hlCache.get(b);
-  if (c && c.text === b.text && c.lexer === lexer) return c.lines;
+  if (c?.text === b.text && c.lexer === lexer) return c.lines;
   const lines = highlightLines(b.text, lexer);
   hlCache.set(b, { text: b.text, lexer, lines });
   return lines;
@@ -3245,8 +3919,34 @@ function editorKeys(e: KeyboardEvent): void {
   if (b && pairKey(e, ta)) { e.preventDefault(); return; }
   if (b && e.ctrlKey && e.key === ' ') { e.preventDefault(); editorSuggest(b, true); return; }
   if (b && (e.ctrlKey || e.metaKey) && !e.altKey && (k === 'z' || k === 'y')) {
-    e.preventDefault();
-    stepHistory(b, k === 'z' && !e.shiftKey);
+    const isUndo = k === 'z' && !e.shiftKey;
+    if (isUndo) {
+      if (b.undo.length > 0) {
+        e.preventDefault();
+        stepHistory(b, true);
+        return;
+      }
+      if (actionUndoStack.length > 0) {
+        e.preventDefault();
+        void undoAppAction();
+        return;
+      }
+      e.preventDefault();
+      return;
+    } else {
+      if (b.redo.length > 0) {
+        e.preventDefault();
+        stepHistory(b, false);
+        return;
+      }
+      if (actionRedoStack.length > 0) {
+        e.preventDefault();
+        void redoAppAction();
+        return;
+      }
+      e.preventDefault();
+      return;
+    }
   } else if (e.key === 'Tab' && plainKey(e)) {
     e.preventDefault();
     indentKey(ta, e.shiftKey);
@@ -3411,7 +4111,7 @@ function fileScore(p: string, q: string): number {
   for (const ch of full) if (ch === q[i]) i++;
   return i === q.length ? 1 : 0;
 }
-async function quickOpen(): Promise<void> {
+function quickOpen(): void {
   if (!rootInfo) { toast('Open a folder first'); return; }
   let all: string[] = [];
   let sel = 0;
@@ -3559,25 +4259,257 @@ function parseErrorRefs(text: string, cwd: string, root: string): ErrorRef[] {
   }
   return refs.sort((a, b) => a.start - b.start);
 }
-function renderPs(): void { $('#termPs').textContent = `${term.cwd || '~'}>`; }
+
+// 256-color palette mapper
+function ansi256Color(n: number): string {
+  if (n < 0 || n > 255) return '#ffffff';
+  const std16 = [
+    '#1f2335', '#f7768e', '#73daca', '#e0af68', '#7aa2f7', '#bb9af7', '#7dcfff', '#c0caf5',
+    '#565f89', '#ff899d', '#9ece6a', '#f1cf8a', '#89b4fa', '#cba6f7', '#89dceb', '#ffffff'
+  ];
+  if (n < 16) return std16[n];
+  if (n < 232) {
+    const idx = n - 16;
+    const r = Math.floor(idx / 36);
+    const g = Math.floor((idx % 36) / 6);
+    const b = idx % 6;
+    const toVal = (c: number) => c === 0 ? 0 : 55 + c * 40;
+    return `rgb(${toVal(r)}, ${toVal(g)}, ${toVal(b)})`;
+  }
+  const gray = (n - 232) * 10 + 8;
+  return `rgb(${gray}, ${gray}, ${gray})`;
+}
+
+// Plain CLI semantic output highlighter (errors, warnings, successes, URLs)
+function highlightPlainCli(text: string): string {
+  let out = text;
+  // npm CLI headers: "npm warn ...", "npm notice ...", "npm ERR! ..."
+  out = out.replace(/\b(npm)(\s+)(warn(?:ing)?|notice|invalid|ERR!|error|info|http)\b/gi, (_m, npmWord, space, lvl) => {
+    let lvlClass = 'term-kw-info';
+    const lower = lvl.toLowerCase();
+    if (lower.startsWith('warn')) lvlClass = 'term-kw-warning';
+    else if (lower === 'notice' || lower === 'invalid' || lower === 'http') lvlClass = 'term-kw-cyan';
+    else if (lower === 'err!' || lower === 'error') lvlClass = 'term-kw-error';
+    return `<span class="term-npm">${npmWord}</span>${space}<span class="${lvlClass}">${lvl}</span>`;
+  });
+  // Secondary keywords: standalone or subsequent "invalid", "notice", "http"
+  out = out.replace(/\b(?:invalid|notice|http)\b(?![^<]*>)/gi, '<span class="term-kw-cyan">$&</span>');
+  // General warning / error / success tokens
+  out = out.replace(/\b(?:FATAL|FAIL|ERROR|Error|ERR!|error|fatal error)\b:?(?![^<]*>)/g, '<span class="term-kw-error">$&</span>');
+  out = out.replace(/\b(?:WARN|WARNING|Warning|warning|warn)\b:?(?![^<]*>)/g, '<span class="term-kw-warning">$&</span>');
+  out = out.replace(/(?:\b(?:SUCCESS|SUCCESSFUL|PASS|passed|compiled successfully|Done in)\b|✓)(?![^<]*>)/g, '<span class="term-kw-success">$&</span>');
+  out = out.replace(/\b(?:INFO|Info|NOTE|Note|note|info)\b:?(?![^<]*>)/g, '<span class="term-kw-info">$&</span>');
+  out = out.replace(/(https?:\/\/[^\s<>"'`)]+)/g, '<a class="term-url" href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+  return out;
+}
+
+interface AnsiStyle {
+  fgClass?: string;
+  fgColor?: string;
+  bgClass?: string;
+  bgColor?: string;
+  bold?: boolean;
+  dim?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+function renderAnsiChunk(text: string, style: AnsiStyle): string {
+  const classes: string[] = [];
+  if (style.fgClass) classes.push(style.fgClass);
+  if (style.bgClass) classes.push(style.bgClass);
+  if (style.bold) classes.push('ansi-bold');
+  if (style.dim) classes.push('ansi-dim');
+  if (style.italic) classes.push('ansi-italic');
+  if (style.underline) classes.push('ansi-underline');
+
+  const styles: string[] = [];
+  if (style.fgColor) styles.push(`color:${style.fgColor}`);
+  if (style.bgColor) styles.push(`background-color:${style.bgColor}`);
+
+  const escaped = esc(text);
+  if (!classes.length && !styles.length) {
+    return highlightPlainCli(escaped);
+  }
+  const clsAttr = classes.length ? ` class="${classes.join(' ')}"` : '';
+  const styleAttr = styles.length ? ` style="${styles.join(';')}"` : '';
+  return `<span${clsAttr}${styleAttr}>${escaped}</span>`;
+}
+
+function parseAnsiToHtml(raw: string): string {
+  const text = raw.replaceAll(/\x1b\[[0-9;?]*[ -/]*[@-ln-~]/g, '').replaceAll(/\r(?!\n)/g, '');
+  if (!text) return '';
+  if (!text.includes('\x1b[')) {
+    return highlightPlainCli(esc(text));
+  }
+
+  const SGR_REGEX = /\x1b\[([0-9;]*)m/g;
+  let html = '';
+  let lastIndex = 0;
+  const style: AnsiStyle = {};
+  const colorNames = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+
+  let match: RegExpExecArray | null;
+  while ((match = SGR_REGEX.exec(text)) !== null) {
+    const chunk = text.slice(lastIndex, match.index);
+    if (chunk) {
+      html += renderAnsiChunk(chunk, style);
+    }
+    lastIndex = SGR_REGEX.lastIndex;
+
+    const rawCodes = match[1] ? match[1].split(';').map(Number) : [0];
+    let i = 0;
+    while (i < rawCodes.length) {
+      const code = rawCodes[i];
+      if (code === 0) {
+        style.fgClass = undefined; style.fgColor = undefined;
+        style.bgClass = undefined; style.bgColor = undefined;
+        style.bold = false; style.dim = false; style.italic = false; style.underline = false;
+      } else if (code === 1) {
+        style.bold = true;
+      } else if (code === 2) {
+        style.dim = true;
+      } else if (code === 3) {
+        style.italic = true;
+      } else if (code === 4) {
+        style.underline = true;
+      } else if (code === 22) {
+        style.bold = false; style.dim = false;
+      } else if (code === 23) {
+        style.italic = false;
+      } else if (code === 24) {
+        style.underline = false;
+      } else if (code >= 30 && code <= 37) {
+        style.fgClass = `ansi-fg-${colorNames[code - 30]}`;
+        style.fgColor = undefined;
+      } else if (code === 38) {
+        if (rawCodes[i + 1] === 5 && rawCodes[i + 2] != null) {
+          style.fgColor = ansi256Color(rawCodes[i + 2]);
+          style.fgClass = undefined;
+          i += 2;
+        } else if (rawCodes[i + 1] === 2 && rawCodes[i + 2] != null && rawCodes[i + 3] != null && rawCodes[i + 4] != null) {
+          style.fgColor = `rgb(${rawCodes[i + 2]}, ${rawCodes[i + 3]}, ${rawCodes[i + 4]})`;
+          style.fgClass = undefined;
+          i += 4;
+        }
+      } else if (code === 39) {
+        style.fgClass = undefined; style.fgColor = undefined;
+      } else if (code >= 40 && code <= 47) {
+        style.bgClass = `ansi-bg-${colorNames[code - 40]}`;
+        style.bgColor = undefined;
+      } else if (code === 48) {
+        if (rawCodes[i + 1] === 5 && rawCodes[i + 2] != null) {
+          style.bgColor = ansi256Color(rawCodes[i + 2]);
+          style.bgClass = undefined;
+          i += 2;
+        } else if (rawCodes[i + 1] === 2 && rawCodes[i + 2] != null && rawCodes[i + 3] != null && rawCodes[i + 4] != null) {
+          style.bgColor = `rgb(${rawCodes[i + 2]}, ${rawCodes[i + 3]}, ${rawCodes[i + 4]})`;
+          style.bgClass = undefined;
+          i += 4;
+        }
+      } else if (code === 49) {
+        style.bgClass = undefined; style.bgColor = undefined;
+      } else if (code >= 90 && code <= 97) {
+        style.fgClass = `ansi-fg-bright-${colorNames[code - 90]}`;
+        style.fgColor = undefined;
+      } else if (code >= 100 && code <= 107) {
+        style.bgClass = `ansi-bg-bright-${colorNames[code - 100]}`;
+        style.bgColor = undefined;
+      }
+      i++;
+    }
+  }
+
+  const remaining = text.slice(lastIndex);
+  if (remaining) {
+    html += renderAnsiChunk(remaining, style);
+  }
+  return html;
+}
+
+// Command syntax highlighter (command, flags, strings, numbers, arguments)
+function formatCommandSyntax(cmd: string): string {
+  if (!cmd) return '';
+  const trimmed = cmd.trimStart();
+  const leading = cmd.slice(0, cmd.length - trimmed.length);
+  const tokenRegex = /--?[a-zA-Z0-9_\-]+|"[^"]*"|'[^']*'|\S+/g;
+  let match: RegExpExecArray | null;
+  let lastIndex = 0;
+  let isFirst = true;
+  let html = esc(leading);
+  while ((match = tokenRegex.exec(trimmed)) !== null) {
+    const gap = trimmed.slice(lastIndex, match.index);
+    if (gap) html += esc(gap);
+    const token = match[0];
+    if (isFirst) {
+      html += `<span class="term-cmd-name">${esc(token)}</span>`;
+      isFirst = false;
+    } else if (token.startsWith('-')) {
+      html += `<span class="term-cmd-flag">${esc(token)}</span>`;
+    } else if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+      html += `<span class="term-cmd-str">${esc(token)}</span>`;
+    } else if (/^\d+$/.test(token)) {
+      html += `<span class="term-cmd-num">${esc(token)}</span>`;
+    } else {
+      html += `<span class="term-cmd-arg">${esc(token)}</span>`;
+    }
+    lastIndex = tokenRegex.lastIndex;
+  }
+  const trailing = trimmed.slice(lastIndex);
+  if (trailing) html += esc(trailing);
+  return html;
+}
+
+function createPromptHtml(cwd: string): string {
+  let path = cwd || '~';
+  path = path.replace(/\//g, '\\');
+  path = path.replace(/^([a-zA-Z]):/, (_, d) => d.toUpperCase() + ':');
+  return `<span class="ps-prefix">PS</span> <span class="ps-path" title="${escAttr(cwd || '~')}">${esc(path)}</span><span class="ps-arrow">&gt;</span>`;
+}
+
+function renderPs(): void {
+  const el = $('#termPs');
+  if (el) el.innerHTML = createPromptHtml(term.cwd);
+}
+
+function createPromptElement(cwd: string): HTMLElement {
+  const span = document.createElement('span');
+  span.className = 'ps term-prompt-line';
+  span.innerHTML = createPromptHtml(cwd);
+  return span;
+}
+
 const cleanOut = (text: string) => text.replaceAll(ANSI, '').replaceAll(/\r(?!\n)/g, '');
+
+let termScrollRaf = 0;
+function scheduleTermScroll(): void {
+  if (termScrollRaf) return;
+  termScrollRaf = requestAnimationFrame(() => {
+    termScrollRaf = 0;
+    const b = $('#termBody');
+    if (b) b.scrollTop = b.scrollHeight;
+  });
+}
+
 function termAppend(el: HTMLElement): void {
   termOut.appendChild(el);
   while (termOut.childNodes.length > 3000) termOut.firstChild?.remove();
-  $('#termBody').scrollTop = $('#termBody').scrollHeight;
+  scheduleTermScroll();
 }
+
 function termWrite(text: string, cls = ''): HTMLElement {
   const span = document.createElement('span');
   if (cls) span.className = cls;
-  span.textContent = cleanOut(text);
+  span.innerHTML = parseAnsiToHtml(text);
   term.pending = null; // anything written here ends the run's open line
   termAppend(span);
   return span;
 }
+
 // A run's output: finished lines show their error locations as links; the unfinished last line stays
 // plain (a prompt like "Name: " has no newline) and is swapped for the linked version once it ends.
 function runOutput(chunk: string): void {
-  const full = (term.pending?.text ?? '') + cleanOut(chunk);
+  const full = (term.pending?.text ?? '') + chunk;
   term.pending?.el.remove();
   term.pending = null;
   const nl = full.lastIndexOf('\n');
@@ -3585,6 +4517,7 @@ function runOutput(chunk: string): void {
   const rest = full.slice(nl + 1);
   if (rest) term.pending = { el: termWrite(rest), text: rest }; // termWrite cleared `pending`; set it after
 }
+
 function termLinked(text: string): void {
   const refs = rootInfo ? parseErrorRefs(text, term.runCwd, rootInfo.root) : [];
   term.refs.push(...refs.filter(r => r.error));
@@ -3592,15 +4525,23 @@ function termLinked(text: string): void {
   let at = 0;
   for (const r of refs) {
     if (r.start < at) continue;
-    span.append(text.slice(at, r.start));
+    if (r.start > at) {
+      const chunkSpan = document.createElement('span');
+      chunkSpan.innerHTML = parseAnsiToHtml(text.slice(at, r.start));
+      span.append(chunkSpan);
+    }
     const a = document.createElement('a');
     a.className = 'term-ref';
-    a.textContent = text.slice(r.start, r.end);
+    a.textContent = cleanOut(text.slice(r.start, r.end));
     a.dataset.path = r.path; a.dataset.line = String(r.line); a.dataset.col = String(r.col);
     span.append(a);
     at = r.end;
   }
-  span.append(text.slice(at));
+  if (at < text.length) {
+    const chunkSpan = document.createElement('span');
+    chunkSpan.innerHTML = parseAnsiToHtml(text.slice(at));
+    span.append(chunkSpan);
+  }
   termAppend(span);
 }
 termOut.addEventListener('click', e => {
@@ -3648,24 +4589,15 @@ function killCommand(): void {
 function termWriteCommand(cmd: string): void {
   const span = document.createElement('span');
   span.className = 'cmd';
-  const trimmed = cmd.trimStart();
-  const leading = cmd.slice(0, cmd.length - trimmed.length);
-  const spaceIdx = trimmed.indexOf(' ');
-  if (spaceIdx === -1) {
-    span.innerHTML = `${esc(leading)}<span class="term-cmd-name">${esc(trimmed)}</span>\n`;
-  } else {
-    const cmdName = trimmed.slice(0, spaceIdx);
-    const rest = trimmed.slice(spaceIdx);
-    span.innerHTML = `${esc(leading)}<span class="term-cmd-name">${esc(cmdName)}</span><span class="term-cmd-args">${esc(rest)}</span>\n`;
-  }
+  span.innerHTML = `${formatCommandSyntax(cmd)}\n`;
   termAppend(span);
 }
 async function runCommand(cmd: string): Promise<void> {
   if (term.proc != null) { background(api.term.write(term.proc, cmd + '\n')); termWrite(cmd + '\n', 'cmd'); return; }
-  termWrite(`${term.cwd}> `, 'ps');
+  termAppend(createPromptElement(term.cwd));
   termWriteCommand(cmd);
   if (!cmd.trim()) return;
-  if (!term.history.length || term.history[term.history.length - 1] !== cmd) {
+  if (!term.history.length || term.history.at(-1) !== cmd) {
     term.history.push(cmd);
     if (term.history.length > 200) term.history.shift();
     store.set('breeze.termHistory', term.history);
@@ -3728,7 +4660,19 @@ api.term.onExit((id, code) => {
   if (id !== term.proc) return;
   const runId = term.runId;
   term.proc = null; term.runId = null; $('#termPs').classList.remove('busy');
-  if (code && id !== runId) termWrite(`exited with code ${code}\n`, 'err');
+  if (id !== runId) {
+    if (code === 0) {
+      const okDiv = document.createElement('div');
+      okDiv.className = 'term-exit-ok';
+      okDiv.textContent = '✓ process completed (exit code 0)';
+      termAppend(okDiv);
+    } else if (code) {
+      const errDiv = document.createElement('div');
+      errDiv.className = 'term-exit-err';
+      errDiv.textContent = `✕ process failed with exit code ${code}`;
+      termAppend(errDiv);
+    }
+  }
   if (id !== runId) return;
   if (term.pending) { const rest = term.pending.text; term.pending.el.remove(); term.pending = null; termLinked(rest); }
   clearRunDiags();
@@ -3913,19 +4857,10 @@ function updateGhost(): void {
     return;
   }
   const match = ghostMatch(v);
-  const trimmed = v.trimStart();
-  const leading = v.slice(0, v.length - trimmed.length);
-  const spaceIdx = trimmed.indexOf(' ');
-  let highlightedTyped = '';
-  if (spaceIdx === -1) {
-    highlightedTyped = `${esc(leading)}<span class="term-cmd-name">${esc(trimmed)}</span>`;
-  } else {
-    const cmdName = trimmed.slice(0, spaceIdx);
-    const rest = trimmed.slice(spaceIdx);
-    highlightedTyped = `${esc(leading)}<span class="term-cmd-name">${esc(cmdName)}</span><span class="term-cmd-args">${esc(rest)}</span>`;
-  }
-  const ghostTail = match && match.startsWith(v) ? match.slice(v.length) : '';
-  termGhost.innerHTML = `${highlightedTyped}${ghostTail ? `<span class="term-ghost-text">${esc(ghostTail)}</span>` : ''}`;
+  const highlightedTyped = formatCommandSyntax(v);
+  const ghostTail = match?.startsWith(v) ? match.slice(v.length) : '';
+  const ghostSpan = ghostTail ? `<span class="term-ghost-text">${esc(ghostTail)}</span>` : '';
+  termGhost.innerHTML = `${highlightedTyped}${ghostSpan}`;
 }
 // Width of text in an input's own font.
 const measureCtx = document.createElement('canvas').getContext('2d');
@@ -4032,6 +4967,9 @@ function startSashDrag(sash: HTMLElement, kind: SashKind, e: PointerEvent): void
   const up = () => {
     removeEventListener('pointermove', move); removeEventListener('pointerup', up);
     document.body.classList.remove('resizing', 'resizing-h'); sash.classList.remove('active');
+    if (layout.side !== start.side || layout.agents !== start.agents || layout.preview !== start.preview || layout.term !== start.term || layout.sideOpen !== start.sideOpen || layout.agentsOpen !== start.agentsOpen || layout.previewOpen !== start.previewOpen || layout.termOpen !== start.termOpen) {
+      pushAppAction({ type: 'layout', prev: start, next: { ...layout } });
+    }
   };
   addEventListener('pointermove', move); addEventListener('pointerup', up);
 }
@@ -4042,7 +4980,12 @@ $$<HTMLElement>('[data-sash]').forEach(sash => {
     e.preventDefault();
     startSashDrag(sash, kind, e);
   });
-  sash.addEventListener('dblclick', () => { layout[kind] = DEFAULT_LAYOUT[kind]; applyLayout(); });
+  sash.addEventListener('dblclick', () => {
+    const prev = { ...layout };
+    layout[kind] = DEFAULT_LAYOUT[kind];
+    pushAppAction({ type: 'layout', prev, next: { ...layout } });
+    applyLayoutAnimated();
+  });
 });
 $('#tglSide').onclick = () => run('view.toggleSide');
 $('#tglTerm').onclick = () => run('term.toggle');
@@ -4094,10 +5037,30 @@ const commands: Record<string, () => unknown> = {
   'view.files': () => showView('files', true),
   'view.search': searchSelection,
   'view.git': () => showView('git', true),
-  'view.toggleSide': () => { layout.sideOpen = !layout.sideOpen; applyLayout(); },
-  'view.toggleAgents': () => { layout.agentsOpen = !layout.agentsOpen; applyLayout(); },
-  'view.togglePreview': () => { layout.previewOpen = !layout.previewOpen; applyLayout(); },
-  'view.resetLayout': () => { Object.assign(layout, DEFAULT_LAYOUT, { view: layout.view }); applyLayout(); },
+  'view.toggleSide': () => {
+    const prev = { ...layout };
+    layout.sideOpen = !layout.sideOpen;
+    pushAppAction({ type: 'layout', prev, next: { ...layout } });
+    applyLayoutAnimated();
+  },
+  'view.toggleAgents': () => {
+    const prev = { ...layout };
+    layout.agentsOpen = !layout.agentsOpen;
+    pushAppAction({ type: 'layout', prev, next: { ...layout } });
+    applyLayoutAnimated();
+  },
+  'view.togglePreview': () => {
+    const prev = { ...layout };
+    layout.previewOpen = !layout.previewOpen;
+    pushAppAction({ type: 'layout', prev, next: { ...layout } });
+    applyLayoutAnimated();
+  },
+  'view.resetLayout': () => {
+    const prev = { ...layout };
+    Object.assign(layout, DEFAULT_LAYOUT, { view: layout.view });
+    pushAppAction({ type: 'layout', prev, next: { ...layout } });
+    applyLayoutAnimated();
+  },
   'win.reload': () => { flushSession(); return api.win.reload(); },
   'win.devtools': () => api.win.toggleDevTools(),
   'go.file': quickOpen,
@@ -4106,11 +5069,35 @@ const commands: Record<string, () => unknown> = {
   'go.nextEditor': () => cycleTab(1),
   'go.prevEditor': () => cycleTab(-1),
   'run.file': runFile,
-  'run.start': () => (runnable(active) ? run('run.file') : running ? reloadPreview() : startPreview()),
+  'run.start': () => {
+    if (runnable(active)) return run('run.file');
+    return running ? reloadPreview() : startPreview();
+  },
   'run.reload': reloadPreview,
   'run.stop': () => { if (term.runId != null) killCommand(); else { stopPreview(); toast('Preview stopped'); } },
-  'term.toggle': () => { layout.termOpen = !layout.termOpen; applyLayout(); if (layout.termOpen) termInput.focus(); },
-  'term.focus': () => { layout.termOpen = true; applyLayout(); termInput.focus(); },
+  'live.toggle': toggleLiveShare,
+  'live.start': () => background((async () => {
+    try {
+      const live = await api.live.start();
+      await refreshLiveShare();
+      toast(`Live Share opened at ${live.url}`);
+    } catch (e) { toast(errMsg(e)); }
+  })()),
+  'live.stop': () => background((async () => {
+    try {
+      await api.live.stop();
+      await refreshLiveShare();
+      toast('Live Share turned off');
+    } catch (e) { toast(errMsg(e)); }
+  })()),
+  'term.toggle': () => {
+    const prev = { ...layout };
+    layout.termOpen = !layout.termOpen;
+    pushAppAction({ type: 'layout', prev, next: { ...layout } });
+    applyLayoutAnimated();
+    if (layout.termOpen) termInput.focus();
+  },
+  'term.focus': () => { layout.termOpen = true; applyLayoutAnimated(); termInput.focus(); },
   'term.clear': () => { termOut.innerHTML = ''; },
   'term.kill': () => { if (term.proc == null) toast('Nothing is running'); else killCommand(); },
   'explorer.refresh': refreshTree,
@@ -4136,7 +5123,38 @@ function run(act: string): void {
 // Undo and redo in the code editor use its own history; everything else goes to the focused field.
 function editRole(role: string): void {
   const b = activeText();
-  if (b && (role === 'undo' || role === 'redo')) { stepHistory(b, role === 'undo'); b.ta.focus(); return; }
+  if (role === 'undo') {
+    if (b && b.undo.length > 0) {
+      stepHistory(b, true);
+      b.ta.focus();
+      return;
+    }
+    if (actionUndoStack.length > 0) {
+      void undoAppAction();
+      return;
+    }
+    if (b) {
+      stepHistory(b, true);
+      b.ta.focus();
+      return;
+    }
+  }
+  if (role === 'redo') {
+    if (b && b.redo.length > 0) {
+      stepHistory(b, false);
+      b.ta.focus();
+      return;
+    }
+    if (actionRedoStack.length > 0) {
+      void redoAppAction();
+      return;
+    }
+    if (b) {
+      stepHistory(b, false);
+      b.ta.focus();
+      return;
+    }
+  }
   b?.ta.focus();
   background(api.win.edit(role));
 }
@@ -4261,6 +5279,8 @@ const MENUS: Menu[] = [
       { label: 'Start Preview / Run File', act: 'run.start', key: 'F5' },
       { label: 'Reload Preview', act: 'run.reload', key: 'Ctrl+F5', enabled: () => running },
       { label: 'Stop Preview', act: 'run.stop', key: 'Shift+F5', enabled: () => running || term.runId != null },
+      { sep: true },
+      { label: 'Toggle Live Share', act: 'live.toggle' },
     ]
   },
   {
@@ -4324,7 +5344,7 @@ function cancelMenuClose(): void { clearTimeout(menuCloseTimer); }
 // A menu opened by hovering closes shortly after the pointer leaves both the bar and the menu.
 function scheduleMenuClose(): void {
   cancelMenuClose();
-  menuCloseTimer = setTimeout(() => { if (openMenuIdx >= 0 && !menuPinned) closeMenu(); }, 350);
+  menuCloseTimer = setTimeout(() => { if (openMenuIdx >= 0 && !menuPinned) closeMenu(); }, 130);
 }
 function buildMenubar(): void {
   $('#menubar').innerHTML = BAR_MENUS.map((m, i) => `<button class="menu-top" data-menu="${i}" aria-haspopup="menu">${esc(m.name)}</button>`).join('');
@@ -4416,7 +5436,7 @@ function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTML
   const m = document.createElement('div');
   m.className = cls;
   m.setAttribute('role', 'menu');
-  m.innerHTML = items.map(menuItemHtml).join('');
+  m.innerHTML = items.map((it, i) => menuItemHtml(it, i)).join('');
   $('#menuRoot').append(m);
   m.style.left = `${Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8))}px`;
   m.style.top = `${Math.max(8, Math.min(y, innerHeight - m.offsetHeight - 8))}px`;
@@ -4454,7 +5474,7 @@ function showMenu(x: number, y: number, items: MenuItem[], viaKeyboard: boolean)
   const m = renderMenu(x, y, items);
   // Callers may still restyle the menu (width, flip above its button), so the origin is set once they are done.
   const owner = menuOwner;
-  if (owner) queueMicrotask(() => { if (m.isConnected) growFrom(m, owner, { left: parseFloat(m.style.left), top: parseFloat(m.style.top) }); });
+  if (owner) queueMicrotask(() => { if (m.isConnected) growFrom(m, owner, { left: Number.parseFloat(m.style.left), top: Number.parseFloat(m.style.top) }); });
 }
 function activateMenuItem(it: MenuItem): void {
   if (it.enabled && !it.enabled()) return;
@@ -4527,6 +5547,62 @@ document.addEventListener('keydown', e => {
     if (findOpen) { closeFind(); activeText()?.ta.focus(); return; }
   }
   if (modalOpen() || vibeOn || $('#ide').classList.contains('hidden')) return;
+
+  const isCtrlZ = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z' && !e.shiftKey;
+  const isCtrlY = (e.ctrlKey || e.metaKey) && !e.altKey && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey));
+
+  if (isCtrlZ) {
+    const el = focused();
+    if (el && el.matches('input, textarea') && !el.classList.contains('ta')) {
+      return;
+    }
+    if (el?.classList.contains('ta')) {
+      const b = activeText();
+      if (b && b.undo.length > 0) {
+        return;
+      }
+    }
+    if (actionUndoStack.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      void undoAppAction();
+      return;
+    }
+    const b = activeText();
+    if (b && b.undo.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      stepHistory(b, true);
+      return;
+    }
+  }
+
+  if (isCtrlY) {
+    const el = focused();
+    if (el && el.matches('input, textarea') && !el.classList.contains('ta')) {
+      return;
+    }
+    if (el?.classList.contains('ta')) {
+      const b = activeText();
+      if (b && b.redo.length > 0) {
+        return;
+      }
+    }
+    if (actionRedoStack.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      void redoAppAction();
+      return;
+    }
+    const b = activeText();
+    if (b && b.redo.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      stepHistory(b, false);
+      return;
+    }
+  }
+
   const act = keymap.get(comboOf(e));
   if (!act) return;
   if (EDITOR_ONLY.has(act) && !focused()?.classList.contains('ta')) return;
@@ -4666,9 +5742,18 @@ function setAgent(k: AgentKey, status: AgentStatus, task: string, used?: number)
   if (status === 'working' && curTab?.run?.phase === k) showThinking(thinkingLabel(k), k, curTab);
 }
 
-/* ----- Chat surfaces & Multi-Tab Agent system ----- */
-interface ImageAttachment { id: string; name: string; dataUrl: string; fileUrl?: string; fileRel?: string; }
-const attachmentsMap: Record<WorkMode, ImageAttachment[]> = { ide: [], box: [] };
+type AttachmentKind = 'image' | 'file' | 'folder';
+interface AgentAttachment {
+  id: string;
+  name: string;
+  kind?: AttachmentKind;
+  path?: string;
+  dataUrl?: string;
+  fileUrl?: string;
+  fileRel?: string;
+}
+type ImageAttachment = AgentAttachment;
+const attachmentsMap: Record<WorkMode, AgentAttachment[]> = { ide: [], box: [] };
 
 interface Surface { name: WorkMode; chat: HTMLElement; prompt: HTMLTextAreaElement; send: HTMLElement; mode: HTMLSelectElement; attachmentsEl: HTMLElement; }
 const SURFACES: Record<WorkMode, Surface> = {
@@ -4761,20 +5846,53 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
   tab.panel.className = 'agent-tab-panel';
   if (initialHtml) {
     tab.panel.innerHTML = initialHtml;
+  } else if (s.name === 'box') {
+    const agent = selectedAgent();
+    const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
+    tab.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
   } else {
-    if (s.name === 'box') {
-      const agent = selectedAgent();
-      const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
-      tab.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="56" height="56"><h4>What can I help with?</h4><div>${who}</div></div></div>`;
-    } else {
-      tab.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
-    }
+    tab.panel.innerHTML = `<div class="empty"><div><img src="../../assets/brand/Agent.png" alt="" width="40" height="40"><h4>Your agents are ready</h4><div>Tell them what to build. They'll ask if anything's unclear.</div></div></div>`;
   }
   s.chat.appendChild(tab.panel);
   surfaceTabs[s.name].push(tab);
   if (markNew) createdTabIds.add(tab.id);
   renderAgentTabs(s);
   return tab;
+}
+
+const agentInkAt: Record<string, { x: number; y: number; w: number } | null> = { ide: null, box: null };
+function placeAgentTabInk(s: Surface): void {
+  const tabsList = s.name === 'box' ? $('#boxAgentTabsList') : $('#agentTabsList');
+  if (!tabsList) return;
+  const on = tabsList.querySelector<HTMLElement>('.agent-tab.active:not(.leaving)');
+  const old = tabsList.querySelector<HTMLElement>('.agent-tab-ink');
+  if (!on) {
+    if (old) {
+      old.style.opacity = '0';
+      setTimeout(() => old.remove(), 120);
+    }
+    agentInkAt[s.name] = null;
+    return;
+  }
+  const ink = old ?? tabsList.appendChild(Object.assign(document.createElement('span'), { className: 'agent-tab-ink' }));
+  ink.style.opacity = '1';
+  const next = {
+    x: on.offsetLeft + 8,
+    y: on.offsetTop + on.offsetHeight - 2,
+    w: Math.max(0, on.offsetWidth - 16)
+  };
+  const draw = (p: { x: number; y: number; w: number }) => {
+    ink.style.transform = `translate(${p.x}px, ${p.y}px)`;
+    ink.style.width = `${p.w}px`;
+  };
+  if (agentInkAt[s.name]) {
+    ink.style.transition = 'none';
+    draw(agentInkAt[s.name]!);
+    const _reflow = ink.offsetWidth;
+    ink.style.transition = '';
+  }
+  draw(next);
+  agentInkAt[s.name] = next;
 }
 
 function renderAgentTabs(s: Surface): void {
@@ -4802,14 +5920,19 @@ function renderAgentTabs(s: Surface): void {
       newEl.dataset.agentTab = t.id;
       newEl.className = `agent-tab ${isActive ? 'active' : ''} ${isRunning ? 'running' : 'idle'} ${isMulti ? 'closable' : 'single'}`;
       newEl.innerHTML = `
-        <span class="tab-status"></span>
+        <span class="tab-status" aria-hidden="true"></span>
         <span class="tab-title">${esc(t.title)}</span>
-        <button class="tab-close" type="button" data-close-tab="${escAttr(t.id)}">✕</button>
+        <button class="tab-close" type="button" data-close-tab="${escAttr(t.id)}" title="Close tab" aria-label="Close tab">
+          <svg class="tab-close-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       `;
 
       if (createdTabIds.has(t.id)) {
         newEl.classList.add('enter');
-        newEl.addEventListener('animationend', () => newEl.classList.remove('enter'), { once: true });
+        newEl.addEventListener('animationend', () => {
+          newEl.classList.remove('enter');
+          placeAgentTabInk(s);
+        }, { once: true });
         createdTabIds.delete(t.id);
       }
 
@@ -4848,6 +5971,8 @@ function renderAgentTabs(s: Surface): void {
       tabsList.appendChild(el);
     }
   });
+
+  placeAgentTabInk(s);
 }
 
 function switchAgentTab(s: Surface, tid: string): void {
@@ -4931,6 +6056,10 @@ function closeAgentTab(s: Surface, tid: string): void {
       }
     }
 
+    const w = tabEl.getBoundingClientRect().width;
+    tabEl.style.width = `${w}px`;
+    tabEl.style.maxWidth = `${w}px`;
+    const _reflow = tabEl.offsetWidth;
     tabEl.classList.add('leaving');
 
     if (surfaceTabs[s.name].length === 2) {
@@ -4944,6 +6073,8 @@ function closeAgentTab(s: Surface, tid: string): void {
       }
     }
 
+    renderAgentTabs(s);
+
     let finished = false;
     const onEnd = () => {
       if (finished) return;
@@ -4951,7 +6082,7 @@ function closeAgentTab(s: Surface, tid: string): void {
       finalize();
     };
     tabEl.addEventListener('transitionend', onEnd, { once: true });
-    setTimeout(onEnd, 240);
+    setTimeout(onEnd, 220);
   } else {
     finalize();
   }
@@ -5027,13 +6158,23 @@ function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
   return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`, t);
 }
 
-function userMsg(text: string, attachments?: ImageAttachment[], tab?: AgentTabState): void {
+function userMsg(text: string, attachments?: AgentAttachment[], tab?: AgentTabState): void {
   const t = tab || getActiveTab(msgSurface);
   let imgHtml = '';
-  if (attachments && attachments.length) {
-    imgHtml = `<div class="msg-attachments">${attachments.map(a =>
-      `<div class="chat-img-wrap" title="Click to view full size"><img src="${escAttr(a.fileUrl || a.dataUrl)}" class="chat-img" alt="${escAttr(a.name)}" data-full="${escAttr(a.fileUrl || a.dataUrl)}"></div>`
-    ).join('')}</div>`;
+  if (attachments?.length) {
+    const items = attachments.map(a => {
+      const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
+      const p = a.path || a.fileRel || a.name;
+      if (kind === 'folder') {
+        return `<div class="chat-file-chip folder" data-path="${escAttr(p)}" title="Folder: ${escAttr(p)} (click to reveal)"><span class="ico">${folderIcon(a.name, false)}</span><span class="nm">${esc(p)}</span></div>`;
+      }
+      if (kind === 'file') {
+        return `<div class="chat-file-chip file" data-path="${escAttr(p)}" title="File: ${escAttr(p)} (click to open)"><span class="ico">${fileIcon(a.name)}</span><span class="nm">${esc(p)}</span></div>`;
+      }
+      const src = a.fileUrl || a.dataUrl || '';
+      return `<div class="chat-img-wrap" title="Click to view full size"><img src="${escAttr(src)}" class="chat-img" alt="${escAttr(a.name)}" data-full="${escAttr(src)}"></div>`;
+    }).join('');
+    imgHtml = `<div class="msg-attachments">${items}</div>`;
   }
   const bodyText = text ? `<div>${esc(text).replaceAll('\n', '<br>')}</div>` : '';
   addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${bodyText}${imgHtml}</div></div>`, t);
@@ -5091,8 +6232,7 @@ function md(text: string): string {
   let last = 0;
   // An unclosed fence (the reply was cut off) still shows its code.
   for (const m of text.matchAll(/```([^\n`]*)\n?([\s\S]*?)(?:```|$)/g)) {
-    out.push(inlineMd(text.slice(last, m.index)));
-    out.push(artifactHtml(m[1].trim(), m[2].replace(/\n$/, '')));
+    out.push(inlineMd(text.slice(last, m.index)), artifactHtml(m[1].trim(), m[2].replace(/\n$/, '')));
     last = m.index + m[0].length;
   }
   out.push(inlineMd(text.slice(last)));
@@ -5106,7 +6246,7 @@ const LANG_EXT: Record<string, string> = {
 // "html index.html", "index.html" or "python": the file name to show and to save as.
 function artifactName(info: string): string {
   const [first = '', second = ''] = info.split(/\s+/);
-  const named = [second, first].find(t => /^[\w.-]+\.[\w]+$/.test(t) && !/^\.+$/.test(t));
+  const named = [second, first].find(t => /^[\w.-]+\.\w+$/.test(t) && !/^\.+$/.test(t));
   if (named) return named;
   return `snippet.${LANG_EXT[first.toLowerCase()] ?? 'txt'}`;
 }
@@ -5158,7 +6298,7 @@ function archiveChatTab(s: Surface, tab: AgentTabState): void {
   if (s.name === 'ide' && !rootInfo) return;
   if (tab.panel.querySelector('.empty') && !tab.panel.querySelector('.msg')) return;
   const html = [...tab.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
-  if (!html || !html.includes('class="msg')) return;
+  if (!html?.includes('class="msg')) return;
   if (!tab.historyId) tab.historyId = newChatId();
   const id = tab.historyId;
   const first = tab.panel.querySelector('.msg.user .body')?.textContent ?? tab.title ?? 'Chat';
@@ -5193,7 +6333,7 @@ function saveChat(tab?: AgentTabState): void {
 function restoreChat(s: Surface = SURFACES.ide): void {
   const html = store.get<string>(chatKey(s), '');
   // If an earlier session was stored in chatKey, archive it into chat history so it is never lost
-  if (html && html.includes('msg')) {
+  if (html?.includes('msg')) {
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = html;
     const first = tempDiv.querySelector('.msg.user .body')?.textContent ?? 'Chat';
@@ -5273,24 +6413,76 @@ function renderAttachments(s: Surface): void {
     return;
   }
   s.attachmentsEl.classList.remove('hidden');
-  s.attachmentsEl.innerHTML = list.map(a => `
-    <div class="attachment-chip" data-att-id="${escAttr(a.id)}">
-      <img src="${escAttr(a.dataUrl)}" class="attachment-thumb" alt="${escAttr(a.name)}" title="Click to preview">
-      <span class="attachment-name" title="${escAttr(a.name)}">${esc(a.name)}</span>
-      <button class="attachment-del" type="button" title="Remove" data-del-id="${escAttr(a.id)}">✕</button>
-    </div>
-  `).join('');
+  s.attachmentsEl.innerHTML = list.map(a => {
+    const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
+    let thumbHtml = '';
+    if (kind === 'image') {
+      const src = a.dataUrl || a.fileUrl || '';
+      thumbHtml = `<img src="${escAttr(src)}" class="attachment-thumb" alt="${escAttr(a.name)}" title="Click to preview">`;
+    } else if (kind === 'folder') {
+      thumbHtml = `<span class="attachment-thumb attachment-icon folder-icon" title="Folder: ${escAttr(a.path || a.name)}">${folderIcon(a.name, false)}</span>`;
+    } else {
+      thumbHtml = `<span class="attachment-thumb attachment-icon file-icon" title="File: ${escAttr(a.path || a.name)}">${fileIcon(a.name)}</span>`;
+    }
+    const displayName = a.path || a.name;
+    return `
+      <div class="attachment-chip ${kind}-chip" data-att-id="${escAttr(a.id)}" data-path="${escAttr(a.path || '')}" title="${escAttr(displayName)}">
+        ${thumbHtml}
+        <span class="attachment-name" title="${escAttr(displayName)}">${esc(displayName)}</span>
+        <button class="attachment-del" type="button" title="Remove" data-del-id="${escAttr(a.id)}">✕</button>
+      </div>
+    `;
+  }).join('');
   $$('[data-del-id]', s.attachmentsEl).forEach(btn => {
-    btn.onclick = e => {
+    btn.onclick = async e => {
       e.stopPropagation();
       const id = btn.dataset.delId;
+      const chip = btn.closest<HTMLElement>('.attachment-chip');
+      const list = attachmentsMap[s.name] || [];
+      const idx = list.findIndex(x => x.id === id);
+      const att = list[idx];
+      if (!att) return;
+
+      const tab = getActiveTab(s);
+      pushAppAction({
+        type: 'remove-attachment',
+        surface: s.name as 'ide' | 'box',
+        tabId: tab.id,
+        attachment: att,
+        index: idx,
+      });
+
+      if (chip) {
+        chip.classList.add('leaving');
+        await new Promise(r => setTimeout(r, 200));
+      }
+
       attachmentsMap[s.name] = (attachmentsMap[s.name] || []).filter(x => x.id !== id);
+      tab.attachments = [...(attachmentsMap[s.name] || [])];
       renderAttachments(s);
+      toast(`Removed · ${att.name}`);
+    };
+  });
+  $$('.attachment-chip', s.attachmentsEl).forEach(chip => {
+    chip.onclick = e => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.attachment-del')) return;
+      const id = chip.dataset.attId;
+      const att = (attachmentsMap[s.name] || []).find(x => x.id === id);
+      if (!att?.path) return;
+      if (att.kind === 'folder') {
+        expanded.add(att.path);
+        renderTree();
+        toast(`Revealed folder · ${att.path}`);
+      } else if (att.kind === 'file') {
+        openFile(att.path);
+      }
     };
   });
 }
 
-async function addPastedImage(file: File, s: Surface): Promise<void> {
+async function addPastedImage(file: File, s: Surface, tab?: AgentTabState): Promise<void> {
+  const targetTab = tab || getActiveTab(s);
   const dataUrl = await new Promise<string>((res, rej) => {
     const fr = new FileReader();
     fr.onload = () => res(fr.result as string);
@@ -5299,7 +6491,8 @@ async function addPastedImage(file: File, s: Surface): Promise<void> {
   });
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
-  const ext = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/webp' ? 'webp' : file.type === 'image/gif' ? 'gif' : 'png';
+  const extMap: Record<string, string> = { 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+  const ext = extMap[file.type] ?? 'png';
   const now = new Date();
   const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
   const name = file.name && file.name !== 'image.png' ? file.name : `image_${ts}.${ext}`;
@@ -5311,15 +6504,130 @@ async function addPastedImage(file: File, s: Surface): Promise<void> {
   } catch {
     // In browser demo or if import fails, keep dataUrl
   }
-  const att: ImageAttachment = { id: Math.random().toString(36).slice(2), name, dataUrl, fileUrl, fileRel };
+  const att: AgentAttachment = { id: Math.random().toString(36).slice(2), name, kind: 'image', dataUrl, fileUrl, fileRel, path: fileRel };
   attachmentsMap[s.name].push(att);
+  targetTab.attachments = [...attachmentsMap[s.name]];
   renderAttachments(s);
   s.prompt.focus();
   toast(`Image attached · ${name}`);
 }
 
+async function attachPathToAgent(rawPath: string, isDir: boolean, s: Surface, tab?: AgentTabState): Promise<boolean> {
+  const targetTab = tab || getActiveTab(s);
+  const cleanPath = rawPath.replaceAll('\\', '/').replace(/\/$/, '');
+  const name = baseName(cleanPath) || cleanPath;
+  const list = attachmentsMap[s.name] || [];
 
+  if (list.some(a => (a.path?.toLowerCase() === cleanPath.toLowerCase()) || (a.fileRel?.toLowerCase() === cleanPath.toLowerCase()))) {
+    toast(`Already attached · ${name}`);
+    return false;
+  }
 
+  let kind: AttachmentKind = 'file';
+  if (isDir) {
+    kind = 'folder';
+  } else if (IMAGE_FILE.test(name)) {
+    kind = 'image';
+  }
+  let fileUrl: string | undefined;
+  if (kind === 'image') {
+    try {
+      fileUrl = await api.fs.fileUrl(cleanPath);
+    } catch {}
+  }
+
+  const att: AgentAttachment = {
+    id: Math.random().toString(36).slice(2),
+    name,
+    kind,
+    path: cleanPath,
+    fileRel: cleanPath,
+    fileUrl,
+    dataUrl: fileUrl,
+  };
+
+  list.push(att);
+  attachmentsMap[s.name] = list;
+  targetTab.attachments = [...list];
+  renderAttachments(s);
+  s.prompt.focus();
+  const labelMap: Record<AttachmentKind, string> = { folder: 'Folder', image: 'Image', file: 'File' };
+  const label = labelMap[kind] ?? 'File';
+  toast(`${label} attached · ${name}`);
+  return true;
+}
+
+async function handleAgentDrop(e: DragEvent, ag: AgentDropTargetInfo): Promise<void> {
+  let targetTab: AgentTabState;
+  if (ag.isNewTab) {
+    targetTab = createAgentTab(ag.surface, undefined, undefined, null, true);
+    activeTabId[ag.surface.name] = targetTab.id;
+    switchAgentTab(ag.surface, targetTab.id);
+  } else if (ag.tab) {
+    if (ag.tab.id !== activeTabId[ag.surface.name]) {
+      switchAgentTab(ag.surface, ag.tab.id);
+    }
+    targetTab = ag.tab;
+  } else {
+    targetTab = getActiveTab(ag.surface);
+  }
+
+  if (draggedTreePath) {
+    const p = draggedTreePath;
+    const isDir = draggedTreeIsDir;
+    draggedTreePath = null;
+    draggedTreeIsDir = false;
+    await attachPathToAgent(p, isDir, ag.surface, targetTab);
+    return;
+  }
+
+  if (e.dataTransfer) {
+    await handleAgentDroppedFiles(e.dataTransfer, ag.surface, targetTab);
+  }
+}
+
+async function handleAgentDroppedFiles(dt: DataTransfer, s: Surface, tab?: AgentTabState): Promise<void> {
+  const targetTab = tab || getActiveTab(s);
+  const items = Array.from(dt.items || []);
+  const files = Array.from(dt.files || []);
+
+  const entries = items.map(i => {
+    try { return i.webkitGetAsEntry(); } catch { return null; }
+  }).filter((x): x is FileSystemEntry => !!x);
+
+  if (entries.length > 0) {
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const file = files[i];
+      const diskPath = file ? getDroppedFilePath(file) : '';
+      const rel = diskPath && rootInfo ? toRelProject(diskPath) : null;
+
+      if (entry.isDirectory) {
+        const folderPath = rel || diskPath || entry.name;
+        await attachPathToAgent(folderPath, true, s, targetTab);
+      } else if (entry.isFile) {
+        if (file && (file.type.startsWith('image/') || IMAGE_FILE.test(file.name))) {
+          await addPastedImage(file, s, targetTab);
+        } else {
+          const filePath = rel || diskPath || entry.name;
+          await attachPathToAgent(filePath, false, s, targetTab);
+        }
+      }
+    }
+    return;
+  }
+
+  for (const file of files) {
+    const diskPath = getDroppedFilePath(file);
+    const rel = diskPath && rootInfo ? toRelProject(diskPath) : null;
+    if (file.type.startsWith('image/') || IMAGE_FILE.test(file.name)) {
+      await addPastedImage(file, s, targetTab);
+    } else {
+      const filePath = rel || diskPath || file.name;
+      await attachPathToAgent(filePath, false, s, targetTab);
+    }
+  }
+}
 
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => {
@@ -5332,27 +6640,18 @@ for (const s of Object.values(SURFACES)) {
   const box = s.prompt.closest<HTMLElement>('.composer-box');
   if (box) {
     box.addEventListener('dragover', e => {
-      if (e.dataTransfer?.types.includes('Files')) {
+      if (hasFiles(e) || draggedTreePath) {
         e.preventDefault();
         box.classList.add('drag-over');
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
       }
     });
     box.addEventListener('dragleave', () => box.classList.remove('drag-over'));
     box.addEventListener('drop', async e => {
       box.classList.remove('drag-over');
-      const files = e.dataTransfer?.files;
-      if (!files || !files.length) return;
-      const imgs: File[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        if (f.type.startsWith('image/') || IMAGE_FILE.test(f.name)) {
-          imgs.push(f);
-        }
-      }
-      if (imgs.length > 0) {
-        e.preventDefault();
-        await Promise.all(imgs.map(f => addPastedImage(f, s)));
-      }
+      e.preventDefault();
+      e.stopPropagation();
+      await handleAgentDrop(e, { el: box, surface: s, tab: getActiveTab(s) });
     });
   }
 }
@@ -5362,7 +6661,7 @@ document.addEventListener('paste', async (e: ClipboardEvent) => {
   const items = e.clipboardData?.items;
   const filesList = e.clipboardData?.files;
   const imgItem = items ? [...items].find(it => it.type.startsWith('image/')) : null;
-  const imgFile = !imgItem && filesList && filesList.length ? [...filesList].find(x => x.type.startsWith('image/') || IMAGE_FILE.test(x.name)) : null;
+  const imgFile = !imgItem && filesList?.length ? [...filesList].find(x => x.type.startsWith('image/') || IMAGE_FILE.test(x.name)) : null;
 
   if (!imgItem && !imgFile) return;
 
@@ -5382,11 +6681,24 @@ document.addEventListener('paste', async (e: ClipboardEvent) => {
   await addPastedImage(file, targetSurface);
 });
 
-// Click thumbnail or chat image to view full size modal
+// Click thumbnail or chat image to view full size modal, or click chat chip to open file / reveal folder
 document.addEventListener('click', e => {
   const target = e.target as HTMLElement;
+  const chip = target.closest<HTMLElement>('.chat-file-chip');
+  if (chip?.dataset.path) {
+    const p = chip.dataset.path;
+    const isDir = chip.classList.contains('folder');
+    if (isDir) {
+      expanded.add(p);
+      renderTree();
+      toast(`Revealed folder · ${p}`);
+    } else {
+      openFile(p);
+    }
+    return;
+  }
   const img = target.closest<HTMLImageElement>('.chat-img, .attachment-thumb');
-  if (img && img.src) {
+  if (img?.src && !img.closest('.attachment-icon')) {
     const full = img.dataset.full || img.src;
     openModal(`<div class="img-modal-view"><img src="${escAttr(full)}" class="img-modal-img"><div class="row end w-full"><button class="btn btn-primary btn-sm" data-close>Close</button></div></div>`);
   }
@@ -5430,7 +6742,11 @@ async function sendPrompt(): Promise<void> {
   if (tab.panel.querySelector('.empty')) tab.panel.innerHTML = '';
 
   if (/^Chat \d+$/i.test(tab.title) || tab.title === 'New chat') {
-    tab.title = text ? (text.length > 20 ? text.slice(0, 18) + '…' : text) : 'Task';
+    if (text) {
+      tab.title = text.length > 20 ? text.slice(0, 18) + '…' : text;
+    } else {
+      tab.title = 'Task';
+    }
     renderAgentTabs(s);
   }
 
@@ -5441,8 +6757,13 @@ async function sendPrompt(): Promise<void> {
 
   let agentPrompt = text;
   if (attachments.length) {
-    const fileHeaders = attachments.map(a => `[Attached image: ${a.fileRel || a.name}]`).join('\n');
-    agentPrompt = fileHeaders + (text ? `\n\n${text}` : '\nPlease inspect the attached image(s).');
+    const fileHeaders = attachments.map(a => {
+      const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
+      if (kind === 'folder') return `[Attached folder: ${a.path || a.fileRel || a.name}]`;
+      if (kind === 'file') return `[Attached file: ${a.path || a.fileRel || a.name}]`;
+      return `[Attached image: ${a.fileRel || a.name}]`;
+    }).join('\n');
+    agentPrompt = fileHeaders + (text ? `\n\n${text}` : '\nPlease inspect the attached files/folders.');
   }
   await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', agentPrompt, uiMode, tab, true);
 }
@@ -5553,11 +6874,17 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
   auth: (_r, ev, tab) => {
     const url = ev.url;
     const cmd = ev.command;
-    const cardHtml = `<div class="card warn"><h5>${svgIcon('alert', 14)} Sign-in Required</h5><p>${esc(ev.text || 'Antigravity session expired or unauthenticated.')}</p>${url ? `<div class="row" style="margin-top:8px;"><button class="btn btn-primary btnAgentAuth">Sign in with Google</button></div>` : (cmd ? `<p class="sub">Run <code>${esc(cmd)}</code> to sign in</p>` : '')}</div>`;
+    let actionHtml = '';
+    if (url) {
+      actionHtml = '<div class="row" style="margin-top:8px;"><button class="btn btn-primary btnAgentAuth">Sign in with Google</button></div>';
+    } else if (cmd) {
+      actionHtml = `<p class="sub">Run <code>${esc(cmd)}</code> to sign in</p>`;
+    }
+    const cardHtml = `<div class="card warn"><h5>${svgIcon('alert', 14)} Sign-in Required</h5><p>${esc(ev.text || 'Antigravity session expired or unauthenticated.')}</p>${actionHtml}</div>`;
     const el = addMsg(cardHtml, tab);
     if (url) {
       el.querySelector<HTMLElement>('.btnAgentAuth')?.addEventListener('click', () => {
-        api.sys.openExternal(url);
+        background(api.sys.openExternal(url));
       });
     }
   },
@@ -5580,7 +6907,7 @@ api.agent.onEvent((runId, ev) => {
     const t = surfaceTabs[sName].find(x => x.runId === runId);
     if (t) { foundTab = t; break; }
   }
-  if (foundTab && foundTab.run) {
+  if (foundTab?.run) {
     handleAgentEvent(foundTab.run, ev, foundTab);
   } else if (earlyEvents.length < 200) {
     earlyEvents.push([runId, ev]);
@@ -5679,9 +7006,10 @@ function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
       return;
     }
     btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.title = text;
   };
   const a = sel.id === 'agentModelSelect' ? selectedAgent() : null;
-  const items: MenuItem[] = (a && a.found && a.models && a.models.length)
+  const items: MenuItem[] = (a?.found && a.models?.length)
     ? modelMenuItems(a, () => {
       sel.value = a.version || a.models?.[0] || '';
       label();
@@ -5694,7 +7022,7 @@ function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
       run: () => {
         sel.value = o.value;
         label();
-        if (sel.onchange) void (sel.onchange as (e: Event) => void)(new Event('change'));
+        if (sel.onchange) (sel.onchange as (e: Event) => void)(new Event('change'));
         sel.dispatchEvent(new Event('change', { bubbles: true }));
         btn.focus();
       },
@@ -5735,6 +7063,7 @@ function enhanceSelect(sel: HTMLSelectElement): void {
       return;
     }
     btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.title = text;
   };
   label();
   sel.addEventListener('change', label);
@@ -5794,11 +7123,13 @@ function renderBranch(): void {
   const s = gitState;
   const ahead = s.ahead ? ` ↑${s.ahead}` : '';
   const behind = s.behind ? ` ↓${s.behind}` : '';
-  $('#sbBranch').innerHTML = `${svgIcon('gitBranch', 14)}<span>${s.repo ? esc(`${s.branch || 'main'}${ahead}${behind}`) : 'no repository'}</span>`;
+  const branchLabel = s.repo ? esc((s.branch || 'main') + ahead + behind) : 'no repository';
+  $('#sbBranch').innerHTML = `${svgIcon('gitBranch', 14)}<span>${branchLabel}</span>`;
   const n = s.files?.length ?? 0;
   const badge = $('.act-btn[data-view=git] .badge');
   badge.textContent = n > 99 ? '99+' : String(n || '');
   badge.classList.toggle('hidden', !n);
+  renderPs();
 }
 // Explorer decorations: path -> status class, plus every folder that contains a change.
 function gitDecor(): { files: Map<string, string>; dirs: Set<string>; ignored: Set<string> } {
@@ -5848,27 +7179,49 @@ function scmSectionHtml(key: string, title: string, list: GitFile[], inStaged: b
     <div class="scm-head"><span class="chev"><svg width="10" height="10"><use href="#i-chev"/></svg></span><span class="title">${title}</span><span class="acts">${acts}</span><span class="count">${list.length}</span></div>
     <div class="scm-list">${rows}</div></div>`;
 }
-function lowestModelFor(a: DetectedAgent): { model?: string; effort: EffortLevel } {
-  const effort: EffortLevel = 'Low';
+function lowestModelFor(a: DetectedAgent): { model?: string } {
   if (a.id === 'antigravity') {
     const models = a.models ?? [];
     const low = models.find(m => /flash-low/i.test(m))
       || models.find(m => /flash-medium/i.test(m))
       || models.find(m => /flash/i.test(m))
-      || models[models.length - 1];
-    return { model: low || 'gemini-3.8-flash-low', effort };
+      || models.at(-1);
+    return { model: low || 'gemini-3.8-flash-low' };
   }
   if (a.id === 'codex') {
     const models = a.models ?? [];
-    const low = models.find(m => /mini/i.test(m)) || models[models.length - 1];
-    return { model: low || 'gpt-4o-mini', effort };
+    const low = models.find(m => /mini/i.test(m)) || models.at(-1);
+    return { model: low || 'gpt-4o-mini' };
   }
   if (a.api) {
     const models = a.models ?? [];
     const low = models.find(m => /(1\.5b|3b|mini|small)/i.test(m)) || models[0];
-    return { model: low || a.version || undefined, effort };
+    return { model: low || a.version || undefined };
   }
-  return { model: a.models?.[a.models.length - 1], effort };
+  return { model: a.models?.at(-1) };
+}
+
+function heuristicCommitMsg(files: GitFile[]): string {
+  if (!files.length) return 'chore: update project';
+  const names = files.map(f => baseName(f.path));
+  const dirs = [...new Set(files.map(f => dirName(f.path)).filter(Boolean))];
+  const scope = dirs.length === 1 ? `(${dirs[0].split(/[/\\]/).pop()})` : '';
+
+  const isTestOnly = files.every(f => /test|\.spec\./i.test(f.path));
+  if (isTestOnly) return `test${scope}: update tests for ${names.slice(0, 3).join(', ')}`;
+
+  const isDocOnly = files.every(f => /\.(md|txt|doc)$/i.test(f.path));
+  if (isDocOnly) return `docs${scope}: update documentation`;
+
+  const isStyleOnly = files.every(f => /\.(css|scss|less)$/i.test(f.path));
+  if (isStyleOnly) return `style${scope}: update styling in ${names.slice(0, 3).join(', ')}`;
+
+  const isBuildOnly = files.every(f => /(package\.json|tsconfig|webpack|vite|rollup|build)/i.test(f.path));
+  if (isBuildOnly) return `chore${scope}: update build and dependencies`;
+
+  const hasNew = files.some(f => f.x === '?' || f.x === 'A');
+  const type = hasNew ? 'feat' : 'fix';
+  return `${type}${scope}: update ${names.slice(0, 2).join(', ')}${names.length > 2 ? ` and ${names.length - 2} other file${names.length > 3 ? 's' : ''}` : ''}`;
 }
 
 function autoResizeScmMsg(el?: HTMLTextAreaElement | null): void {
@@ -5882,8 +7235,8 @@ function autoResizeScmMsg(el?: HTMLTextAreaElement | null): void {
 
 function currentActiveAgent(): DetectedAgent | null {
   try {
-    const list = typeof surfaceTabs !== 'undefined' ? surfaceTabs['ide'] : null;
-    const curId = typeof activeTabId !== 'undefined' ? activeTabId['ide'] : null;
+    const list = surfaceTabs !== undefined ? surfaceTabs['ide'] : null;
+    const curId = activeTabId !== undefined ? activeTabId['ide'] : null;
     const ideTab = list?.find(t => t.id === curId);
     const agentId = ideTab?.agentId || appState.agent;
     const found = appState.detect?.agents.find(a => a.id === agentId && a.found);
@@ -5895,26 +7248,22 @@ function currentActiveAgent(): DetectedAgent | null {
 function updateScmGenBtn(): void {
   const btn = $('#scmGenMsg') as HTMLButtonElement | null;
   if (!btn) return;
-  const a = currentActiveAgent();
-  const hasAgent = !!(a && a.found);
-  btn.classList.toggle('hidden', !hasAgent);
-  if (hasAgent) {
-    const tip = `Generate commit message (${a.name})`;
-    btn.title = tip;
-    btn.dataset.tooltip = tip;
-  }
+  const a = currentActiveAgent() || appState.detect?.agents.find(x => x.found);
+  btn.classList.remove('hidden');
+  const tip = a?.found ? `Generate commit message (${a.name})` : 'Generate commit message';
+  btn.title = tip;
+  btn.dataset.tooltip = tip;
 }
 
 async function generateCommitMsg(): Promise<void> {
-  const activeAg = currentActiveAgent();
-  if (!activeAg || !activeAg.found) {
-    toast('No active AI agent found');
-    return;
-  }
   const currentFiles = gitState.files ?? [];
   if (!currentFiles.length) {
     toast('No changes to generate commit message for');
     return;
+  }
+  let activeAg = currentActiveAgent();
+  if (!activeAg || !activeAg.found) {
+    activeAg = appState.detect?.agents?.find(a => a.found) || null;
   }
   const isStaged = currentFiles.some(f => f.x !== ' ' && f.x !== '?');
   const genBtnEl = $('#scmGenMsg') as HTMLButtonElement | null;
@@ -5924,17 +7273,63 @@ async function generateCommitMsg(): Promise<void> {
     genBtnEl.innerHTML = `<div class="spinner sm"></div>`;
   }
   try {
-    const diff = await (isStaged ? api.git.diff([], true) : api.git.diff([], false));
-    const summary = currentFiles.map(f => `${f.path} (${statusOf(f, isStaged).title})`).join('\n');
-    const diffText = (diff || '').trim() || summary;
-    const truncated = diffText.length > 3500 ? diffText.slice(0, 3500) + '\n...(truncated)' : diffText;
-    const { model: lowModel, effort: lowEffort } = lowestModelFor(activeAg);
-    const prompt = `Write a short, concise Git commit message following conventional commits format (e.g. feat: ..., fix: ..., chore: ...) based on this diff:\n\n${truncated}\n\nImportant: Output ONLY the commit message itself. Do NOT output code fences, quotes, or conversational text.`;
+    if (!activeAg || !activeAg.found) {
+      const fallbackMsg = heuristicCommitMsg(currentFiles);
+      const msgArea = $<HTMLTextAreaElement>('#scmMsg');
+      if (msgArea) {
+        msgArea.value = fallbackMsg;
+        scmDraft = msgArea.value;
+        autoResizeScmMsg(msgArea);
+        msgArea.focus();
+      }
+      toast('Commit message generated');
+      return;
+    }
+
+    const stagedDiff = isStaged ? await api.git.diff([], true).catch(() => '') : '';
+    const unstagedDiff = await api.git.diff([], false).catch(() => '');
+    let diffText = '';
+    if (stagedDiff && unstagedDiff) {
+      diffText = `Staged changes:\n${stagedDiff}\n\nUnstaged changes:\n${unstagedDiff}`;
+    } else {
+      diffText = stagedDiff || unstagedDiff || '';
+    }
+    const summary = currentFiles.map(f => `${statusOf(f, isStaged).title}: ${f.path}`).join('\n');
+    const fullDiff = (diffText || '').trim() || summary;
+    const truncated = fullDiff.length > 5000 ? fullDiff.slice(0, 5000) + '\n...(truncated)' : fullDiff;
+
+    // Use currently selected model if available, otherwise lowest/available model for agent
+    const modelSel = $('#agentModelSelect') as HTMLSelectElement | null;
+    const userChosenModel = modelSel?.value?.trim() || undefined;
+    const { model: fallbackModel } = lowestModelFor(activeAg);
+    const chosenModel = userChosenModel || fallbackModel || activeAg.version || activeAg.models?.[0];
+
+    const prevCommit = gitLog.commits?.[0];
+    const prevCommitContext = prevCommit
+      ? `Previous commit (${prevCommit.hash.slice(0, 7)}): ${prevCommit.subject}\n`
+      : 'Repository has no previous commits (Initial commit).\n';
+
+    const prompt = `You are an expert developer generating a concise Git commit message.
+Analyze all current changes compared to the previous commit. Wrap up everything that was changed accurately and comprehensively.
+
+Context:
+${prevCommitContext}
+Changed files:
+${summary}
+
+Diff:
+${truncated}
+
+Instructions:
+- Follow Conventional Commits format (e.g. feat: ..., fix: ..., chore: ..., refactor: ..., docs: ..., style: ..., test: ...).
+- If there are multiple distinct changes, provide a concise summary title, followed by an empty line and short bullet points (- ...) detailing the key changes.
+- Output ONLY the commit message itself. Do NOT output code blocks, quotes, or conversational preamble.`;
+
     const res = await api.git.genCommitMsg({
       agent: activeAg.id,
       prompt,
-      model: lowModel,
-      effort: lowEffort,
+      model: chosenModel,
+      effort: undefined, // No forced effort requirement: every model works smoothly
     });
     if (res) {
       const msgArea = $<HTMLTextAreaElement>('#scmMsg');
@@ -5947,7 +7342,15 @@ async function generateCommitMsg(): Promise<void> {
       toast(`Commit message generated with ${activeAg.name}`);
     }
   } catch (err: unknown) {
-    toast(`Failed to generate commit message: ${errMsg(err)}`);
+    const fallbackMsg = heuristicCommitMsg(currentFiles);
+    const msgArea = $<HTMLTextAreaElement>('#scmMsg');
+    if (msgArea) {
+      msgArea.value = fallbackMsg;
+      scmDraft = msgArea.value;
+      autoResizeScmMsg(msgArea);
+      msgArea.focus();
+    }
+    toast(`Commit message generated (${errMsg(err)})`);
   } finally {
     if (genBtnEl) {
       genBtnEl.disabled = false;
@@ -6017,7 +7420,7 @@ function toggleScmSection(head: HTMLElement): void {
     list.style.maxHeight = startH + 'px';
     list.style.opacity = '1';
     list.style.transform = 'translateY(0)';
-    void list.offsetHeight;
+    const _reflow = list.offsetHeight;
     list.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .18s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
     list.style.maxHeight = '0px';
     list.style.opacity = '0';
@@ -6040,7 +7443,7 @@ function toggleScmSection(head: HTMLElement): void {
     list.style.maxHeight = '0px';
     list.style.opacity = '0';
     list.style.transform = 'translateY(-4px)';
-    void list.offsetHeight;
+    const _reflow = list.offsetHeight;
     const targetH = list.scrollHeight;
     list.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .22s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
     list.style.maxHeight = targetH + 'px';
@@ -6229,7 +7632,7 @@ function renderGraphRows(): string {
     const tipText = `${r.c.subject} (${r.c.hash.slice(0, 7)} · ${r.c.author} · ${r.c.when})`;
     return `<div class="commit ${open ? 'on' : ''}" data-commit="${r.c.hash}" data-tooltip="${escAttr(tipText)}">
       <svg width="${width}" height="${H}" fill="none" stroke-width="2">${graphSvg(r, H, X)}</svg>
-      <div class="msgline"><div>${refs}${esc(r.c.subject)}</div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
+      <div class="msgline"><div>${refs}<span class="subj">${esc(r.c.subject)}</span></div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
     </div>${detail}`;
   }).join('');
 }
@@ -6269,7 +7672,7 @@ function closeCommitDetail(hash: string, instant = false): void {
     d.dataset.closing = '1';
     d.style.overflow = 'hidden';
     d.style.maxHeight = d.scrollHeight + 'px';
-    void d.offsetHeight;
+    const _reflow = d.offsetHeight;
     d.style.transition = 'max-height .2s cubic-bezier(.16, 1, .3, 1), opacity .18s ease, transform .2s cubic-bezier(.16, 1, .3, 1)';
     d.style.maxHeight = '0px';
     d.style.opacity = '0';
@@ -6309,7 +7712,7 @@ function placeCommitDetail(hash: string): void {
     fresh.style.opacity = '0';
     fresh.style.transform = 'translateY(-4px)';
     row.after(fresh);
-    void fresh.offsetHeight;
+    const _reflow = fresh.offsetHeight;
     const targetH = fresh.scrollHeight;
     fresh.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .2s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
     fresh.style.maxHeight = targetH + 'px';
@@ -6511,7 +7914,7 @@ function updateActIndicator(immediate = false): void {
     ind.style.transition = 'none';
     ind.style.transform = `translateY(${top}px)`;
     ind.style.opacity = '1';
-    void ind.offsetHeight;
+    const _reflow = ind.offsetHeight;
     ind.style.transition = '';
     ind.classList.add('ready');
   } else {
@@ -6561,10 +7964,12 @@ function renderBoxFolder(): void {
 function boxAgentItems(): MenuItem[] {
   const a = selectedAgent();
   const items: MenuItem[] = [];
-  if (a && a.found && a.models && a.models.length) {
-    items.push({ label: `${a.name} Models:`, enabled: () => false });
-    items.push(...modelMenuItems(a));
-    items.push({ sep: true });
+  if (a?.found && a.models?.length) {
+    items.push(
+      { label: `${a.name} Models:`, enabled: () => false },
+      ...modelMenuItems(a),
+      { sep: true },
+    );
   }
   items.push({ label: 'Switch Agent:', enabled: () => false });
   const agents = appState.detect?.agents ?? [];
@@ -6729,11 +8134,15 @@ function vibeDone(ok: boolean, plan = false): void {
   let text = ok ? '✓ Your code is ready' : 'The agent stopped';
   if (ok && plan) text = '📋 The plan is ready for you';
   $('#vibeReadyText').textContent = text;
-  $('#vibeBack').textContent = ok ? (plan ? 'Review plan' : 'Show me') : 'Back to code';
+  let backBtnText = 'Back to code';
+  if (ok) {
+    backBtnText = plan ? 'Review plan' : 'Show me';
+  }
+  $('#vibeBack').textContent = backBtnText;
   // The feed keeps playing; leaving Vibe Mode stays the user's call. The card pops and the system says so.
   const card = $('#vibeReady');
   card.classList.remove('ping');
-  void card.offsetWidth;
+  const _reflow = card.offsetWidth;
   card.classList.add('ping');
   notifyVibe(text.replace(/^\W+\s*/, ''), ok ? 'Head back to Breeze when you’re ready. Your feed keeps playing.' : 'Head back to Breeze to see what happened.');
 }
@@ -6772,7 +8181,10 @@ function discordActivity(): DiscordActivity {
   const inBox = appState.mode === 'box';
   const file = active ? baseName(active) : null;
   if (!appState.discordDetails) {
-    return { details: working ? 'Vibe coding with agents' : inBox ? 'Chatting with an agent' : 'Writing code', state: 'Breeze Code', start: discordSince };
+    let details = 'Writing code';
+    if (working) details = 'Vibe coding with agents';
+    else if (inBox) details = 'Chatting with an agent';
+    return { details, state: 'Breeze Code', start: discordSince };
   }
   let details = inBox ? 'Chatting in Breeze Box' : 'Idle';
   if (working) details = `${working.name}: ${working.task}`;
@@ -6783,7 +8195,12 @@ function discordActivity(): DiscordActivity {
 }
 function renderDiscord(state: 'on' | 'off' | 'error', why = ''): void {
   const b = $('#discord');
-  b.textContent = state === 'on' ? 'Discord: on' : state === 'error' ? 'Discord: not connected' : 'Discord: off';
+  const stateLabels: Record<string, string> = {
+    on: 'Discord: on',
+    error: 'Discord: not connected',
+    off: 'Discord: off',
+  };
+  b.textContent = stateLabels[state] ?? 'Discord: off';
   b.title = why || 'Discord presence';
   b.classList.toggle('armed', state === 'on');
 }
@@ -6866,7 +8283,7 @@ function closeModal(): void {
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
-  setTimeout(() => scrim.remove(), 440);
+  setTimeout(() => scrim.remove(), 160);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {
@@ -6878,6 +8295,7 @@ let tooltipEl: HTMLElement | null = null;
 let tooltipTimer: TimeoutId | undefined;
 let cursorX = 0;
 let cursorY = 0;
+let lastTooltipTime = 0;
 
 function initTooltip(): void {
   tooltipEl = document.createElement('div');
@@ -6887,13 +8305,14 @@ function initTooltip(): void {
 
   const hideTooltip = () => {
     clearTimeout(tooltipTimer);
-    if (tooltipEl) {
+    if (tooltipEl?.classList.contains('visible')) {
+      lastTooltipTime = Date.now();
       tooltipEl.classList.remove('visible');
     }
   };
 
   const updateTooltipPos = () => {
-    if (!tooltipEl || !tooltipEl.classList.contains('visible')) return;
+    if (!tooltipEl?.classList.contains('visible')) return;
     const tipW = tooltipEl.offsetWidth;
     const tipH = tooltipEl.offsetHeight;
     let left = cursorX + 10;
@@ -6926,7 +8345,7 @@ function initTooltip(): void {
   document.addEventListener('pointerover', (e) => {
     cursorX = e.clientX;
     cursorY = e.clientY;
-    const target = (e.target as HTMLElement).closest<HTMLElement>('[title], [data-tooltip]');
+    const target = (e.target as HTMLElement).closest<HTMLElement>('[title], [data-tooltip], [alt]');
     if (!target) {
       hideTooltip();
       return;
@@ -6943,6 +8362,9 @@ function initTooltip(): void {
       const val = target.getAttribute('title') || '';
       target.removeAttribute('title');
       if (val.trim()) target.dataset.tooltip = val.trim();
+    } else if (target.hasAttribute('alt') && !target.dataset.tooltip) {
+      const val = target.getAttribute('alt') || '';
+      if (val.trim()) target.dataset.tooltip = val.trim();
     }
     const tip = target.dataset.tooltip;
     if (!tip || !tooltipEl) {
@@ -6950,12 +8372,14 @@ function initTooltip(): void {
       return;
     }
     clearTimeout(tooltipTimer);
+    const warmDelay = (Date.now() - lastTooltipTime < 600) ? 0 : 120;
     tooltipTimer = setTimeout(() => {
       if (!target.isConnected || !tooltipEl) return;
       tooltipEl.textContent = tip;
       tooltipEl.classList.add('visible');
       updateTooltipPos();
-    }, 180);
+      lastTooltipTime = Date.now();
+    }, warmDelay);
   }, true);
 
   document.addEventListener('pointerout', (e) => {

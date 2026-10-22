@@ -1,8 +1,8 @@
+# Breeze Code
+
 <div align="center">
 
-
-
-<img src="assets/brand/BreezeCode.png" height="44" alt="Breeze IDE">
+<img src="assets/brand/BreezeCode.png" height="44" alt="Breeze Code">
 
 **A lightweight desktop development environment where your AI agents plan, build and show their work, right next to your code.**
 
@@ -93,7 +93,7 @@ While an agent works, the IDE fades and an Instagram or Facebook feed plays. A n
 | **Discord** | Rich Presence shows what you're working on |
 | **Security** | API keys are encrypted with the OS keychain |
 
-## Getting started (FOR DEVELOPER)
+## Getting started
 
 Requires [Node.js](https://nodejs.org/) 20 or newer.
 
@@ -122,7 +122,7 @@ cp breeze.config.example.json breeze.config.json
 
 Or put them in a `.env` file next to `main.js`:
 
-```
+```env
 BREEZE_GITHUB_CLIENT_ID=
 BREEZE_GOOGLE_CLIENT_ID=
 BREEZE_GOOGLE_CLIENT_SECRET=
