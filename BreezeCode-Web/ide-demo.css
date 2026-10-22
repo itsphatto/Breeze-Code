@@ -253,6 +253,9 @@
 }
 
 .bz-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
@@ -260,6 +263,13 @@
   color: var(--text-2);
   border: 1px solid var(--line);
   white-space: nowrap;
+}
+
+.bz-pill img {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 3px;
 }
 
 .bz-pill.blue {
@@ -1056,14 +1066,6 @@ button.bz-pill:hover {
   overflow: hidden;
 }
 
-.bz-live {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, .2);
-}
-
 .bz-preview-frame {
   flex: 1;
   width: 100%;
@@ -1218,17 +1220,27 @@ button.bz-pill:hover {
 
 .bz-ava.planner,
 .bz-ava-mini.planner {
-  background: var(--c-planner);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
 }
 
 .bz-ava.builder,
 .bz-ava-mini.builder {
-  background: var(--c-builder);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
 }
 
 .bz-ava.assistant,
 .bz-ava-mini.assistant {
-  background: #7aa9ff;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+}
+
+.bz-ava img,
+.bz-ava-mini img {
+  width: 66%;
+  height: 66%;
+  object-fit: contain;
 }
 
 .bz-agent .name {

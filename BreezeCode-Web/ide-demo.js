@@ -383,7 +383,7 @@ h1 {
           </div>
           <div class="bz-pane preview">
             <div class="bz-preview-bar"><span class="bz-preview-label">Preview</span>
-              <span class="bz-url"><span class="bz-live"></span>http://127.0.0.1:5173/index.html</span>
+              <span class="bz-url">http://127.0.0.1:5173/index.html</span>
               <button class="bz-icon-btn" data-act="run.reload" title="Reload Preview">${icon('refresh', 13)}</button>
               <button class="bz-icon-btn" data-act="run.stop" title="Close Preview">${icon('x', 13)}</button></div>
             <iframe class="bz-preview-frame" title="Preview of index.html" sandbox="allow-scripts"></iframe>
@@ -404,7 +404,7 @@ h1 {
       </section>
       <aside class="bz-agents" aria-label="Agents">
         <div class="bz-side-head"><span>Agents</span><span class="bz-head-actions" style="opacity:1">
-          <button class="bz-pill blue" data-act="agent.pick" aria-haspopup="menu" id="bzAgentPill">Claude Code</button>
+          <button class="bz-pill blue" data-act="agent.pick" aria-haspopup="menu" id="bzAgentPill"><img src="${ASSETS}agents/claude.svg" alt="" width="14" height="14">Claude Code</button>
           <button class="bz-icon-btn" data-act="chat.new" title="New chat">${icon('plus', 14)}</button>
           <button class="bz-icon-btn flip" data-act="view.toggleAgents" title="Hide Agents">${icon('chev', 14)}</button>
         </span></div>
@@ -871,24 +871,12 @@ h1 {
     pushing = true;
     sfx.play('launch');
     renderSide();
-    layout.term = true;
-    applyLayout();
-    const n = lastCheckpoint.count;
-    termPrint(`<span class="cmd">git push origin master</span>
-Enumerating objects: ${n + 2}, done.
-`);
-    await sleep(500);
-    termPrint(`Writing objects: 100% (${n + 2}/${n + 2}), done.
-`);
-    await sleep(500);
-    termPrint(`To github.com:you/tidal-coffee.git
-   <span class="ok">${lastCheckpoint.hash}</span>  master -&gt; master
-`);
+    await sleep(900);
     lastCheckpoint.pushed = true;
     pushing = false;
     sfx.play('success');
     renderSide();
-    toast(`${icon('check', 14)} Pushed to <b>origin/master</b>`);
+    toast(`${icon('check', 14)} Pushed to GitHub`);
     if (tourStep === 'push') tourOff = true; // the tour ends on the push
     updateTour();
   }
@@ -1334,7 +1322,9 @@ Enumerating objects: ${n + 2}, done.
 
   /* ================= Agents ================= */
   const AGENTS = ['Claude Code', 'Codex', 'Antigravity', 'Ollama · qwen2.5-coder'];
+  const AGENT_LOGOS = { 'Claude Code': 'claude.svg', Codex: 'codex.png', Antigravity: 'antigravity.png', 'Ollama · qwen2.5-coder': 'ollama.svg' };
   let agentName = AGENTS[0];
+  const agentLogo = () => `<img src="${ASSETS}agents/${AGENT_LOGOS[agentName]}" alt="">`;
   let busy = false;
   let building = false;
   let planCard = null; // the plan while it waits for approval
@@ -1347,7 +1337,7 @@ Enumerating objects: ${n + 2}, done.
   function setAgent(role, status, task) {
     roster[role] = { status, task };
     cards.classList.remove('bz-hidden');
-    cards.innerHTML = Object.entries(roster).map(([r, a]) => `<div class="bz-agent ${a.status}"><span class="bz-ava ${r}">${ROLES[r][0]}</span><span class="name">${ROLES[r][1]}<small>${esc(agentName)}</small></span><span class="bz-status ${a.status}">${STATUS[a.status]}</span><span class="task">${esc(a.task)}</span></div>`).join('');
+    cards.innerHTML = Object.entries(roster).map(([r, a]) => `<div class="bz-agent ${a.status}"><span class="bz-ava ${r}">${agentLogo()}</span><span class="name">${ROLES[r][1]}<small>${esc(agentName)}</small></span><span class="bz-status ${a.status}">${STATUS[a.status]}</span><span class="task">${esc(a.task)}</span></div>`).join('');
   }
   const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   function addChat(html) {
@@ -1356,7 +1346,7 @@ Enumerating objects: ${n + 2}, done.
     chat.scrollTop = chat.scrollHeight;
     return chat.lastElementChild;
   }
-  const say = (role, html) => (sfx.play('msg'), addChat(`<div class="bz-msg"><span class="bz-meta"><span class="bz-ava-mini ${role}">${ROLES[role][0]}</span><b>${ROLES[role][1]}</b>${clock()}</span><div class="bz-body">${html}</div></div>`));
+  const say = (role, html) => (sfx.play('msg'), addChat(`<div class="bz-msg"><span class="bz-meta"><span class="bz-ava-mini ${role}">${agentLogo()}</span><b>${ROLES[role][1]}</b>${clock()}</span><div class="bz-body">${html}</div></div>`));
   const tool = (kind, ico, html) => (sfx.play('tool'), addChat(`<div class="bz-tool-line ${kind}">${icon(ico, 14)}<span>${html}</span></div>`));
   async function typing(ms) {
     const el = addChat('<div class="bz-msg"><div class="bz-body bz-typing"><i></i><i></i><i></i></div></div>');
@@ -1668,7 +1658,7 @@ Enumerating objects: ${n + 2}, done.
     'git.push': () => push(),
     'agent.send': () => send(),
     'chat.new': () => { if (busy) return; emptyChat(); updateTour(); },
-    'agent.pick': () => openMenu(AGENTS.map(a => ({ label: a, checked: a === agentName, run: () => { agentName = a; $('#bzAgentPill').textContent = a.split(' · ')[0]; for (const [r, v] of Object.entries(roster)) setAgent(r, v.status, v.task); } })), $('#bzAgentPill'), 'right'),
+    'agent.pick': () => openMenu(AGENTS.map(a => ({ label: a, checked: a === agentName, run: () => { agentName = a; $('#bzAgentPill').innerHTML = `<img src="${ASSETS}agents/${AGENT_LOGOS[a]}" alt="" width="14" height="14">${esc(a.split(' · ')[0])}`; for (const [r, v] of Object.entries(roster)) setAgent(r, v.status, v.task); } })), $('#bzAgentPill'), 'right'),
     settings: () => openMenu([
       { label: 'Keyboard Shortcuts', run: () => modal(`<h4>Keyboard shortcuts</h4><div class="bz-keys">${SHORTCUTS.map(([a, k]) => `<span>${a}</span><kbd>${k}</kbd>`).join('')}</div>`) },
       { sep: true },
