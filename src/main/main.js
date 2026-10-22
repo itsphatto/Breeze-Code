@@ -972,10 +972,13 @@ handle('sys:detect', async () => {
 
 /* ================= Window & shell IPC ================= */
 handle('sys:openExternal', (_e, url) => openInBrowser(url));
+// Opens a terminal running one of the tools list's install commands; anything else is refused.
 handle('sys:runCommand', async (_e, cmd) => {
-  if (typeof cmd !== 'string' || !cmd.trim()) return false;
+  if (typeof cmd !== 'string') return false;
   const command = cmd.trim();
-  const escaped = command.replaceAll('"', String.raw`\"`);
+  const allowed = ['c', 'py', 'cs', 'java', 'rs'].map(kind => installCmd(kind, process.platform)).filter(Boolean);
+  if (!allowed.includes(command)) return false;
+  const escaped = command.replaceAll(/[\\"]/g, String.raw`\$&`);
   if (process.platform === 'win32') {
     const comspec = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
     spawn(comspec, ['/c', 'start', 'cmd.exe', '/k', command], { detached: true, stdio: 'ignore' }).unref();
@@ -1226,6 +1229,9 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
     runs.delete(runId);
   }
 }
+// The CLI name for a Breeze effort level: Codex and Claude Code call the top level "xhigh", Breeze shows "Extra".
+const EFFORT_ARGS = { low: 'low', medium: 'medium', high: 'high', extra: 'xhigh' };
+const effortArg = effort => EFFORT_ARGS[String(effort || '').toLowerCase()] || null;
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
 function cliArgs(agent, mode, prompt, session) {
   if (agent === 'claude') return claudeArgs(mode, prompt, session);
@@ -1234,10 +1240,8 @@ function cliArgs(agent, mode, prompt, session) {
   const st = loadState();
   const model = st.codexModel;
   if (model && SAFE_MODEL.test(model)) args.push('-m', model);
-  const effort = st.codexEffort;
-  if (effort && /^(low|medium|high|extra)$/i.test(effort)) {
-    args.push('-c', `model_reasoning_effort="${effort.toLowerCase()}"`);
-  }
+  const effort = effortArg(st.codexEffort);
+  if (effort) args.push('-c', `model_reasoning_effort="${effort}"`);
   if (session) args.push('resume', session);
   args.push('-');
   if (build) return { args, prompt };
@@ -1252,8 +1256,11 @@ function claudeArgs(mode, prompt, session) {
   const build = mode === 'build';
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', build ? 'acceptEdits' : 'default'];
   if (!build) args.push('--disallowedTools', ...CLAUDE_WRITE_TOOLS);
-  const model = loadState().claudeModel;
+  const st = loadState();
+  const model = st.claudeModel;
   if (model && model !== 'default' && CLAUDE_MODELS.includes(model)) args.push('--model', model);
+  const effort = effortArg(st.claudeEffort);
+  if (effort) args.push('--effort', effort);
   if (session) args.push('--resume', session);
   if (build) return { args, prompt };
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
@@ -1920,8 +1927,8 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     if (!bin) throw new Error('Codex was not found');
     const targetModel = model || 'gpt-4o-mini';
     const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', ...(targetModel ? ['-m', targetModel] : [])];
-    if (effort && /^(o1|o3|o4)/i.test(targetModel)) {
-      args.push('-c', `model_reasoning_effort="${effort.toLowerCase()}"`);
+    if (effortArg(effort) && /^(o1|o3|o4)/i.test(targetModel)) {
+      args.push('-c', `model_reasoning_effort="${effortArg(effort)}"`);
     }
     return new Promise((resolve, reject) => {
       const child = /\.(?:cmd|bat)$/i.test(bin)

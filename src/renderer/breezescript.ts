@@ -1195,8 +1195,8 @@ function renderDetection(): void {
       const prev = b.textContent;
       b.textContent = 'Running…';
       try {
-        await api.sys.runCommand(cmd);
-        toast(`Launched terminal command: ${cmd}`);
+        if (await api.sys.runCommand(cmd)) toast(`Launched terminal command: ${cmd}`);
+        else toast(`Breeze can't run that command. Run it yourself: ${cmd}`);
       } catch (err) {
         toast(`Failed to run command: ${errMsg(err)}`);
       } finally {
@@ -1256,7 +1256,7 @@ async function applyModelAndEffort(a: DetectedAgent, model: string, effort: Effo
     a.version = model;
     saveApp();
     renderAgentPill();
-    toast(`Ollama model set to ${model} (${effort} effort)`);
+    toast(`Ollama model set to ${model}`); // a local server has no effort setting
   }
 }
 
@@ -5678,6 +5678,7 @@ let activeTermSession: TermSession = null as any;
 
 const termOut = $('#termOut');
 const termInput = $<HTMLInputElement>('#termInput');
+const termGhost = $('#termGhost'); // declared before the first session is made below, which clears it
 
 // Backward-compatibility proxy for code accessing single 'term'
 const term = {
@@ -6510,7 +6511,6 @@ function knownWords(words: string[]): string[] {
   if (words.length === 3 && words[0] === 'npm' && words[1] === 'run') return npmScripts;
   return [];
 }
-const termGhost = $('#termGhost');
 // Greyed-out rest of the line: the last matching command from history, else a known command; → accepts it.
 function ghostMatch(value: string): string {
   if (!value) return '';

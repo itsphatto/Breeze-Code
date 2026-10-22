@@ -13,10 +13,12 @@ test('AntigravityAgentService exports and static discovery methods', () => {
   assert.equal(typeof AntigravityAgentService, 'function');
   assert.equal(typeof AntigravityAgentService.findExecutable, 'function');
   assert.equal(typeof AntigravityAgentService.isAvailable, 'function');
+});
 
-  // Should find executable on this system
+// Only machines with Antigravity installed can check discovery; everywhere else this is skipped.
+test('AntigravityAgentService.isAvailable agrees with findExecutable', t => {
   const execPath = AntigravityAgentService.findExecutable();
-  assert.ok(execPath, 'Should locate Antigravity executable');
+  if (!execPath) return t.skip('Antigravity is not installed');
   assert.equal(AntigravityAgentService.isAvailable(), true);
 });
 
