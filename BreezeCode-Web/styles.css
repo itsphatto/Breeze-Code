@@ -247,6 +247,32 @@ p {
   width: auto;
 }
 
+/* ---------- Sound toggle: a small glass button pinned to the bottom-left corner ---------- */
+.sfx-toggle {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--glass-line);
+  border-radius: 50%;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease;
+}
+
+.sfx-toggle:hover {
+  color: var(--text);
+  border-color: var(--line-2);
+}
+
 /* ---------- Introduction ---------- */
 .hero {
   position: relative;
@@ -332,8 +358,8 @@ p {
   border-color: rgba(255, 255, 255, .14);
   background: linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .05)), rgba(120, 120, 130, .18);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 6px 18px rgba(0, 0, 0, .25);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(2px) saturate(140%);
+  -webkit-backdrop-filter: blur(1px) saturate(140%);
   color: var(--text);
 }
 
@@ -671,6 +697,17 @@ p {
   font-size: clamp(17px, 1.6vw, 20px);
 }
 
+/* The memory line under the slogan stays on one line on wide screens; on narrower ones it wraps as usual. */
+@media (min-width: 1021px) {
+  #why .section-head {
+    max-width: 1040px;
+  }
+
+  #why .sub {
+    white-space: nowrap;
+  }
+}
+
 /* ---------- 02 · Agents: copy beside a screenshot on a blue panel, then three cards ---------- */
 .showcase {
   display: grid;
@@ -812,7 +849,7 @@ p {
   line-height: 1.5;
 }
 
-/* ---------- 03 · Why: a memory monitor in an app window ---------- */
+/* ---------- 03 · Why: two bars comparing memory ---------- */
 .why-body {
   max-width: 1080px;
   margin-inline: auto;
@@ -820,18 +857,13 @@ p {
 
 .monitor {
   margin: 0;
-  border: 1px solid var(--glass-line);
-  border-radius: 18px;
-  overflow: hidden;
-  background: var(--bg-1);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
 }
 
 .mem {
   display: grid;
   gap: 22px;
   margin: 0;
-  padding: clamp(26px, 4vw, 44px) clamp(20px, 4vw, 44px) 0;
+  padding: 0 clamp(0px, 2vw, 24px);
 }
 
 .mem-row {
@@ -909,8 +941,7 @@ p {
 
 .monitor figcaption {
   margin-top: clamp(26px, 4vw, 40px);
-  padding: 18px clamp(20px, 4vw, 44px);
-  border-top: 1px solid var(--line);
+  padding-inline: clamp(0px, 2vw, 24px);
   color: var(--text-3);
   font-size: 15px;
 }
@@ -978,6 +1009,21 @@ p {
   margin-inline: auto;
 }
 
+
+/* On wide screens the section is as tall as the window minus the footer, so the photo always fills the screen above
+   the footer when you reach the bottom (--footer-h is set from site.js). Phones keep the shorter band. */
+@media (min-width: 861px) {
+  .download {
+    display: flex;
+    align-items: center;
+    min-height: calc(100vh - var(--footer-h, 116px));
+    min-height: calc(100svh - var(--footer-h, 116px));
+  }
+
+  .download > .wrap {
+    width: 100%;
+  }
+}
 
 /* ---------- Footer ---------- */
 .footer {

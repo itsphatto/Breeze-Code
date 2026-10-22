@@ -4,6 +4,10 @@ document.documentElement.classList.add('js');
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+// Always open at the top: no restored scroll position from a reload or an earlier visit, unless the link names a section.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+if (!location.hash) window.scrollTo({ top: 0, behavior: 'instant' });
+
 
 
 /* ----- Hero window: centred on screen while pinned, easing from 92% to full size as it arrives ----- */
@@ -200,21 +204,32 @@ if (downloadBg) {
   const wipe = new IntersectionObserver(([e]) => {
     if (!e.isIntersecting) return;
     downloadBg.classList.add('in');
+    window.sfx?.play('plane');
     wipe.disconnect();
   }, { threshold: 0.35 });
   wipe.observe(downloadBg);
 }
 
+// The footer's height is shared with the CSS so the download section can fill the screen above it.
+const footerEl = $('.footer');
+if (footerEl) {
+  const shareFooterHeight = () => document.documentElement.style.setProperty('--footer-h', `${footerEl.offsetHeight}px`);
+  shareFooterHeight();
+  new ResizeObserver(shareFooterHeight).observe(footerEl);
+}
+
 /* ----- Latest release ----- */
-// The version and installer size under the download button follow the newest GitHub release; the
-// numbers written in the page stay if GitHub can't be reached.
-if ($('[data-release]')) {
+// The version and installer size under the download button follow the newest GitHub release, and the download
+// buttons point straight at its installer. The numbers and the releases-page links written in the page stay if
+// GitHub can't be reached.
+if ($('[data-release]') || $('[data-download]')) {
   fetch('https://api.github.com/repos/itsphatto/BreezeCode/releases/latest')
     .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
     .then(rel => {
       const exe = (rel.assets || []).find(a => a.name.endsWith('.exe'));
       $$('[data-release="version"]').forEach(el => { if (rel.tag_name) el.textContent = rel.tag_name; });
       $$('[data-release="size"]').forEach(el => { if (exe) el.textContent = `${Math.round(exe.size / 1048576)} MB`; });
+      $$('[data-download]').forEach(el => { if (exe) el.href = exe.browser_download_url; });
     })
     .catch(() => {});
 }

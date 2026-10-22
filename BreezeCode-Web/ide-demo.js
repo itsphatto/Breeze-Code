@@ -3,6 +3,7 @@
 (() => {
   const root = document.getElementById('bzDemo');
   if (!root) return;
+  const sfx = window.sfx || { play() {} };
   const ASSETS = root.dataset.assets || 'assets/';
   const MIN_W = 1060; // narrower frames get the desktop layout scaled down, like the screenshot it replaces
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -492,6 +493,7 @@ h1 {
     t.className = 'bz-toast';
     t.innerHTML = html;
     toasts.append(t);
+    sfx.play('ping');
     setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, ms);
   }
   const DOWNLOAD = 'https://github.com/itsphatto/BreezeCode/releases/latest';
@@ -507,6 +509,7 @@ h1 {
   // items: { label, key, run, checked, disabled, sep, href }
   function openMenu(items, anchor, at) {
     closeMenu();
+    sfx.play('menu');
     const el = document.createElement('div');
     el.className = 'bz-menu';
     el.setAttribute('role', 'menu');
@@ -824,6 +827,7 @@ h1 {
   function commit() {
     const list = changedFiles();
     if (!list.length) return;
+    sfx.play('save');
     const msg = $('#bzCommitMsg')?.value.trim() || 'Update site';
     for (const p of list) committed.set(p, files.get(p).saved ?? '');
     lastCheckpoint = { msg, count: list.length, hash: Math.random().toString(16).slice(2, 9) };
@@ -848,7 +852,12 @@ h1 {
   /* ================= Tabs & editor ================= */
   function renderTabs() {
     tabsEl.innerHTML = tabs.map(p => `<div class="bz-tab${p === active ? ' on' : ''}${isDirty(p) ? ' dirty' : ''}" role="tab" tabindex="0" aria-selected="${p === active}" data-tab="${esc(p)}" title="${esc(p)}"><span class="bz-ico">${fileIcon(baseName(p))}</span><span class="bz-nm">${esc(baseName(p))}</span><span class="bz-x" data-close="1" title="Close">${icon('x', 12)}</span></div>`).join('');
-    tabsEl.querySelector('.bz-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // Only the tab strip scrolls: scrollIntoView would also scroll the whole page down to the demo.
+    const on = tabsEl.querySelector('.bz-tab.on');
+    if (on) {
+      if (on.offsetLeft < tabsEl.scrollLeft) tabsEl.scrollLeft = on.offsetLeft;
+      else if (on.offsetLeft + on.offsetWidth > tabsEl.scrollLeft + tabsEl.clientWidth) tabsEl.scrollLeft = on.offsetLeft + on.offsetWidth - tabsEl.clientWidth;
+    }
     // Only the page itself can be previewed, so the button shows on index.html alone.
     runBtn.classList.toggle('bz-hidden', active !== 'index.html');
     updateTour();
@@ -874,6 +883,7 @@ h1 {
     }
     active = path;
     selected = path;
+    sfx.play('tab');
     renderTabs();
     tabsEl.querySelector('.bz-tab.on')?.classList.add('enter');
     renderEditor();
@@ -894,6 +904,7 @@ h1 {
     if (i < 0) return;
     tabs.splice(i, 1);
     if (active === path) active = tabs[Math.min(i, tabs.length - 1)] ?? null;
+    sfx.play('close');
     renderTabs();
     renderEditor();
   }
@@ -1025,6 +1036,7 @@ h1 {
   }
   ta.addEventListener('keydown', e => {
     const mod = e.ctrlKey || e.metaKey;
+    if (!mod && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')) sfx.play('key');
     if (e.key === 'Tab' && !mod) {
       e.preventDefault();
       const [s, end] = lineSpan();
@@ -1099,11 +1111,12 @@ h1 {
       let i = starts.length - 1;
       while (starts[i] > at) i--;
       const col = ta.value.slice(starts[i], at).replace(/\t/g, '    ').length;
-      return `<i class="bz-hitbox${k === findCur ? ' cur' : ''}" style="top:${10 + i * 21}px;left:${4 + col * charW}px;width:${q * charW}px"></i>`;
+      return `<i class="bz-hitbox${k === findCur ? ' cur' : ''}" style="top:${i * 21}px;left:${col * charW}px;width:${q * charW}px"></i>`;
     }).join('');
   }
   let measured = false;
   function runFind(step, back = false) {
+    if (step) sfx.play('tick');
     const q = findIn.value.toLowerCase();
     findHits = [];
     if (q) { const t = ta.value.toLowerCase(); for (let i = t.indexOf(q); i >= 0; i = t.indexOf(q, i + q.length)) findHits.push(i); }
@@ -1171,6 +1184,7 @@ h1 {
   function startPreview() {
     if (layout.preview) { refreshPreview(); return; }
     layout.preview = true;
+    sfx.play('launch');
     // Make room: the editor and the preview share the middle of the window.
     if (layout.agents && layout.side) layout.side = false;
     applyLayout();
@@ -1283,8 +1297,8 @@ h1 {
     chat.scrollTop = chat.scrollHeight;
     return chat.lastElementChild;
   }
-  const say = (role, html) => addChat(`<div class="bz-msg"><span class="bz-meta"><span class="bz-ava-mini ${role}">${ROLES[role][0]}</span><b>${ROLES[role][1]}</b>${clock()}</span><div class="bz-body">${html}</div></div>`);
-  const tool = (kind, ico, html) => addChat(`<div class="bz-tool-line ${kind}">${icon(ico, 14)}<span>${html}</span></div>`);
+  const say = (role, html) => (sfx.play('msg'), addChat(`<div class="bz-msg"><span class="bz-meta"><span class="bz-ava-mini ${role}">${ROLES[role][0]}</span><b>${ROLES[role][1]}</b>${clock()}</span><div class="bz-body">${html}</div></div>`));
+  const tool = (kind, ico, html) => (sfx.play('tool'), addChat(`<div class="bz-tool-line ${kind}">${icon(ico, 14)}<span>${html}</span></div>`));
   async function typing(ms) {
     const el = addChat('<div class="bz-msg"><div class="bz-body bz-typing"><i></i><i></i><i></i></div></div>');
     await sleep(ms);
@@ -1443,6 +1457,7 @@ h1 {
     if (document.activeElement !== ta) { saveView(); active = path; renderTabs(); renderEditor(); }
     for (let i = 0; i < mid.length;) {
       const next = Math.min(mid.length, i + 3);
+      sfx.play('key');
       const newLine = mid.slice(i, next).includes('\n');
       i = next;
       f.text = f.saved = head + mid.slice(0, i) + tail;
@@ -1461,6 +1476,7 @@ h1 {
   }
   async function build(steps) {
     building = true;
+    sfx.play('build');
     updateTour();
     setAgent('builder', 'working', 'Building the plan');
     await sleep(500);
@@ -1484,6 +1500,7 @@ h1 {
     if (roster.planner) setAgent('planner', 'done', 'Plan approved and built');
     busy = false;
     building = false;
+    sfx.play('success');
     if (tourStep === 'watch') tourOff = true; // the tour ends on the finished build
     updateTour();
     return msg;
@@ -1493,6 +1510,7 @@ h1 {
     if (!text || busy) return;
     busy = true;
     asked = true;
+    sfx.play('send');
     updateTour();
     promptEl.value = '';
     const mode = $('#bzMode').value;
@@ -1530,6 +1548,7 @@ h1 {
     const card = addChat(`<div class="bz-plan"><h5>${icon('todo', 15)} Plan</h5><ol>${steps.map(s => `<li>${esc(s.say)}</li>`).join('')}</ol><div class="bz-row"><button class="bz-btn bz-btn-primary" data-plan="go">Approve &amp; build</button><button class="bz-btn" data-plan="change">Change something</button></div></div>`);
     setAgent('planner', 'waiting', 'Waiting for plan approval');
     planCard = card;
+    sfx.play('plan');
     updateTour();
     card.addEventListener('click', async e => {
       const b = e.target.closest('[data-plan]');
@@ -1538,6 +1557,7 @@ h1 {
       updateTour();
       card.querySelector('.bz-row').outerHTML = `<div class="bz-resolved">${b.dataset.plan === 'go' ? '✓ Approved' : 'Sent back to the Planner'}</div>`;
       if (b.dataset.plan === 'go') {
+        sfx.play('approve');
         setAgent('planner', 'done', 'Plan approved');
         addChat('<div class="bz-handoff"><span>Plan approved. <b>Builder</b> takes over</span></div>');
         await build(steps);
@@ -1557,10 +1577,10 @@ h1 {
     'view.files': () => showView('files'),
     'view.search': () => showView('search'),
     'view.git': () => { if (!(layout.side && layout.view === 'git')) showView('git'); },
-    'view.toggleSide': () => { layout.side = !layout.side; applyLayout(); },
-    'view.toggleAgents': () => { layout.agents = !layout.agents; if (layout.agents && layout.preview) layout.side = false; applyLayout(); if (layout.agents) setTimeout(() => promptEl.focus({ preventScroll: true }), 230); },
+    'view.toggleSide': () => { layout.side = !layout.side; sfx.play('menu'); applyLayout(); },
+    'view.toggleAgents': () => { layout.agents = !layout.agents; sfx.play('menu'); if (layout.agents && layout.preview) layout.side = false; applyLayout(); if (layout.agents) setTimeout(() => promptEl.focus({ preventScroll: true }), 230); },
     'view.reset': () => { Object.assign(layout, { side: true, agents: false, term: false, preview: false, view: 'files' }); applyLayout(); renderSide(); },
-    'term.toggle': () => { layout.term = !layout.term; applyLayout(); if (layout.term) setTimeout(() => termIn.focus({ preventScroll: true }), 230); },
+    'term.toggle': () => { layout.term = !layout.term; sfx.play('whoosh'); applyLayout(); if (layout.term) setTimeout(() => termIn.focus({ preventScroll: true }), 230); },
     'term.focus': () => { layout.term = true; applyLayout(); setTimeout(() => termIn.focus({ preventScroll: true }), 230); },
     'term.clear': () => { termOut.innerHTML = ''; },
     'term.kill': () => { if (layout.preview) stopPreview(); else termPrint('^C\n'); },
@@ -1569,7 +1589,7 @@ h1 {
     'run.stop': () => stopPreview(),
     'file.newFile': () => { layout.side = true; layout.view = 'files'; applyLayout(); const parent = dirs.has(selected) ? selected : dirName(selected ?? ''); if (parent) openDirs.add(parent); pending = { kind: 'file', parent }; renderTree(); },
     'file.newFolder': () => { layout.side = true; layout.view = 'files'; applyLayout(); const parent = dirs.has(selected) ? selected : dirName(selected ?? ''); if (parent) openDirs.add(parent); pending = { kind: 'dir', parent }; renderTree(); },
-    'file.save': () => { if (!hasFile()) return; const f = files.get(active); f.saved = f.text; renderTabs(); renderSide(); renderBadge(); if (layout.preview) refreshPreview(); },
+    'file.save': () => { if (!hasFile()) return; const f = files.get(active); f.saved = f.text; sfx.play('save'); renderTabs(); renderSide(); renderBadge(); if (layout.preview) refreshPreview(); },
     'file.saveAll': () => { for (const f of files.values()) if ('text' in f) f.saved = f.text; renderTabs(); renderSide(); renderBadge(); },
     'explorer.refresh': () => { const b = $('[data-act="explorer.refresh"] svg'); b.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(360deg)' }], { duration: 500 }); renderTree(); },
     'explorer.collapse': () => { openDirs.clear(); renderTree(); },
@@ -1733,6 +1753,7 @@ h1 {
     if (step !== tourStep) {
       tourStep = step;
       if (step) {
+        sfx.play('coach');
         coach.innerHTML = `<div>${TOUR[step].html}</div><button class="bz-coach-x" data-coach="skip" title="Skip the tour" aria-label="Skip the tour">${icon('x', 12)}</button>`;
         coach.dataset.side = TOUR[step].side;
         coach.classList.remove('bz-hidden', 'pop');
@@ -1747,8 +1768,8 @@ h1 {
     if (tourStep && onScreen) followCoach();
   }
   coach.addEventListener('click', e => {
-    if (e.target.closest('[data-coach="skip"]')) { tourOff = true; updateTour(); }
-    else if (e.target.closest('[data-try]')) { promptEl.value = SUGGESTION; promptEl.focus({ preventScroll: true }); }
+    if (e.target.closest('[data-coach="skip"]')) { tourOff = true; sfx.play('close'); updateTour(); }
+    else if (e.target.closest('[data-try]')) { sfx.play('tick'); promptEl.value = SUGGESTION; promptEl.focus({ preventScroll: true }); }
   });
   new IntersectionObserver(([entry]) => {
     onScreen = entry.isIntersecting;
