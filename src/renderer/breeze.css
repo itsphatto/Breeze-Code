@@ -3778,7 +3778,7 @@ body.vibing .ide {
   }
 }
 
-/* Opening animation, every launch (3.5s): the blue glow slowly comes up and the logo fades up through it. Then the
+/* Opening animation, every launch (about 1s): the blue glow slowly comes up and the logo fades up through it. Then the
    logo glides into the welcome page's logo (first run) or the splash fades out over the app. The 6s fade is only a
    failsafe in case the script never hands off. */
 .splash {
@@ -3798,7 +3798,7 @@ body.vibing .ide {
   inset: 0;
   background: radial-gradient(900px 520px at 50% 58%, rgba(0, 94, 255, .38), rgba(0, 94, 255, .1) 45%, transparent 72%);
   opacity: 0;
-  animation: splashGlow 1.8s ease-out forwards;
+  animation: splashGlow 1s ease-out forwards;
 }
 
 .splash-logo {
@@ -3809,7 +3809,7 @@ body.vibing .ide {
   opacity: 0;
   transform: translateY(18px);
   filter: drop-shadow(0 10px 40px rgba(0, 94, 255, .45));
-  animation: splashLogo 1.3s cubic-bezier(.2, .8, .2, 1) .7s forwards;
+  animation: splashLogo .8s cubic-bezier(.2, .8, .2, 1) .15s forwards;
 }
 
 /* A slim loading bar under the logo: it shows while Breeze is still getting ready and goes when the app fades in. */
@@ -3824,7 +3824,7 @@ body.vibing .ide {
   overflow: hidden;
   background: rgba(255, 255, 255, .08);
   opacity: 0;
-  animation: splashLoaderIn .4s ease 1.7s forwards;
+  animation: splashLoaderIn .4s ease 1s forwards;
 }
 
 .splash-loader::after {

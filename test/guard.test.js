@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('../src/main/guard');
+const { isFileUrl, resolveUnder, blockedRel, agentBlocked, isLocalHost, safeGitArgs, shellCommand } = require('../src/main/guard');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'breeze-guard-'));
 // A link to a folder: a junction on Windows (no admin rights needed), a symlink elsewhere.
@@ -130,4 +130,14 @@ test('a .cmd shim in a folder with a space runs through shellCommand', { skip: p
     c.on('close', code => res({ code, text: text.trim() }));
   });
   assert.deepEqual(out, { code: 0, text: 'shim got exec --json -' });
+});
+
+test('isLocalHost accepts only this computer on the right port', () => {
+  assert.equal(isLocalHost('127.0.0.1:2026', 2026), true);
+  assert.equal(isLocalHost('LOCALHOST:2026', 2026), true);
+  assert.equal(isLocalHost('[::1]:2026', 2026), true);
+  assert.equal(isLocalHost('evil.example:2026', 2026), false); // DNS rebinding
+  assert.equal(isLocalHost('127.0.0.1:3000', 2026), false);
+  assert.equal(isLocalHost('127.0.0.1', 2026), false);
+  assert.equal(isLocalHost(undefined, 2026), false);
 });

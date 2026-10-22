@@ -11,7 +11,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked } = require('./toolchains');
-const { isFileUrl, resolveUnder, blockedRel, agentBlocked, safeGitArgs, shellCommand } = require('./guard');
+const { isFileUrl, resolveUnder, blockedRel, agentBlocked, isLocalHost, safeGitArgs, shellCommand } = require('./guard');
 const { AntigravityAgentService } = require('./antigravityAgentService.js');
 
 let autoUpdater = null;
@@ -349,6 +349,11 @@ async function hasLiveIndex() {
   return !!(await findLiveIndex());
 }
 async function serveLive(req, res) {
+  if (!isLocalHost(req.headers.host, LIVE_PORT)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden');
+    return;
+  }
   try {
     const parsed = new URL(req.url || '/', LIVE_URL);
     if (parsed.pathname === LIVE_RELOAD_PATH) {
@@ -367,6 +372,7 @@ async function serveLive(req, res) {
       st = await fsp.stat(abs);
     }
     if (!st.isFile()) throw new Error('Not a file');
+    if (agentBlocked(liveRoot, abs)) throw new Error('Not shared'); // .env files and .git stay private: answered as Not found
     const type = MIME_TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream';
     let body = await fsp.readFile(abs);
     if (type.startsWith('text/html')) {
@@ -952,7 +958,8 @@ async function detectAgent(a) {
   return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
 }
 
-handle('sys:detect', async () => {
+// `force` (the Rescan buttons) looks for the compilers again; otherwise the lookup made at startup is reused.
+handle('sys:detect', async (_e, force) => {
   const agents = await Promise.all(AGENTS.map(detectAgent));
   // A local LLM server (Ollama, LM Studio…) speaks the OpenAI API instead of being a CLI.
   let llm = await llmConfig(true).catch(() => null);
@@ -963,7 +970,7 @@ handle('sys:detect', async () => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
   }));
-  const found = (await getTools(true)).tools;
+  const found = (await getTools(!!force)).tools;
   for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py'], ['dotnet', 'C#', found.dotnet, 'cs'], ['java', 'Java', found.java, 'java'], ['rust', 'Rust', found.rustc, 'rs']]) {
     tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform), cmd: t ? null : installCmd(kind, process.platform), url: t ? null : installUrl(kind, process.platform) });
   }

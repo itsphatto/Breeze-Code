@@ -76,7 +76,7 @@ interface BreezeApi {
     onExit(cb: (id: number, code: number | null) => void): () => void;
   };
   run: { file(rel: string): Promise<{ id?: number; cwd?: string; error?: string }>; };
-  sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; runCommand(cmd: string): Promise<boolean>; getPathForFile?(file: File): string; };
+  sys: { detect(force?: boolean): Promise<Detection>; openExternal(url: string): Promise<void>; runCommand(cmd: string): Promise<boolean>; getPathForFile?(file: File): string; };
   live: { status(): Promise<LiveStatus>; start(): Promise<LiveStatus>; stop(): Promise<LiveStatus>; };
   // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
   // An empty url makes the desktop app look for Ollama or LM Studio at their usual addresses.
@@ -1008,12 +1008,12 @@ const AGENT_STYLE: Record<string, { letter: string; tint: string }> = {
 };
 let detecting: Promise<Detection> | null = null;
 
-function detectTools(): Promise<Detection> {
+function detectTools(force = false): Promise<Detection> {
   if (detecting !== null) return detecting;
   $('#aiPill').className = 'pill'; $('#aiPill').textContent = 'Scanning…';
   $('#toolsPill').className = 'pill'; $('#toolsPill').textContent = 'Scanning…';
   if (!appState.detect) $('#agentList').innerHTML = '<div class="row text-3"><div class="spinner sm"></div>Checking this computer…</div>';
-  detecting = api.sys.detect().then(d => {
+  detecting = api.sys.detect(force).then(d => {
     appState.detect = d;
     fixSelectedAgent();
     renderDetection();
@@ -1215,7 +1215,7 @@ function renderDetection(): void {
   $('#sbTools').innerHTML = `<span class="${missing.length ? 'dot-warn' : 'dot-ok'}"></span> ${summary}`;
   renderAgentPill();
 }
-$('#rescan').onclick = () => { detectTools().catch(() => { /* the agent card shows the error */ }); };
+$('#rescan').onclick = () => { detectTools(true).catch(() => { /* the agent card shows the error */ }); };
 
 function selectedAgent(): DetectedAgent | null {
   return appState.detect?.agents.find(a => a.id === appState.agent && a.found) ?? null;
@@ -1377,7 +1377,7 @@ function openAgentPicker(): void {
       bindAgentOptions($('#pickList', m), () => { render(); renderDetection(); });
     };
     render();
-    $('#pickRescan', m).onclick = () => { $('#pickList', m).innerHTML = scanning; detectTools().then(render, () => { /* shown in the agent card */ }); };
+    $('#pickRescan', m).onclick = () => { $('#pickList', m).innerHTML = scanning; detectTools(true).then(render, () => { /* shown in the agent card */ }); };
   });
 }
 
@@ -10259,7 +10259,12 @@ function endSplash(): void {
   if (getComputedStyle(splash).display === 'none') endSplash();
   else {
     // The splash stays (its loading bar running) until the logo has settled AND Breeze has finished starting.
-    const settled = new Promise<void>(done => splash.addEventListener('animationend', e => { if (e.animationName === 'splashLogo') setTimeout(done, 800); }));
-    void Promise.all([settled, starting.catch(() => undefined)]).then(endSplash);
+    // Each wait has a limit: a hidden window never fires animationend, and a stuck start shouldn't keep the app covered.
+    const wait = (ms: number) => new Promise<void>(done => setTimeout(done, ms));
+    const settled = new Promise<void>(done => {
+      splash.addEventListener('animationend', e => { if (e.animationName === 'splashLogo') setTimeout(done, 150); });
+      setTimeout(done, 1200);
+    });
+    void Promise.all([settled, Promise.race([starting.catch(() => undefined), wait(8000)])]).then(endSplash);
   }
 }
