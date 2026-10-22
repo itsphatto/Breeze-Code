@@ -1043,6 +1043,46 @@ p {
   padding-top: clamp(32px, 5vw, 48px);
   border-top: 1px solid var(--bg-2);
   min-height: 240px;
+  color: var(--text-2);
+  font-size: 16px;
+}
+
+.legal-body > p:first-child {
+  color: var(--text);
+  font-size: 17.5px;
+}
+
+.legal-body h2 {
+  margin: clamp(36px, 5vw, 48px) 0 12px;
+  color: var(--text);
+  font-size: 21px;
+}
+
+.legal-body p,
+.legal-body ul {
+  margin: 0;
+  max-width: 68ch;
+}
+
+.legal-body p + p,
+.legal-body p + ul,
+.legal-body ul + p {
+  margin-top: 12px;
+}
+
+.legal-body ul {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+}
+
+.legal-body b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.legal-body a {
+  color: #8bb2ff;
 }
 
 /* ---------- FAQ: questions that open in place ---------- */

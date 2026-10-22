@@ -43,6 +43,8 @@
     href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Inter:wght@400;500;600&family=B612+Mono&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="ide-demo.css">
+  <script src="ide-demo.js" defer></script>
   <script src="site.js" defer></script>
   <script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
   <script defer src="/_vercel/insights/script.js"></script>
@@ -106,10 +108,11 @@
             <div class="city-rings"><i></i><i></i><i></i></div>
           </div>
           <div class="frame">
-            <div class="frame-bar" aria-hidden="true"><i></i><i></i><i></i><span>Breeze Code</span></div>
-            <img src="assets/screens/ide.jpg" width="1366" height="768"
-              alt="Breeze Code editor window: the explorer, launch.json in the editor, and the status bar showing Git, Node and Python ready"
-              data-zoom>
+            <div class="frame-bar"><i></i><i></i><i></i><span>Breeze Code</span><span class="bz-tag">Live demo · try it</span></div>
+            <!-- ide-demo.js builds a working copy of the editor here; the screenshot stays for visitors without JavaScript -->
+            <div class="bz" id="bzDemo" data-assets="assets/"></div>
+            <noscript><img src="assets/screens/ide.jpg" width="1366" height="768"
+              alt="Breeze Code editor window: the explorer, launch.json in the editor, and the status bar showing Git, Node and Python ready"></noscript>
           </div>
         </figure>
       </div>
@@ -165,6 +168,10 @@
           <li class="lang reveal">
             <span class="lang-ico" aria-hidden="true"><img src="assets/langs/cplusplus.svg" alt="" width="40" height="40"></span>
             <b>C++</b><span>Compile and run with a single F5.</span>
+          </li>
+          <li class="lang reveal">
+            <span class="lang-ico" aria-hidden="true"><img src="assets/langs/csharp.svg" alt="" width="40" height="40"></span>
+            <b>C#</b><span>Build and run on .NET with a single F5.</span>
           </li>
           <li class="lang reveal">
             <span class="lang-ico" aria-hidden="true"><img src="assets/langs/javascript.svg" alt="" width="40" height="40"></span>
