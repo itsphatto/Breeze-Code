@@ -216,7 +216,7 @@ h1 {
   border: 0;
   border-radius: 4px;
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   font: inherit;
   cursor: pointer;
 }
@@ -228,9 +228,9 @@ h1 {
     ['.git/config', { text: '[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n' }],
     ['assets/icon.png', { image: `${ASSETS}brand/Icon.png` }],
     ['assets/city.png', { image: `${ASSETS}screens/pattayacityview.png` }],
-    ['index.html', { text: INDEX }],
+    ['index.html', { text: '' }],
     ['site.js', { text: SITE }],
-    ['styles.css', { text: STYLES }],
+    ['styles.css', { text: '' }],
   ]);
   for (const f of files.values()) if ('text' in f) f.saved = f.text;
   const dirs = new Set(['.claude', '.git', 'assets']);
@@ -383,7 +383,7 @@ h1 {
           </div>
           <div class="bz-pane preview">
             <div class="bz-preview-bar"><span class="bz-preview-label">Preview</span>
-              <span class="bz-url"><span class="bz-live"></span>http://127.0.0.1:5173/index.html</span>
+              <span class="bz-url">http://127.0.0.1:5173/index.html</span>
               <button class="bz-icon-btn" data-act="run.reload" title="Reload Preview">${icon('refresh', 13)}</button>
               <button class="bz-icon-btn" data-act="run.stop" title="Close Preview">${icon('x', 13)}</button></div>
             <iframe class="bz-preview-frame" title="Preview of index.html" sandbox="allow-scripts"></iframe>
@@ -404,7 +404,7 @@ h1 {
       </section>
       <aside class="bz-agents" aria-label="Agents">
         <div class="bz-side-head"><span>Agents</span><span class="bz-head-actions" style="opacity:1">
-          <button class="bz-pill blue" data-act="agent.pick" aria-haspopup="menu" id="bzAgentPill">Claude Code</button>
+          <button class="bz-pill blue" data-act="agent.pick" aria-haspopup="menu" id="bzAgentPill"><img src="${ASSETS}agents/claude.svg" alt="" width="14" height="14">Claude Code</button>
           <button class="bz-icon-btn" data-act="chat.new" title="New chat">${icon('plus', 14)}</button>
           <button class="bz-icon-btn flip" data-act="view.toggleAgents" title="Hide Agents">${icon('chev', 14)}</button>
         </span></div>
@@ -501,13 +501,21 @@ h1 {
 
   let menu = null;
   function closeMenu() {
+    cancelHoverClose();
     if (!menu) return;
     menu.el.remove();
     menu.anchor?.classList.remove('open');
     menu = null;
   }
-  // items: { label, key, run, checked, disabled, sep, href }
-  function openMenu(items, anchor, at) {
+  // A hover-opened menu closes shortly after the pointer leaves both its button and the list.
+  let hoverTimer = 0;
+  function cancelHoverClose() { clearTimeout(hoverTimer); }
+  function hoverClose() {
+    cancelHoverClose();
+    hoverTimer = setTimeout(() => { if (menu?.hover) closeMenu(); }, 160);
+  }
+  // items: { label, key, run, checked, disabled, sep, href }; hover: opened by hovering rather than clicking
+  function openMenu(items, anchor, at, hover = false) {
     closeMenu();
     sfx.play('menu');
     const el = document.createElement('div');
@@ -545,7 +553,9 @@ h1 {
     y = Math.max(4, Math.min(y, ide.offsetHeight - el.offsetHeight - 4));
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
-    menu = { el, anchor, items };
+    menu = { el, anchor, items, hover };
+    el.addEventListener('pointerenter', cancelHoverClose);
+    el.addEventListener('pointerleave', hoverClose);
     el.querySelector('.bz-menu-item:not(:disabled)')?.focus({ preventScroll: true });
   }
   document.addEventListener('pointerdown', e => {
@@ -631,9 +641,20 @@ h1 {
     b.className = 'bz-menu-top';
     b.textContent = name;
     b.setAttribute('aria-haspopup', 'menu');
-    b.addEventListener('click', () => (menu?.anchor === b ? closeMenu() : openMenu(build(), b)));
-    // With one menu open, sliding along the bar opens the next one.
-    b.addEventListener('pointerenter', () => { if (menu && menu.anchor !== b && menu.anchor?.classList.contains('bz-menu-top')) openMenu(build(), b); });
+    // Hovering opens the menu and leaving closes it. A click pins it open; the next click closes it.
+    b.addEventListener('click', () => {
+      if (menu?.anchor !== b) openMenu(build(), b, undefined, false);
+      else if (menu.hover) menu.hover = false;
+      else closeMenu();
+    });
+    b.addEventListener('pointerenter', e => {
+      if (e.pointerType === 'touch') return;
+      cancelHoverClose();
+      if (menu?.anchor === b || (menu && !menu.hover && !menu.anchor?.classList.contains('bz-menu-top'))) return;
+      // A menu pinned open by a click follows the pointer along the bar; otherwise this is a hover menu.
+      openMenu(build(), b, undefined, !menu || menu.hover);
+    });
+    b.addEventListener('pointerleave', hoverClose);
     menubar.append(b);
   }
 
@@ -809,6 +830,8 @@ h1 {
 
   /* ================= Checkpoints (source control) ================= */
   let lastCheckpoint = null;
+  let draftMsg = ''; // the checkpoint message survives the panel re-rendering
+  let pushing = false;
   function renderScm() {
     const list = changedFiles();
     const rows = list.map(p => {
@@ -816,25 +839,46 @@ h1 {
       return `<button class="bz-tree-item bz-git-${st.toLowerCase()}" data-open="${esc(p)}"><span class="bz-ico">${fileIcon(baseName(p))}</span><span class="bz-nm">${esc(baseName(p))}</span><small style="color:var(--text-3);overflow:hidden;text-overflow:ellipsis">${esc(dirName(p))}</small><span class="bz-gst">${st}</span></button>`;
     }).join('');
     sideBody.innerHTML = `<div class="bz-scm">
-      <input class="bz-input" id="bzCommitMsg" placeholder="Message (Ctrl+Enter to save)" aria-label="Checkpoint message" spellcheck="false" autocomplete="off">
+      <input class="bz-input" id="bzCommitMsg" placeholder="Message (Enter to save)" aria-label="Checkpoint message" spellcheck="false" autocomplete="off" value="${esc(draftMsg)}">
       <button class="bz-btn bz-btn-primary" data-act="git.commit" ${list.length ? '' : 'disabled'}>${icon('check', 14)} Save checkpoint</button>
-      ${lastCheckpoint ? `<div class="bz-scm-done"><b>Checkpoint ${lastCheckpoint.hash} saved</b>${esc(lastCheckpoint.msg)}<span>${lastCheckpoint.count} file${lastCheckpoint.count === 1 ? '' : 's'} on master</span></div>` : ''}
+      ${lastCheckpoint ? `<div class="bz-scm-done"><b>Checkpoint ${lastCheckpoint.hash} saved</b>${esc(lastCheckpoint.msg)}<span>${lastCheckpoint.count} file${lastCheckpoint.count === 1 ? '' : 's'} on master</span>${lastCheckpoint.pushed ? `<span class="bz-scm-pushed">${icon('check', 12)} Pushed to origin/master</span>` : `<button class="bz-btn bz-btn-primary" data-act="git.push" ${pushing ? 'disabled' : ''}>${icon('up', 14)} ${pushing ? 'Pushing…' : 'Push to GitHub'}</button>`}</div>` : ''}
       <div class="bz-scm-title">Changes · ${list.length}</div>
       ${list.length ? `<div>${rows}</div>` : '<p class="bz-side-note">No changes since the last checkpoint.</p>'}
     </div>`;
-    $('#bzCommitMsg').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) cmd('git.commit'); });
+    const msgEl = $('#bzCommitMsg');
+    msgEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); cmd('git.commit'); } });
+    msgEl.addEventListener('input', () => { draftMsg = msgEl.value; updateTour(); });
   }
   function commit() {
     const list = changedFiles();
     if (!list.length) return;
     sfx.play('save');
-    const msg = $('#bzCommitMsg')?.value.trim() || 'Update site';
+    const typed = $('#bzCommitMsg')?.value.trim();
+    // During the tour the visitor writes the message themselves.
+    if (!typed && tourStep) { $('#bzCommitMsg')?.focus({ preventScroll: true }); toast('Write a short message first, like <b>Coffee menu in dark mode</b>.'); return; }
+    const msg = typed || 'Update site';
+    draftMsg = '';
     for (const p of list) committed.set(p, files.get(p).saved ?? '');
     lastCheckpoint = { msg, count: list.length, hash: Math.random().toString(16).slice(2, 9) };
     renderSide();
     renderBadge();
     renderTabs();
     toast(`${icon('check', 14)} Checkpoint saved · ${list.length} file${list.length === 1 ? '' : 's'}`);
+    updateTour();
+  }
+  async function push() {
+    if (!lastCheckpoint || lastCheckpoint.pushed || pushing) return;
+    pushing = true;
+    sfx.play('launch');
+    renderSide();
+    await sleep(900);
+    lastCheckpoint.pushed = true;
+    pushing = false;
+    sfx.play('success');
+    renderSide();
+    toast(`${icon('check', 14)} Pushed to GitHub`);
+    if (tourStep === 'push') tourOff = true; // the tour ends on the push
+    updateTour();
   }
 
   function renderSide() {
@@ -1159,7 +1203,8 @@ h1 {
   }
   function buildPage() {
     const read = p => files.get(p)?.text ?? '';
-    let html = read('index.html') || '<p style="font-family:sans-serif">index.html is missing.</p>';
+    if (!files.has('index.html')) return '<p style="font-family:sans-serif">index.html is missing.</p>';
+    let html = read('index.html') || '<p style="margin:40vh 0 0;color:#8a8f98;font:14px system-ui,sans-serif;text-align:center">index.html is empty. Ask an agent to build something.</p>';
     html = html.replace(/<link[^>]*href="([^"]+\.css)"[^>]*>/g, (m, href) => (files.has(href) ? `<style>${read(href)}</style>` : m));
     html = html.replace(/src="([^"]+\.(?:png|jpe?g|svg))"/g, (m, src) => (files.get(src)?.image ? `src="${inlineImage(files.get(src).image)}"` : m));
     html = html.replace(/<script[^>]*src="([^"]+\.js)"[^>]*><\/script>/g, (m, src) => (files.has(src) ? `<script>${read(src).replace(/<\/script/gi, '<\\/script')}<\/script>` : m));
@@ -1240,8 +1285,9 @@ h1 {
       }
       if (a[0] === 'log') return lastCheckpoint ? `<span class="ok">commit ${lastCheckpoint.hash}</span> (HEAD -&gt; master)\n    ${esc(lastCheckpoint.msg)}` : 'fatal: your current branch \'master\' does not have any commits yet';
       if (a[0] === 'branch') return '* <span class="ok">master</span>';
+      if (a[0] === 'push') { if (!lastCheckpoint) return 'error: src refspec master does not match any'; if (lastCheckpoint.pushed) return 'Everything up-to-date'; setTimeout(push); return ''; }
       if (a[0] === 'add' || a[0] === 'commit') return 'Use Checkpoints in the side bar (Ctrl+Shift+G) to save your work.';
-      return 'usage: git status | log | branch';
+      return 'usage: git status | log | branch | push';
     },
     code: () => "You're already in it.",
     breeze: () => `Get the full app: <span class="link">${DOWNLOAD}</span>`,
@@ -1276,11 +1322,14 @@ h1 {
 
   /* ================= Agents ================= */
   const AGENTS = ['Claude Code', 'Codex', 'Antigravity', 'Ollama · qwen2.5-coder'];
+  const AGENT_LOGOS = { 'Claude Code': 'claude.svg', Codex: 'codex.png', Antigravity: 'antigravity.png', 'Ollama · qwen2.5-coder': 'ollama.svg' };
   let agentName = AGENTS[0];
+  const agentLogo = () => `<img src="${ASSETS}agents/${AGENT_LOGOS[agentName]}" alt="">`;
   let busy = false;
-  let asked = false; // the visitor has sent a message
   let building = false;
   let planCard = null; // the plan while it waits for approval
+  let restyled = false; // the visitor's own change has been built on top of the menu
+  let menuMade = false; // index.html and styles.css start empty until an agent writes the coffee menu
   const cards = $('#bzCards');
   const roster = {};
   const ROLES = { planner: ['P', 'Planner'], builder: ['B', 'Builder'], assistant: ['A', 'Assistant'] };
@@ -1288,7 +1337,7 @@ h1 {
   function setAgent(role, status, task) {
     roster[role] = { status, task };
     cards.classList.remove('bz-hidden');
-    cards.innerHTML = Object.entries(roster).map(([r, a]) => `<div class="bz-agent ${a.status}"><span class="bz-ava ${r}">${ROLES[r][0]}</span><span class="name">${ROLES[r][1]}<small>${esc(agentName)}</small></span><span class="bz-status ${a.status}">${STATUS[a.status]}</span><span class="task">${esc(a.task)}</span></div>`).join('');
+    cards.innerHTML = Object.entries(roster).map(([r, a]) => `<div class="bz-agent ${a.status}"><span class="bz-ava ${r}">${agentLogo()}</span><span class="name">${ROLES[r][1]}<small>${esc(agentName)}</small></span><span class="bz-status ${a.status}">${STATUS[a.status]}</span><span class="task">${esc(a.task)}</span></div>`).join('');
   }
   const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   function addChat(html) {
@@ -1297,7 +1346,7 @@ h1 {
     chat.scrollTop = chat.scrollHeight;
     return chat.lastElementChild;
   }
-  const say = (role, html) => (sfx.play('msg'), addChat(`<div class="bz-msg"><span class="bz-meta"><span class="bz-ava-mini ${role}">${ROLES[role][0]}</span><b>${ROLES[role][1]}</b>${clock()}</span><div class="bz-body">${html}</div></div>`));
+  const say = (role, html) => (sfx.play('msg'), addChat(`<div class="bz-msg"><span class="bz-meta"><span class="bz-ava-mini ${role}">${agentLogo()}</span><b>${ROLES[role][1]}</b>${clock()}</span><div class="bz-body">${html}</div></div>`));
   const tool = (kind, ico, html) => (sfx.play('tool'), addChat(`<div class="bz-tool-line ${kind}">${icon(ico, 14)}<span>${html}</span></div>`));
   async function typing(ms) {
     const el = addChat('<div class="bz-msg"><div class="bz-body bz-typing"><i></i><i></i><i></i></div></div>');
@@ -1305,7 +1354,7 @@ h1 {
     el.remove();
   }
   function emptyChat() {
-    chat.innerHTML = `<div class="bz-empty"><img src="${ASSETS}brand/Agent.png" alt="" width="44" height="44"><h4>What should we build?</h4><div>Ask for a change to this site, like<br><b>“add our opening hours”</b>, <b>“put matcha on the menu”</b><br>or <b>“make it dark mode”</b>.</div></div>`;
+    chat.innerHTML = `<div class="bz-empty"><img src="${ASSETS}brand/Agent.png" alt="" width="44" height="44"><h4>What should we build?</h4><div>${menuMade ? 'Ask for a change to this site, like<br><b>“add our opening hours”</b>, <b>“put matcha on the menu”</b><br>or <b>“make it dark mode”</b>.' : 'This project is empty. Start with<br><b>“make a simple coffee menu”</b>.'}</div></div>`;
     for (const k of Object.keys(roster)) delete roster[k];
     cards.classList.add('bz-hidden');
     planCard = null;
@@ -1315,7 +1364,7 @@ h1 {
   // The plan: each step is one real edit to the files, matched from the request.
   const COLORS = {
     red: '#b23a3a', crimson: '#a8283a', maroon: '#7a2a2a', burgundy: '#7a2438', coral: '#c4584a', rose: '#b4566a', pink: '#b44a7a', magenta: '#a23d8c', plum: '#6a3a5a',
-    orange: '#c4621d', terracotta: '#b4532a', yellow: '#a8801a', gold: '#a8801a', amber: '#b07415', brown: '#7a4a2a',
+    orange: '#c4621d', terracotta: '#b4532a', yellow: '#e2b33c', gold: '#d4a12a', amber: '#b07415', brown: '#7a4a2a',
     green: '#2f7a4f', emerald: '#2a7a5a', forest: '#2f5a3a', olive: '#6b6a2a', lime: '#5a7a1f', mint: '#3f8f75', teal: '#2b7a78',
     cyan: '#1f7a93', sky: '#3a7ab0', blue: '#2a5db0', navy: '#24365e', indigo: '#3f4aa0', purple: '#6b4fa0', violet: '#6b4fa0', lavender: '#7a6aa8',
     black: '#1f1b16', charcoal: '#3a3632', gray: '#6b6560', grey: '#6b6560',
@@ -1334,6 +1383,7 @@ h1 {
   const MENU_ITEMS = [['espresso', 'Espresso'], ['long black', 'Iced long black'], ['thai tea', 'Thai tea latte'], ['pour-over', 'Pour-over, single origin'], ['pour over', 'Pour-over, single origin']];
   const addCss = (marker, css) => t => (t.includes(marker) ? t : `${t}\n${css}`);
   const STEP = {
+    menu: () => ({ say: 'Write a simple coffee menu page', file: 'index.html', edit: () => INDEX, also: 'styles.css', alsoEdit: () => STYLES, menu: true }),
     accent: c => ({ say: `Switch the accent color to ${c}`, file: 'styles.css', edit: t => t.replace(/--accent: [^;]+;/, `--accent: ${COLORS[c]};`) }),
     theme: name => ({ say: THEMES[name][0], file: 'styles.css', edit: t => Object.entries(THEMES[name][1]).reduce((s, [k, v]) => s.replace(new RegExp(`--${k}: [^;]+;`), `--${k}: ${v};`), t) }),
     heading: words => ({ say: `Change the heading to “${words}”`, file: 'index.html', edit: t => t.replace(/<h1>[\s\S]*?<\/h1>/, `<h1>${esc(words)}</h1>`) }),
@@ -1354,7 +1404,7 @@ h1 {
     banner: () => ({
       say: 'Add an announcement bar above the header', file: 'index.html', also: 'styles.css',
       edit: t => (t.includes('class="banner"') ? t : t.replace('<body>\n', '<body>\n  <p class="banner">New beans this week: Doi Chang, washed. Ask at the bar.</p>\n')),
-      alsoEdit: addCss('.banner {', '.banner {\n  margin: 0;\n  padding: 8px 32px;\n  background: var(--accent);\n  color: #fff;\n  font-size: 13px;\n}\n'),
+      alsoEdit: addCss('.banner {', '.banner {\n  margin: 0;\n  padding: 8px 32px;\n  background: var(--accent);\n  color: var(--bg);\n  font-size: 13px;\n}\n'),
     }),
     photo: () => ({
       say: 'Put a photo of the river above the heading', file: 'index.html', also: 'styles.css',
@@ -1369,6 +1419,7 @@ h1 {
     roomy: () => ({ say: 'Give the page more room to breathe', file: 'styles.css', edit: t => t.replace('padding: 48px 32px;', 'padding: 72px 40px;').replace('padding: 10px 0;', 'padding: 14px 0;') }),
   };
   function planFor(prompt) {
+    if (!menuMade) return [STEP.menu()]; // nothing to change yet, so the first request writes the page
     const quoted = prompt.match(/["“]([^"”]{2,60})["”]/);
     const p = prompt.replace(/["“][^"”]*["”]/g, ' ').toLowerCase(); // words inside quotes are content, not instructions
     const steps = [];
@@ -1456,7 +1507,7 @@ h1 {
     if (!tabs.includes(path)) tabs.push(path);
     if (document.activeElement !== ta) { saveView(); active = path; renderTabs(); renderEditor(); }
     for (let i = 0; i < mid.length;) {
-      const next = Math.min(mid.length, i + 3);
+      const next = Math.min(mid.length, i + (mid.length > 600 ? 9 : 3)); // whole files type faster
       sfx.play('key');
       const newLine = mid.slice(i, next).includes('\n');
       i = next;
@@ -1501,15 +1552,15 @@ h1 {
     busy = false;
     building = false;
     sfx.play('success');
-    if (tourStep === 'watch') tourOff = true; // the tour ends on the finished build
+    if (menuMade) restyled = true;
+    if (steps.some(st => st.menu)) menuMade = true;
     updateTour();
     return msg;
   }
   async function send() {
     const text = promptEl.value.trim();
-    if (!text || busy) return;
+    if (!text || busy || promptEl.readOnly && text !== FIRST_ASK) return;
     busy = true;
-    asked = true;
     sfx.play('send');
     updateTour();
     promptEl.value = '';
@@ -1531,7 +1582,7 @@ h1 {
       return;
     }
     const steps = planFor(text);
-    if (mode === 'build') {
+    if (mode === 'build' || steps[0].menu) {
       addChat('<div class="bz-handoff">The <b>Builder</b> works straight from your message</div>');
       await build(steps);
       return;
@@ -1604,9 +1655,10 @@ h1 {
     'find.close': () => { closeFind(); focusEditor(); },
     'editor.focus': () => focusEditor(),
     'git.commit': () => commit(),
+    'git.push': () => push(),
     'agent.send': () => send(),
     'chat.new': () => { if (busy) return; emptyChat(); updateTour(); },
-    'agent.pick': () => openMenu(AGENTS.map(a => ({ label: a, checked: a === agentName, run: () => { agentName = a; $('#bzAgentPill').textContent = a.split(' · ')[0]; for (const [r, v] of Object.entries(roster)) setAgent(r, v.status, v.task); } })), $('#bzAgentPill'), 'right'),
+    'agent.pick': () => openMenu(AGENTS.map(a => ({ label: a, checked: a === agentName, run: () => { agentName = a; $('#bzAgentPill').innerHTML = `<img src="${ASSETS}agents/${AGENT_LOGOS[a]}" alt="" width="14" height="14">${esc(a.split(' · ')[0])}`; for (const [r, v] of Object.entries(roster)) setAgent(r, v.status, v.task); } })), $('#bzAgentPill'), 'right'),
     settings: () => openMenu([
       { label: 'Keyboard Shortcuts', run: () => modal(`<h4>Keyboard shortcuts</h4><div class="bz-keys">${SHORTCUTS.map(([a, k]) => `<span>${a}</span><kbd>${k}</kbd>`).join('')}</div>`) },
       { sep: true },
@@ -1639,6 +1691,8 @@ h1 {
     if (b && root.contains(b)) {
       // The terminal header toggles, but its own buttons do their own thing.
       if (b.classList.contains('bz-term-head') && e.target.closest('button')) return;
+      // A button that opens a menu closes it again on the second click.
+      if (menu?.anchor === b && b.hasAttribute('aria-haspopup')) { closeMenu(); return; }
       cmd(b.dataset.act);
       return;
     }
@@ -1691,16 +1745,25 @@ h1 {
   root.addEventListener('touchmove', e => { if (touchY != null && scrollsInside(e.target, touchY - e.touches[0].clientY)) e.stopPropagation(); }, { passive: true });
 
   /* ================= Guided tour ================= */
-  // Chat bubbles walk a first-time visitor through it: preview the page, open the agent bar, ask for a change,
-  // approve the plan, then watch the Builder type the edit while the preview follows along.
-  const SUGGESTION = 'Add our opening hours and make the accent green';
+  // Chat bubbles walk a first-time visitor through it, starting from an empty index.html and styles.css: open the
+  // preview, open the agent bar, insert the first request so an agent writes a coffee menu, ask for dark mode, a
+  // footer and a yellow accent, approve the plan, then save a checkpoint and push it. Every bubble carries a
+  // ready-made action (`act`) the visitor can click instead of finding the control themselves.
+  const FIRST_ASK = 'Make a simple coffee menu';
+  const RESTYLE = 'Switch to Dark Mode, add footer and location, and make accent yellow';
+  const CHECKPOINT_MSG = 'Coffee menu in dark mode with a footer';
   const TOUR = {
-    index: { at: () => tabsEl.querySelector('[data-tab="index.html"]') ?? $('.bz-tree-item[data-path="index.html"]'), side: 'below', html: 'Open <b>index.html</b> to preview the site.' },
-    preview: { at: () => runBtn, side: 'below', html: '<b>Preview</b> runs this page right next to the code. Give it a click.' },
-    agents: { at: () => $('[data-act="view.toggleAgents"]'), side: 'below', html: 'Now open the <b>agent bar</b>. Your AI agents plan and build right in this project.' },
-    prompt: { at: () => $('.bz-composer-box'), side: 'left', html: `Ask for a change in plain English. Tap this one, then press <kbd>Enter</kbd>:<button class="bz-coach-try" data-try>${esc(SUGGESTION)}</button>` },
-    approve: { at: () => planCard?.querySelector('[data-plan="go"]'), side: 'left', html: 'The Planner wrote a plan. <b>Approve</b> it and the Builder gets to work.' },
-    watch: { at: () => $('.bz-url'), side: 'below', html: 'The Builder is writing the code now. Watch the preview change as it types.' },
+    index: { at: () => tabsEl.querySelector('[data-tab="index.html"]') ?? $('.bz-tree-item[data-path="index.html"]'), side: 'below', html: 'Open <b>index.html</b>. It is empty for now, and an agent is about to fill it.', act: ['Open index.html', () => openFile('index.html', true)] },
+    preview: { at: () => runBtn, side: 'below', html: '<b>index.html</b> and <b>styles.css</b> are empty. Open the <b>Preview</b> so you can watch the page appear.', act: [`${icon('play', 12)} Open the preview`, () => cmd('run.start')] },
+    agents: { at: () => $('[data-act="view.toggleAgents"]'), side: 'below', html: 'Now open the <b>agent bar</b>. Your AI agents write the code right in this project.', act: ['Open the agent bar', () => { if (!layout.agents) cmd('view.toggleAgents'); }] },
+    insert: { at: () => $('.bz-composer-box'), side: 'left', html: 'Give the agent its first job. Click to send it:', act: [`${icon('plus', 12)} Insert “${esc(FIRST_ASK)}”`, () => { promptEl.value = FIRST_ASK; send(); }] },
+    restyle: { at: () => $('.bz-composer-box'), side: 'left', html: 'Your menu is live. Now ask for <b>dark mode</b>, a <b>footer with the location</b> and a <b>yellow</b> accent. Type it yourself, or click to send it:', act: [`${icon('send', 12)} “${esc(RESTYLE)}”`, () => { promptEl.value = RESTYLE; send(); }] },
+    approve: { at: () => planCard?.querySelector('[data-plan="go"]'), side: 'left', html: 'The Planner wrote a plan. <b>Approve</b> it and the Builder gets to work.', act: [`${icon('check', 12)} Approve &amp; build`, () => planCard?.querySelector('[data-plan="go"]')?.click()] },
+    checkpoint: { at: () => [...chat.querySelectorAll('[data-act="view.git"]')].pop() ?? $('.bz-act-btn[data-view="git"]'), side: 'left', html: 'Looks good. Now <b>save a checkpoint</b> so you can always get back to this version.', act: ['Save a checkpoint', () => cmd('view.git')] },
+    message: { at: () => $('#bzCommitMsg'), side: 'right', html: 'Describe what changed in a few words. Type your own, or use this one:', act: [`“${esc(CHECKPOINT_MSG)}”`, () => { draftMsg = CHECKPOINT_MSG; const m = $('#bzCommitMsg'); if (m) { m.value = draftMsg; m.focus({ preventScroll: true }); } updateTour(); }] },
+    commit: { at: () => $('[data-act="git.commit"]'), side: 'right', html: 'Now commit it. Press <kbd>Enter</kbd> or click:', act: [`${icon('check', 12)} Save checkpoint`, () => cmd('git.commit')] },
+    push: { at: () => $('[data-act="git.push"]'), side: 'right', html: 'Committed. Last step: <b>push</b> it to GitHub so it is backed up and ready to share.', act: [`${icon('up', 12)} Push to GitHub`, () => cmd('git.push')] },
+    watch: { at: () => $('.bz-url'), side: 'below', html: () => (menuMade ? 'The Builder is updating the page. Watch the preview change as it types.' : 'The agent is writing your coffee menu. Watch the preview fill in as it types.') },
   };
   const coach = document.createElement('div');
   coach.className = 'bz-coach bz-hidden';
@@ -1718,7 +1781,13 @@ h1 {
     if (planCard) return layout.agents ? 'approve' : 'agents';
     if (!layout.preview) return active === 'index.html' ? 'preview' : 'index';
     if (!layout.agents) return 'agents';
-    return asked ? null : 'prompt';
+    if (!menuMade) return busy ? null : 'insert';
+    if (!restyled) return busy ? null : 'restyle';
+    if (!lastCheckpoint) {
+      if (!(layout.side && layout.view === 'git')) return 'checkpoint';
+      return draftMsg.trim() ? 'commit' : 'message';
+    }
+    return lastCheckpoint.pushed ? null : 'push';
   }
   function placeCoach() {
     const t = TOUR[tourStep]?.at();
@@ -1738,6 +1807,10 @@ h1 {
       top = y + h + 12;
       left = clamp(x + w / 2 - cw / 2, 10, W - cw - 10);
       coach.style.setProperty('--arrow', `${clamp(x + w / 2 - left, 16, cw - 16)}px`);
+    } else if (TOUR[tourStep].side === 'right') {
+      left = x + w + 14;
+      top = clamp(y + h / 2 - ch / 2, 10, H - ch - 10);
+      coach.style.setProperty('--arrow', `${clamp(y + h / 2 - top, 14, ch - 14)}px`);
     } else {
       left = x - cw - 14;
       top = clamp(y + h / 2 - ch / 2, 10, H - ch - 10);
@@ -1754,7 +1827,9 @@ h1 {
       tourStep = step;
       if (step) {
         sfx.play('coach');
-        coach.innerHTML = `<div>${TOUR[step].html}</div><button class="bz-coach-x" data-coach="skip" title="Skip the tour" aria-label="Skip the tour">${icon('x', 12)}</button>`;
+        const html = TOUR[step].html;
+        const act = TOUR[step].act;
+        coach.innerHTML = `<div>${typeof html === 'function' ? html() : html}${act ? `<button class="bz-coach-try" data-coach="act">${act[0]}</button>` : ''}</div><button class="bz-coach-x" data-coach="skip" title="Skip the tour" aria-label="Skip the tour">${icon('x', 12)}</button>`;
         coach.dataset.side = TOUR[step].side;
         coach.classList.remove('bz-hidden', 'pop');
         void coach.offsetWidth;
@@ -1764,12 +1839,17 @@ h1 {
         $$('.bz-coach-target').forEach(el => el.classList.remove('bz-coach-target'));
       }
     }
+    const locked = tourStep === 'insert';
+    promptEl.readOnly = locked;
+    promptEl.placeholder = locked ? `Click Insert “${FIRST_ASK}” to start` : 'Describe what you want to build…';
     cancelAnimationFrame(coachRaf);
     if (tourStep && onScreen) followCoach();
   }
   coach.addEventListener('click', e => {
-    if (e.target.closest('[data-coach="skip"]')) { tourOff = true; sfx.play('close'); updateTour(); }
-    else if (e.target.closest('[data-try]')) { sfx.play('tick'); promptEl.value = SUGGESTION; promptEl.focus({ preventScroll: true }); }
+    if (e.target.closest('[data-coach="skip"]')) { tourOff = true; sfx.play('close'); updateTour(); return; }
+    if (!e.target.closest('[data-coach="act"]')) return;
+    sfx.play('tick');
+    TOUR[tourStep]?.act?.[1]();
   });
   new IntersectionObserver(([entry]) => {
     onScreen = entry.isIntersecting;
