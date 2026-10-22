@@ -205,6 +205,20 @@ if (downloadBg) {
   wipe.observe(downloadBg);
 }
 
+/* ----- Latest release ----- */
+// The version and installer size under the download button follow the newest GitHub release; the
+// numbers written in the page stay if GitHub can't be reached.
+if ($('[data-release]')) {
+  fetch('https://api.github.com/repos/itsphatto/BreezeCode/releases/latest')
+    .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then(rel => {
+      const exe = (rel.assets || []).find(a => a.name.endsWith('.exe'));
+      $$('[data-release="version"]').forEach(el => { if (rel.tag_name) el.textContent = rel.tag_name; });
+      $$('[data-release="size"]').forEach(el => { if (exe) el.textContent = `${Math.round(exe.size / 1048576)} MB`; });
+    })
+    .catch(() => {});
+}
+
 /* ----- Live memory readouts ----- */
 // Each readout drifts to a new figure within its range, counting there, like a resource monitor.
 const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;

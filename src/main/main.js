@@ -100,6 +100,10 @@ function configureAutoUpdater() {
 
 
 
+// A development run gets its own data directory, so it doesn't share the installed app's
+// single-instance lock (below) and quit as soon as it starts while the installed app is open.
+if (!app.isPackaged) app.setPath('userData', `${app.getPath('userData')}-dev`);
+
 // Keep Chromium's cache in this app's own per-user data directory. The shared
 // temp directory can be locked by another process on Windows, which prevents
 // Chromium from creating its disk and GPU caches.

@@ -3687,20 +3687,15 @@ body.vibing .ide {
 }
 
 .tree-item.git-ignored {
-  opacity: .38;
-}
-
-.tree-item.git-ignored .nm {
-  color: var(--text-3);
+  opacity: .62;
 }
 
 .tree-item.git-ignored .ico {
-  opacity: .45;
-  filter: grayscale(60%);
+  filter: grayscale(35%);
 }
 
 .tree-item.git-ignored:hover {
-  opacity: .75;
+  opacity: .85;
 }
 
 .tree-item.git-ignored:hover .ico {
@@ -6132,4 +6127,4 @@ button.pill:active, .pill-btn:active {
   transform: translateY(0) scale(1);
   visibility: visible;
 }
-
+

@@ -369,6 +369,7 @@ p {
 
   .hero-pin .hero-shot {
     position: relative;
+    top: auto;
   }
 
   .hero-pin .frame {
@@ -571,6 +572,15 @@ p {
   height: 1px;
   margin: 0 auto clamp(40px, 6vw, 64px);
   background: var(--bg-2);
+}
+
+/* Languages and the slogan sit closer together than the other sections */
+#agents {
+  padding-bottom: clamp(40px, 5vw, 64px);
+}
+
+#why {
+  padding-top: clamp(24px, 3vw, 40px);
 }
 
 .section-head {
@@ -923,6 +933,17 @@ p {
   text-align: center;
 }
 
+/* Version, system and size under the download button */
+.download-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 10px;
+  margin: 18px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+
 .download-icon {
   width: 88px;
   height: 88px;
@@ -982,10 +1003,131 @@ p {
   background: var(--bg-2);
 }
 
-.footer-copy {
-  width: 100%;
+/* ---------- Legal pages: Privacy and Terms of Service ---------- */
+.legal {
+  max-width: 820px;
+  padding-top: calc(96px + clamp(40px, 6vw, 72px));
+  padding-bottom: clamp(88px, 11vw, 144px);
+}
+
+.legal-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 28px;
+  color: var(--text-2);
+  font-size: 14.5px;
+  text-decoration: none;
+  transition: color .15s;
+}
+
+.legal-back:hover {
+  color: var(--text);
+}
+
+.legal h1 {
+  font-size: clamp(34px, 5vw, 56px);
+}
+
+.legal-meta {
+  margin: 16px 0 0;
   color: var(--text-3);
-  font-size: 13.5px;
+  font-size: 14.5px;
+}
+
+.legal-body {
+  margin-top: clamp(40px, 6vw, 64px);
+  padding-top: clamp(32px, 5vw, 48px);
+  border-top: 1px solid var(--bg-2);
+  min-height: 240px;
+}
+
+/* ---------- FAQ: questions that open in place ---------- */
+.faq-list {
+  display: grid;
+  gap: 12px;
+  margin-top: clamp(40px, 6vw, 64px);
+}
+
+.faq-item {
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  transition: border-color .15s;
+}
+
+.faq-item[open] {
+  border-color: rgba(0, 94, 255, .45);
+}
+
+.faq-item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 60px;
+  padding: 16px 20px;
+  font-size: 16.5px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A plus drawn with gradients (centered exactly) that turns into a cross when open */
+.faq-item summary::after {
+  content: "";
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background:
+    linear-gradient(currentColor, currentColor) center / 12px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 2px 12px no-repeat,
+    var(--bg-3);
+  color: var(--text-2);
+  transition: transform .2s var(--ease), background-color .15s, color .15s;
+}
+
+.faq-item[open] summary::after {
+  transform: rotate(45deg);
+  background:
+    linear-gradient(currentColor, currentColor) center / 12px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 2px 12px no-repeat,
+    var(--blue-soft);
+  color: #8bb2ff;
+}
+
+.faq-item summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: var(--r);
+}
+
+.faq-a {
+  padding: 0 20px 18px;
+  color: var(--text-2);
+  font-size: 15.5px;
+}
+
+.faq-a p {
+  margin: 0;
+}
+
+.faq-a p+p {
+  margin-top: 10px;
+}
+
+.faq-a a {
+  color: #8bb2ff;
+}
+
+.faq-a b {
+  color: var(--text);
+  font-weight: 600;
 }
 
 /* ---------- Screenshot zoom ---------- */

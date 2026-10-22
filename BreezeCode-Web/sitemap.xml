@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://usebreezecode.itsphatto.site/</loc>
+    <loc>https://breezecode.itsphatto.site/</loc>
+  </url>
+  <url>
+    <loc>https://breezecode.itsphatto.site/FAQ.html</loc>
+  </url>
+  <url>
+    <loc>https://breezecode.itsphatto.site/privacy.html</loc>
+  </url>
+  <url>
+    <loc>https://breezecode.itsphatto.site/terms.html</loc>
   </url>
 </urlset>
