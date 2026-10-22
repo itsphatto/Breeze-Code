@@ -713,15 +713,14 @@ function getTools(force = false) {
   return toolsPromise;
 }
 
-// Runs a .c, .cpp, .cs or .py file in the open folder, streaming into the terminal under one id.
+// Runs a .c, .cpp, .cs, .java, .py or .rs file in the open folder, streaming into the terminal under one id.
 let activeRun = null; // { id, cancel }
-const SOURCE_FILE = /\.(?:c|cc|cpp|cxx|cs|py)$/i;
-// The nearest .csproj in the .cs file's folder or a folder above it, without leaving the open project.
-function nearestCsproj(abs) {
-  if (!/\.cs$/i.test(abs)) return null;
+const SOURCE_FILE = /\.(?:c|cc|cpp|cxx|cs|java|py|rs)$/i;
+// The nearest project file (a .csproj, a Cargo.toml) in the file's folder or a folder above it, without leaving the open project.
+function nearestProject(abs, isProject) {
   for (let dir = path.dirname(abs); ; dir = path.dirname(dir)) {
     let names = [];
-    try { names = fs.readdirSync(dir).filter(n => /\.csproj$/i.test(n)).sort((a, b) => a.localeCompare(b)); } catch { /* unreadable: keep looking up */ }
+    try { names = fs.readdirSync(dir).filter(isProject).sort((a, b) => a.localeCompare(b)); } catch { /* unreadable: keep looking up */ }
     if (names.length) return path.join(dir, names[0]);
     if (path.relative(root, dir) === '' || dir === path.dirname(dir)) return null;
   }
@@ -741,14 +740,17 @@ handle('run:file', async (_e, rel) => {
     // gcc can't read inside the packaged app's asar archive; the header is unpacked next to it.
     const stdioHeader = unpacked(path.join(ROOT, 'runtime', 'breeze_stdio.h'));
     let { tools, pathValue } = await getTools();
-    const opts = { csproj: nearestCsproj(abs) };
+    const opts = {
+      csproj: /\.cs$/i.test(abs) ? nearestProject(abs, n => /\.csproj$/i.test(n)) : null,
+      cargoToml: /\.rs$/i.test(abs) ? nearestProject(abs, n => n === 'Cargo.toml') : null,
+    };
     let plan = runPlan(abs, tools, process.platform, stdioHeader, opts);
     if (plan.error && SOURCE_FILE.test(abs)) {
       ({ tools, pathValue } = await getTools(true));
       plan = runPlan(abs, tools, process.platform, stdioHeader, opts);
     }
     if (plan.error) return fail(plan.error);
-    if (plan.steps.length > 1) fs.mkdirSync(path.join(plan.steps[0].cwd, 'build'), { recursive: true }); // gcc won't create it
+    if (plan.steps.length > 1) fs.mkdirSync(path.join(plan.steps[0].cwd, 'build'), { recursive: true }); // gcc and rustc won't create it
     if (plan.steps.length > 1) { try { ensureBuildIgnored(root); } catch { /* .gitignore is a nicety */ } }
     if (activeRun !== claim) return { error: 'Cancelled' }; // the window reloaded while this was starting
     const id = claim.id = nextTermId++;
@@ -778,7 +780,8 @@ handle('run:file', async (_e, rel) => {
         win?.webContents.send('term:exit', id, 1);
       }
     });
-    return { id };
+    // Where the program runs (a Cargo project's folder, say): relative paths in its errors resolve there.
+    return { id, cwd: plan.steps[0].cwd };
   } catch (err) {
     return fail(err.message);
   }
@@ -938,7 +941,7 @@ handle('sys:detect', async () => {
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
   }));
   const found = (await getTools(true)).tools;
-  for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py'], ['dotnet', 'C#', found.dotnet, 'cs']]) {
+  for (const [id, name, t, kind] of [['cc', 'C/C++', found.cc, 'c'], ['python', 'Python', found.python, 'py'], ['dotnet', 'C#', found.dotnet, 'cs'], ['java', 'Java', found.java, 'java'], ['rust', 'Rust', found.rustc, 'rs']]) {
     tools.push({ id, name, found: !!t, version: t ? versionIn(t.version) : null, optional: true, hint: t ? null : installHint(kind, process.platform), cmd: t ? null : installCmd(kind, process.platform), url: t ? null : installUrl(kind, process.platform) });
   }
   return { agents, tools, platform: process.platform };

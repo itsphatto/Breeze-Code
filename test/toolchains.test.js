@@ -69,7 +69,7 @@ test('runPlan on linux has no .exe', () => {
 });
 
 test('runPlan rejects other files', () => {
-  assert.deepEqual(runPlan('C:\\p\\a.js', tools, 'win32', H), { error: 'Breeze can run .c, .cpp, .cs and .py files' });
+  assert.deepEqual(runPlan('C:\\p\\a.js', tools, 'win32', H), { error: 'Breeze can run .c, .cpp, .cs, .java, .py and .rs files' });
 });
 
 const WIN_C = 'No C/C++ compiler found. Install one with:\nwinget install BrechtSanders.WinLibs.POSIX.UCRT';
@@ -162,7 +162,7 @@ test('findTools leaves cxx null without a twin, and everything null when nothing
   assert.equal(r.cc.name, 'gcc');
   assert.equal(r.cxx, null);
   const none = await findTools(machine('win32', {}));
-  assert.deepEqual(none, { cc: null, cxx: null, python: null, dotnet: null, binDirs: [] });
+  assert.deepEqual(none, { cc: null, cxx: null, python: null, dotnet: null, java: null, rustc: null, cargo: null, binDirs: [] });
 });
 
 test('findTools rejects the Store python shortcut', async () => {
@@ -400,4 +400,112 @@ test('unpacked points into app.asar.unpacked in the packaged app, and changes no
   assert.equal(unpacked('/opt/Breeze/resources/app.asar/runtime/breeze_stdio.h'), '/opt/Breeze/resources/app.asar.unpacked/runtime/breeze_stdio.h');
   assert.equal(unpacked('D:\\Project-B\\runtime\\breeze_stdio.h'), 'D:\\Project-B\\runtime\\breeze_stdio.h');
   assert.equal(unpacked('C:\\r\\app.asar.unpacked\\runtime\\h'), 'C:\\r\\app.asar.unpacked\\runtime\\h');
+});
+
+/* ----- Java ----- */
+const withJava = (version = 'javac 21.0.2') => ({ ...tools, java: T('C:\\jdk\\bin\\java.exe', 'java', version) });
+
+test('runPlan runs a .java file with the source launcher, output in UTF-8', () => {
+  const r = runPlan('C:\\p\\Main.java', withJava(), 'win32', H);
+  assert.equal(r.steps.length, 1);
+  assert.equal(r.steps[0].file, 'C:\\jdk\\bin\\java.exe');
+  assert.deepEqual(r.steps[0].args, ['-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', 'C:\\p\\Main.java']);
+  assert.equal(r.steps[0].display, 'java "Main.java"');
+  assert.equal(r.steps[0].cwd, 'C:\\p');
+});
+
+test('runPlan says a JDK older than 11 cannot run a .java file directly', () => {
+  assert.match(runPlan('C:\\p\\Main.java', withJava('javac 10.0.2'), 'win32', H).error,
+    /^javac 10\.0\.2 can't run a \.java file directly; that needs JDK 11 or newer\.\nUpdate with:\nwinget install Microsoft\.OpenJDK\.21\n/);
+});
+
+test('runPlan without a JDK says how to get one', () => {
+  const none = { cc: null, cxx: null, python: null, dotnet: null, java: null, rustc: null, cargo: null, binDirs: [] };
+  assert.equal(runPlan('C:\\p\\Main.java', none, 'win32', H).error,
+    'No Java JDK found. Install one with:\nwinget install Microsoft.OpenJDK.21\nOr download it from https://adoptium.net');
+  assert.equal(runPlan('/p/Main.java', none, 'darwin', H).error,
+    'No Java JDK found. Install one with:\nbrew install openjdk\nOr download it from https://adoptium.net');
+  assert.match(runPlan('/p/Main.java', none, 'linux', H).error, /^No Java JDK found\. Install a JDK with your package manager/);
+});
+
+test('findTools finds javac on the PATH and the java beside it', async () => {
+  const r = await findTools(machine('win32', { 'C:\\bin\\javac.exe': 'javac 21.0.2\r\n', 'C:\\bin\\java.exe': 'openjdk 21.0.2 2024-01-16' }));
+  assert.deepEqual(r.java, { path: 'C:\\bin\\java.exe', name: 'java', version: 'javac 21.0.2' });
+  assert.deepEqual(r.binDirs, []);
+});
+
+test('findTools finds a JDK through JAVA_HOME or a vendor folder, newest first, and adds its bin', async () => {
+  const m = machine('win32', { 'C:\\jh\\bin\\javac.exe': 'javac 17', 'C:\\jh\\bin\\java.exe': 'openjdk 17' });
+  m.env.JAVA_HOME = 'C:\\jh';
+  assert.equal((await findTools(m)).java.path, 'C:\\jh\\bin\\java.exe');
+
+  const ok = { 'C:\\PF\\Java\\jdk-21\\bin\\javac.exe': 'javac 21', 'C:\\PF\\Java\\jdk-21\\bin\\java.exe': 'openjdk 21',
+    'C:\\PF\\Java\\jdk-8\\bin\\javac.exe': 'javac 8', 'C:\\PF\\Java\\jdk-8\\bin\\java.exe': 'openjdk 8' };
+  const v = machine('win32', ok, { glob: (p) => (p === 'C:\\PF\\Java\\jdk*\\bin' ? ['C:\\PF\\Java\\jdk-8\\bin', 'C:\\PF\\Java\\jdk-21\\bin'] : []) });
+  v.env.ProgramFiles = 'C:\\PF';
+  const r = await findTools(v);
+  assert.equal(r.java.version, 'javac 21');
+  assert.deepEqual(r.binDirs, ['C:\\PF\\Java\\jdk-21\\bin']);
+});
+
+test('findTools ignores a javac with no java beside it, and a java with no javac (a JRE)', async () => {
+  assert.equal((await findTools(machine('win32', { 'C:\\bin\\javac.exe': 'javac 21' }))).java, null);
+  assert.equal((await findTools(machine('win32', { 'C:\\bin\\java.exe': 'openjdk 21' }))).java, null);
+});
+
+/* ----- Rust ----- */
+const withRust = { ...tools, rustc: T('C:\\cargo\\bin\\rustc.exe', 'rustc'), cargo: T('C:\\cargo\\bin\\cargo.exe', 'cargo') };
+
+test('runPlan compiles a lone .rs file with rustc into build/, then runs it', () => {
+  const r = runPlan('C:\\p\\hello.rs', withRust, 'win32', H);
+  assert.equal(r.steps.length, 2);
+  assert.equal(r.steps[0].file, 'C:\\cargo\\bin\\rustc.exe');
+  assert.deepEqual(r.steps[0].args, ['C:\\p\\hello.rs', '-o', 'build\\hello.exe', '--edition', '2021', '-g']);
+  assert.equal(r.steps[0].display, 'rustc "hello.rs" -o "build\\hello.exe" --edition 2021 -g');
+  assert.equal(r.steps[1].file, 'C:\\p\\build\\hello.exe');
+  assert.equal(r.steps[1].display, 'build\\hello.exe');
+  assert.equal(runPlan('/p/hello.rs', withRust, 'linux', H).steps[1].display, './build/hello');
+});
+
+test('runPlan runs the nearest Cargo project with cargo run', () => {
+  const r = runPlan('C:\\p\\app\\src\\main.rs', withRust, 'win32', H, { cargoToml: 'C:\\p\\app\\Cargo.toml' });
+  assert.equal(r.steps.length, 1);
+  assert.equal(r.steps[0].file, 'C:\\cargo\\bin\\cargo.exe');
+  assert.deepEqual(r.steps[0].args, ['run']);
+  assert.equal(r.steps[0].display, 'cargo run');
+  assert.equal(r.steps[0].cwd, 'C:\\p\\app');
+});
+
+test('runPlan without Rust says how to get it', () => {
+  const none = { cc: null, cxx: null, python: null, dotnet: null, java: null, rustc: null, cargo: null, binDirs: [] };
+  assert.equal(runPlan('C:\\p\\a.rs', none, 'win32', H).error,
+    'No Rust compiler found. Install Rust with:\nwinget install Rustlang.Rustup\nOr download it from https://rustup.rs');
+  assert.equal(runPlan('/p/a.rs', none, 'darwin', H).error, 'No Rust compiler found. Install Rust with rustup\nDownload it from https://rustup.rs');
+  assert.match(runPlan('/p/src/main.rs', none, 'linux', H, { cargoToml: '/p/Cargo.toml' }).error, /^No Rust compiler found/);
+});
+
+test('installHint and installUrl for Java and Rust', () => {
+  assert.equal(installHint('java', 'win32'), 'winget install Microsoft.OpenJDK.21');
+  assert.equal(installUrl('java', 'linux'), 'https://adoptium.net');
+  assert.equal(installHint('rs', 'win32'), 'winget install Rustlang.Rustup');
+  assert.equal(installHint('rs', 'linux'), 'No Rust compiler found. Install Rust with rustup');
+  assert.equal(installUrl('rs', 'darwin'), 'https://rustup.rs');
+});
+
+test('findTools finds rustc and cargo in ~/.cargo/bin off the PATH and adds it', async () => {
+  const m = machine('win32', { 'C:\\Users\\me\\.cargo\\bin\\rustc.exe': 'rustc 1.82.0 (f6e511eec 2024-10-15)', 'C:\\Users\\me\\.cargo\\bin\\cargo.exe': 'cargo 1.82.0' });
+  m.env.USERPROFILE = 'C:\\Users\\me';
+  const r = await findTools(m);
+  assert.deepEqual(r.rustc, { path: 'C:\\Users\\me\\.cargo\\bin\\rustc.exe', name: 'rustc', version: 'rustc 1.82.0 (f6e511eec 2024-10-15)' });
+  assert.equal(r.cargo.path, 'C:\\Users\\me\\.cargo\\bin\\cargo.exe');
+  assert.deepEqual(r.binDirs, ['C:\\Users\\me\\.cargo\\bin']);
+});
+
+test('findTools on linux looks in CARGO_HOME first', async () => {
+  const m = machine('linux', { '/opt/cargo/bin/rustc': 'rustc 1.80.0', '/home/me/.cargo/bin/rustc': 'rustc 1.70.0' });
+  m.env.CARGO_HOME = '/opt/cargo';
+  m.env.HOME = '/home/me';
+  const r = await findTools(m);
+  assert.equal(r.rustc.version, 'rustc 1.80.0');
+  assert.equal(r.cargo, null);
 });

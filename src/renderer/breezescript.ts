@@ -75,7 +75,7 @@ interface BreezeApi {
     onData(cb: (id: number, chunk: string) => void): () => void;
     onExit(cb: (id: number, code: number | null) => void): () => void;
   };
-  run: { file(rel: string): Promise<{ id?: number; error?: string }>; };
+  run: { file(rel: string): Promise<{ id?: number; cwd?: string; error?: string }>; };
   sys: { detect(): Promise<Detection>; openExternal(url: string): Promise<void>; runCommand(cmd: string): Promise<boolean>; getPathForFile?(file: File): string; };
   live: { status(): Promise<LiveStatus>; start(): Promise<LiveStatus>; stop(): Promise<LiveStatus>; };
   // A local LLM server (Ollama, LM Studio or anything OpenAI-compatible).
@@ -160,6 +160,7 @@ function toast(text: string): void {
   const t = document.createElement('div');
   t.className = 'toast'; t.textContent = text;
   $('#toastRoot').replaceChildren(t);
+  sfx.play('ping');
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 200); }, 2600);
 }
 // Starts async work without waiting for it; a failure shows as a toast.
@@ -178,6 +179,114 @@ const store = {
     try { localStorage.removeItem(key); } catch { /* storage blocked */ }
   },
 };
+
+/* ================= Sound effects ================= */
+// The website's sounds (BreezeCode-Web/sfx.js): tiny synthesized blips, no audio files. Nothing plays until the
+// first click or key press, and the speaker button in the status bar (or Settings › Sound Effects) turns them off.
+const sfx = (() => {
+  let on = store.get('breeze.sound', true);
+  let ctx: AudioContext | null = null;
+  let master: GainNode | null = null;
+  let lastAt = -Infinity; // when any sound last played, so a button that makes its own sound doesn't also click
+
+  // Audio may only start after a gesture, so the context is made on the first one.
+  function unlock(): void {
+    if (ctx) return;
+    try {
+      ctx = new AudioContext();
+      master = ctx.createGain();
+      master.gain.value = 0.5;
+      master.connect(ctx.destination);
+    } catch { ctx = null; } // no audio available
+  }
+  for (const t of ['pointerdown', 'keydown']) addEventListener(t, unlock, { capture: true, passive: true });
+
+  // One blip: a pitch (optionally sliding) with a fast attack and a fade-out.
+  function tone(freq: number, dur: number, { type = 'sine', vol = 0.1, to = freq, at = 0 }: { type?: OscillatorType; vol?: number; to?: number; at?: number } = {}): void {
+    const c = ctx as AudioContext;
+    const t0 = c.currentTime + at;
+    const osc = c.createOscillator();
+    const g = c.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (to !== freq) osc.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g).connect(master as GainNode);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  const jitter = (n: number) => 1 + (Math.random() - 0.5) * n;
+  const SOUNDS = {
+    click: () => tone(1500 * jitter(0.06), 0.05, { to: 900, vol: 0.09 }),
+    hover: () => tone(2400, 0.025, { vol: 0.025 }),
+    key: () => tone(1900 * jitter(0.25), 0.022, { type: 'triangle', vol: 0.035 }),
+    tab: () => tone(520, 0.08, { to: 760, vol: 0.09 }),
+    close: () => tone(720, 0.08, { to: 420, vol: 0.08 }),
+    menu: () => tone(420, 0.09, { to: 640, type: 'triangle', vol: 0.07 }),
+    whoosh: () => { tone(300, 0.16, { to: 900, type: 'triangle', vol: 0.05 }); tone(150, 0.16, { to: 450, vol: 0.05 }); },
+    save: () => { tone(660, 0.12, { vol: 0.09 }); tone(990, 0.2, { vol: 0.09, at: 0.09 }); },
+    tick: () => tone(1250, 0.03, { type: 'triangle', vol: 0.06 }),
+    ping: () => tone(880, 0.16, { vol: 0.08, to: 920 }),
+    // Agent chat
+    send: () => tone(480, 0.12, { to: 1000, type: 'triangle', vol: 0.07 }),
+    msg: () => tone(640, 0.09, { to: 470, vol: 0.07 }),
+    tool: () => tone(1500 * jitter(0.1), 0.03, { type: 'triangle', vol: 0.035 }),
+    plan: () => [523, 659, 784].forEach((f, i) => tone(f, 0.16, { vol: 0.07, at: i * 0.08 })),
+    approve: () => { tone(523, 0.12, { type: 'triangle', vol: 0.08 }); tone(784, 0.2, { type: 'triangle', vol: 0.08, at: 0.07 }); },
+    build: () => tone(200, 0.35, { to: 620, type: 'sawtooth', vol: 0.03 }),
+    success: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i === 3 ? 0.4 : 0.14, { vol: 0.08, at: i * 0.09 })),
+    launch: () => { tone(330, 0.16, { to: 660, type: 'triangle', vol: 0.08 }); tone(1320, 0.05, { vol: 0.05, at: 0.14 }); },
+  };
+  type Sound = keyof typeof SOUNDS;
+  // Fast repeating sounds (typing, tool lines) are spaced out so they stay ticks and don't buzz.
+  const GAP: Partial<Record<Sound, number>> = { key: 30, tool: 40 };
+  const last: Partial<Record<Sound, number>> = {};
+
+  function play(name: Sound): void {
+    if (!on || !ctx || document.hidden) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const now = performance.now();
+    const gap = GAP[name];
+    if (gap) {
+      if (now - (last[name] ?? -Infinity) < gap) return;
+      last[name] = now;
+    }
+    lastAt = now;
+    SOUNDS[name]();
+  }
+
+  const btn = $('#sbSound');
+  function paint(): void {
+    $('use', btn).setAttribute('href', on ? '#i-sound' : '#i-mute');
+    btn.setAttribute('aria-pressed', String(on));
+    btn.title = on ? 'Sound effects on' : 'Sound effects off';
+  }
+  function toggle(): void {
+    unlock();
+    on = !on;
+    store.set('breeze.sound', on);
+    paint();
+    play('tick');
+  }
+  btn.addEventListener('click', toggle);
+  paint();
+
+  // Buttons click and hover like the website's; one that just made its own sound (send, a menu opening) stays quiet.
+  document.addEventListener('click', e => {
+    const el = (e.target as Element).closest?.('.btn, .pill-btn, .mode-card, .seg button');
+    if (el && performance.now() - lastAt > 60) play('click');
+  });
+  document.addEventListener('pointerover', e => {
+    if (e.pointerType !== 'mouse') return;
+    const el = (e.target as Element).closest?.('.btn');
+    if (el && !el.contains(e.relatedTarget as Node | null)) play('hover');
+  });
+
+  return { play, toggle, get on() { return on; } };
+})();
 
 /* ================= Platform (desktop bridge or in-browser demo) ================= */
 const DEMO_FILES: Record<string, string> = {
@@ -1358,6 +1467,7 @@ const LANGS: Record<string, [lexer: string, name: string]> = {
   json: ['json', 'JSON'], jsonc: ['js', 'JSON with Comments'],
   md: ['md', 'Markdown'], markdown: ['md', 'Markdown'],
   py: ['py', 'Python'],
+  java: ['java', 'Java'], rs: ['rs', 'Rust'],
   cs: ['cs', 'C#'], csx: ['cs', 'C# Script'], csproj: ['html', 'C# Project'],
   png: ['', 'PNG Image'], jpg: ['', 'JPEG Image'], jpeg: ['', 'JPEG Image'], gif: ['', 'GIF Image'], webp: ['', 'WebP Image'],
   avif: ['', 'AVIF Image'], bmp: ['', 'Bitmap Image'], ico: ['', 'Icon'],
@@ -1375,6 +1485,8 @@ const lexer = (rules: TokenRule[], flags = 'g') => new RegExp(rules.map(([kind, 
 const keywords = (list: string) => new RegExp(String.raw`\b(?:${list.replaceAll(' ', '|')})\b`);
 const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return super switch this throw try typeof var void while with yield async await static get set type interface enum implements private public protected readonly declare as true false null undefined';
 const CS_KW = 'abstract as async await base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach get goto if implicit in init int interface internal is lock long namespace new null object operator out override params private protected public readonly record ref required return sbyte sealed set short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile when where while with yield';
+const JAVA_KW = 'abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits yield true false null';
+const RS_KW = 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String Vec Option Some None Result Ok Err Box';
 const PY_KW = 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self';
 const LINE_COMMENT = /\/\/[^\n]*/;
 const BLOCK_COMMENT = /\/\*[\s\S]*?(?:\*\/|$)/;
@@ -1397,6 +1509,19 @@ const LEXERS: Record<string, RegExp> = {
     ['num', either(/\b0[xX][\da-fA-F_]+[uUlL]*\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?[fFdDmMuUlL]*\b/)], ['kw', keywords(CS_KW)], ['prop', /\b[A-Za-z_]\w*(?=\s*[(<])/],
   ]),
   py: lexer([['com', /#[^\n]*/], ['str', either(/"""[\s\S]*?(?:"""|$)/, /'''[\s\S]*?(?:'''|$)/, QUOTED)], ['num', NUMBER], ['kw', keywords(PY_KW)], ['prop', /\b[A-Za-z_]\w*(?=\()/]]),
+  // Java: """text blocks""" and @Annotations.
+  java: lexer([
+    ['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['str', either(/"""[\s\S]*?(?:"""|$)/, QUOTED)], ['attr', /@[A-Za-z_]\w*/],
+    ['num', either(/\b0[xXbB][\da-fA-F_]+[lL]?\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?[fFdDlL]?\b/)], ['kw', keywords(JAVA_KW)], ['prop', CALL],
+  ]),
+  // Rust: strings may span lines, r#"raw"# strings, 'c' chars but 'lifetimes, #[attributes] and macro! calls.
+  rs: lexer([
+    ['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['kw', /#!?\[[^\]\n]*\]?/],
+    ['str', either(/b?r#"[\s\S]*?(?:"#|$)/, /b?r"[^"]*"?/, /b?"(?:\\[\s\S]|[^"\\])*"?/, /b?'(?:\\(?:x[\da-fA-F]{2}|u\{[\da-fA-F]{1,6}\}|.)|[^\\'\n])'/)],
+    ['attr', /'[A-Za-z_]\w*/],
+    ['num', either(/\b0[xob][\da-fA-F_]+(?:[iu](?:8|16|32|64|128|size))?\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?(?:[iu](?:8|16|32|64|128|size)|f32|f64)?\b/)],
+    ['kw', keywords(RS_KW)], ['prop', either(/\b[A-Za-z_]\w*!/, CALL)],
+  ]),
   md: lexer([
     ['kw', /(?<=^|\n)#{1,6}[^\n]*/], ['str', either(/```[^`]*(?:```|$)/, /`[^`\n]*`/)], ['com', /(?<=^|\n)>[^\n]*/],
     ['attr', either(/\*\*[^*\n]+\*\*/, /\[[^[\]\n]*\]\([^()\n]*\)/)],
@@ -1449,7 +1574,7 @@ function highlightLines(text: string, lexerName: string): string[] {
   }
   return lines;
 }
-const COMMENT: Record<string, [string, string]> = { js: ['// ', ''], py: ['# ', ''], css: ['/* ', ' */'], html: ['<!-- ', ' -->'], md: ['<!-- ', ' -->'] };
+const COMMENT: Record<string, [string, string]> = { js: ['// ', ''], java: ['// ', ''], rs: ['// ', ''], py: ['# ', ''], css: ['/* ', ' */'], html: ['<!-- ', ' -->'], md: ['<!-- ', ' -->'] };
 
 /* ================= Syntax checks (red error lines) ================= */
 // Quick structural checks that work everywhere: brackets, strings, comments, tags, JSON, Python blocks.
@@ -1466,6 +1591,9 @@ const REGEX_AFTER = /(?:^|[(,=:[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|do|els
 const JS_SCAN: ScanOpts = { lineCom: '//', blockCom: true, quotes: `'"`, template: true, regex: true };
 const CSS_SCAN: ScanOpts = { blockCom: true, quotes: `'"` };
 const PY_SCAN: ScanOpts = { lineCom: '#', quotes: `'"`, triple: true };
+const JAVA_SCAN: ScanOpts = { lineCom: '//', blockCom: true, quotes: `'"`, triple: true };
+// Rust strings are blanked before the scan (lintRust), so it only checks comments and brackets.
+const RS_SCAN: ScanOpts = { lineCom: '//', blockCom: true, quotes: '' };
 const neverClosed = (s: Opened): RawDiag =>
   ({ at: s.at, len: 1, msg: s.tmpl == null ? `'${s.ch}' is never closed` : 'Template expression is never closed (missing })' });
 
@@ -1859,6 +1987,19 @@ function lintPy(text: string): RawDiag[] {
   const r = scanCode(text, PY_SCAN);
   return r.diags.length ? r.diags : lintPython(r.masked);
 }
+// Rust strings may span lines and hold raw text (r#"…"#), and a lone ' starts a lifetime rather than a string, so
+// strings and chars are blanked first (comments stay for the scanner).
+const RS_TEXT = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|b?r(#?)"[\s\S]*?(?:"\1|$)|b?"(?:\\[\s\S]|[^"\\])*(?:"|$)|b?'(?:\\(?:x[\da-fA-F]{2}|u\{[\da-fA-F]{1,6}\}|.)|[^\\'\n])'/g;
+function lintRust(text: string): RawDiag[] {
+  const diags: RawDiag[] = [];
+  const blanked = text.replace(RS_TEXT, (m: string, hash: string | undefined, at: number) => {
+    if (m.startsWith('/')) return m;
+    const open = m.indexOf('"'), close = '"' + (hash ?? '');
+    if (open >= 0 && (m.length < open + 1 + close.length || !m.endsWith(close))) diags.push({ at, len: open + 1, msg: `String is never closed (missing ${close})` });
+    return m.replace(/[^\n]/g, ' ');
+  });
+  return diags.concat(scanCode(blanked, RS_SCAN).diags);
+}
 // Which check runs for each file extension.
 const LINTERS: Record<string, (text: string, path: string) => RawDiag[]> = {
   json: (t, p) => new JsonChecker(t, looseJson(p)).check(),
@@ -1867,6 +2008,8 @@ const LINTERS: Record<string, (text: string, path: string) => RawDiag[]> = {
   html: t => new MarkupChecker(t, false).run(), htm: t => new MarkupChecker(t, false).run(), vue: t => new MarkupChecker(t, false).run(),
   xml: t => new MarkupChecker(t, true).run(), svg: t => new MarkupChecker(t, true).run(),
   py: lintPy,
+  java: t => scanCode(t, JAVA_SCAN).diags,
+  rs: lintRust,
 };
 for (const ext of JS_EXT) LINTERS[ext] = t => scanCode(t, { ...JS_SCAN, jsx: ext === 'jsx' || ext === 'tsx' }).diags;
 function lintStructure(text: string, path: string): RawDiag[] {
@@ -1904,6 +2047,9 @@ const ICONS: Record<string, string> = {
   git: svg16('<path d="M8 1.6 14.4 8 8 14.4 1.6 8z" fill="#f05033"/><path d="M6.4 5.2v5.6M6.4 6.6 9.6 9.4" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/><circle cx="6.4" cy="10.6" r="1" fill="#fff"/><circle cx="9.6" cy="9.4" r="1" fill="#fff"/><circle cx="6.4" cy="5" r="1" fill="#fff"/>'),
   node: svg16('<path d="M8 1.3 13.8 4.6v6.8L8 14.7 2.2 11.4V4.6z" fill="#8cc84b" fill-opacity=".2" stroke="#8cc84b" stroke-width="1.2" stroke-linejoin="round"/><path d="M6 6.2v3.6M10 6.2v3.6M6 6.2l4 3.6" stroke="#8cc84b" stroke-width="1.2" stroke-linecap="round"/>'),
   py: svg16('<path d="M8 1.5c-3 0-3 1.3-3 2.3V6h3.2v.6H3.6C2.3 6.6 1.5 7.6 1.5 9.4s.8 2.9 2 2.9H5V10.5c0-1.2 1-2.2 2.2-2.2h3.3c1 0 1.8-.8 1.8-1.8V3.8c0-1.2-1.2-2.3-4.3-2.3z" fill="#3776ab"/><path d="M8 14.5c3 0 3-1.3 3-2.3V10H7.8v-.6h4.6c1.3 0 2.1-1 2.1-2.8s-.8-2.9-2-2.9H11v1.8c0 1.2-1 2.2-2.2 2.2H5.5c-1 0-1.8.8-1.8 1.8v2.7c0 1.2 1.2 2.3 4.3 2.3z" fill="#ffd43b"/>'),
+  // The real Java and Rust logos, kept once as symbols in breeze.html's sprite.
+  java: '<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-lang-java" width="16" height="16"/></svg>',
+  rust: '<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-lang-rust" width="16" height="16"/></svg>',
   shell: svg16('<rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="#4caf50" fill-opacity=".14" stroke="#4caf50" stroke-width="1.2"/><path d="m4.3 6 2.2 2-2.2 2M8 10.5h3.5" fill="none" stroke="#4caf50" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>'),
   config: page('#c792ea', '<path d="M5.5 8h5M5.5 10.5h3.5" stroke="#c792ea" stroke-width="1.1" stroke-linecap="round"/>'),
   text: page('#a1a1aa', '<path d="M5.5 7.5h5M5.5 9.5h5M5.5 11.5h3" stroke="#a1a1aa" stroke-width="1" stroke-linecap="round"/>'),
@@ -1915,7 +2061,7 @@ const EXT_ICON: Record<string, string> = {
   html: 'html', htm: 'html', xml: 'html', vue: 'html', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
   js: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx', tsx: 'jsx', ts: 'ts', mts: 'ts', cts: 'ts', json: 'json', jsonc: 'json', md: 'md', markdown: 'md',
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image', bmp: 'image', avif: 'image', svg: 'svg',
-  py: 'py', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
+  py: 'py', java: 'java', jar: 'java', rs: 'rust', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
   txt: 'text', log: 'text', csv: 'text', lock: 'lock',
 };
 function fileIcon(name: string): string {
@@ -1925,6 +2071,7 @@ function fileIcon(name: string): string {
   if (n === 'package.json' || n === 'package-lock.json' || n === '.npmrc' || n === '.nvmrc') return ICONS.node;
   if (n.startsWith('license')) return ICONS.license;
   if (/^(tsconfig|jsconfig)[\w.-]*\.json$/.test(n)) return ICONS.ts;
+  if (n === 'cargo.toml' || n === 'cargo.lock') return ICONS.rust;
   const ext = n.includes('.') ? n.slice(n.lastIndexOf('.') + 1) : '';
   return ICONS[EXT_ICON[ext] ?? 'file'];
 }
@@ -3221,6 +3368,7 @@ async function actuallyOpen(path: string, at?: Spot): Promise<void> {
 function setActive(path: string | null): void {
   const changed = active !== path;
   active = path;
+  if (changed && path) sfx.play('tab');
   renderTabs(); renderEditor(); renderTree(); saveSession();
   if (changed) queueDiscord();
   if (changed) for (const el of [$('#hl'), $('#gutter')]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160 });
@@ -3438,6 +3586,7 @@ function closeTab(path: string): void {
   const finish = () => {
     const tabEl = $(`#tabs [data-tab="${CSS.escape(path)}"]`);
     const isLastTab = openTabs.length <= 1;
+    if (!tabEl?.classList.contains('closing')) sfx.play('close');
     if (tabEl) {
       if (tabEl.classList.contains('closing')) return;
       const w = tabEl.getBoundingClientRect().width;
@@ -3915,6 +4064,7 @@ function editorKeys(e: KeyboardEvent): void {
   const ta = e.target as HTMLTextAreaElement;
   const b = textareaOwner.get(ta);
   const k = e.key.toLowerCase();
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')) sfx.play('key');
   if (suggestKeys(e, ta)) return;
   if (b && pairKey(e, ta)) { e.preventDefault(); return; }
   if (b && e.ctrlKey && e.key === ' ') { e.preventDefault(); editorSuggest(b, true); return; }
@@ -4075,11 +4225,11 @@ function selectHit(): void {
 }
 findInput.addEventListener('input', () => runFind(true));
 findInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
+  if (e.key === 'Enter') { e.preventDefault(); sfx.play('tick'); stepFind(e.shiftKey ? -1 : 1); }
   if (e.key === 'Escape') { e.stopPropagation(); closeFind(); activeText()?.ta.focus(); }
 });
-$('#findNext').onclick = () => stepFind(1);
-$('#findPrev').onclick = () => stepFind(-1);
+$('#findNext').onclick = () => { sfx.play('tick'); stepFind(1); };
+$('#findPrev').onclick = () => { sfx.play('tick'); stepFind(-1); };
 $('#findClose').onclick = () => { closeFind(); activeText()?.ta.focus(); };
 
 /* ----- Go to line / file ----- */
@@ -4184,6 +4334,7 @@ async function startPreview(): Promise<void> {
   const target = entry?.name ?? htmlOpen;
   if (!target) { toast('Add an index.html (or open an .html file) to preview it'); return; }
   previewPath = target;
+  if (!running) sfx.play('launch');
   running = true;
   layout.previewOpen = true; applyLayout();
   renderPreview();
@@ -4224,6 +4375,11 @@ interface ErrorRef { path: string; line: number; col: number; msg: string; error
 const GCC_REF = /^((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
 const CS_REF = /^[ \t]*((?:[A-Za-z]:(?=[\\/]))?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
 const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
+// rustc and cargo name the problem on one line and point at it on a later one: `error[E0308]: mismatched types`, then
+// ` --> src/main.rs:4:18`. The heading is kept between calls, since the output arrives in pieces. (javac's
+// `Main.java:3: error: msg` is GCC's shape.)
+const RS_REF = /^(?:(error|warning)(?:\[\w+\])?:[ \t]*([^\r\n]*)|[ \t]*--> ((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(\d+))/gm;
+let rustHead = { error: true, msg: '' };
 // Turns a path from the output into a project-relative one, or null when it points outside the project.
 // Windows paths (drive letter) compare without regard to case or slash direction.
 function projectPath(p: string, cwd: string, root: string): string | null {
@@ -4256,6 +4412,14 @@ function parseErrorRefs(text: string, cwd: string, root: string): ErrorRef[] {
     if (path == null) continue;
     const start = m.index + m[0].indexOf(m[1]);
     refs.push({ path, line: Number(m[3]) - 1, col: 0, msg: 'Python error (see the terminal)', error: false, start, end: start + m[1].length });
+  }
+  for (const m of text.matchAll(RS_REF)) {
+    if (m[1]) { rustHead = { error: m[1] === 'error', msg: m[2] }; continue; }
+    const path = projectPath(m[3], cwd, root);
+    if (path == null) continue;
+    const start = m.index + m[0].indexOf(m[3]);
+    const end = start + m[3].length + m[4].length + m[5].length + 2; // through ":line:col"
+    refs.push({ path, line: Number(m[4]) - 1, col: Number(m[5]) - 1, msg: rustHead.msg || 'Rust error (see the terminal)', error: rustHead.error, start, end });
   }
   return refs.sort((a, b) => a.start - b.start);
 }
@@ -4609,8 +4773,8 @@ async function runCommand(cmd: string): Promise<void> {
   if (r.cwd) { term.cwd = r.cwd; renderPs(); }
   if (r.id != null) { term.proc = r.id; $('#termPs').classList.add('busy'); }
 }
-// C, C++ and Python files run in the terminal; their input comes from the terminal's input line.
-function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|cc|cxx|cs|py)$/i.test(path); }
+// C, C++, C#, Java, Python and Rust files run in the terminal; their input comes from the terminal's input line.
+function runnable(path: string | null): boolean { return !!path && /\.(?:c|cpp|cc|cxx|cs|java|py|rs)$/i.test(path); }
 async function runFile(): Promise<void> {
   const b = activeBuf();
   if (!active || b?.kind !== 'text') { toast('Save the file first'); return; }
@@ -4624,10 +4788,11 @@ async function runFile(): Promise<void> {
   if (isDirty(b) && !(await saveFile(active))) return;
   layout.termOpen = true; applyLayout();
   clearRunDiags();
-  term.runCwd = joinPath(rootInfo?.root ?? '', dirName(active)); term.refs = []; term.pending = null;
-  const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; error?: string });
+  term.runCwd = joinPath(rootInfo?.root ?? '', dirName(active)); term.refs = []; term.pending = null; rustHead = { error: true, msg: '' };
+  const r = await api.run.file(active).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; cwd?: string; error?: string });
+  if (r.cwd) term.runCwd = r.cwd; // a Cargo project runs from its own folder
   if (r.error) termWrite(r.error + '\n', 'err');
-  else if (r.id != null) { term.proc = term.runId = r.id; $('#termPs').classList.add('busy'); }
+  else if (r.id != null) { term.proc = term.runId = r.id; $('#termPs').classList.add('busy'); sfx.play('build'); }
   termInput.focus();
 }
 termInput.addEventListener('keydown', e => {
@@ -4674,6 +4839,7 @@ api.term.onExit((id, code) => {
     }
   }
   if (id !== runId) return;
+  if (code === 0) sfx.play('success');
   if (term.pending) { const rest = term.pending.text; term.pending.el.remove(); term.pending = null; termLinked(rest); }
   clearRunDiags();
   if (code) showRunErrors(term.refs);
@@ -4744,9 +4910,13 @@ const CSS_PROPS = 'display position top right bottom left margin padding color b
 const HTML_TAGS = 'html head body title meta link script style div span section header footer main nav article aside button input label form select option textarea img picture video audio a ul ol li p h1 h2 h3 h4 h5 h6 strong em small code pre table thead tbody tr td th template iframe canvas svg';
 const JS_EXTRA = 'console log document window querySelector querySelectorAll addEventListener removeEventListener getElementById createElement appendChild classList textContent innerHTML length forEach filter reduce includes startsWith endsWith JSON stringify parse Promise resolve setTimeout clearTimeout fetch Math Object keys values entries Array Number String Boolean Map Set';
 const PY_EXTRA = 'print range len str int float list dict set tuple open enumerate zip isinstance sorted append extend items keys values format join split strip __init__ __name__ __main__';
+const JAVA_EXTRA = 'System out println print printf String Integer Double Boolean Character Math List ArrayList Map HashMap Set HashSet Arrays Collections Scanner main args length size add get put remove contains equals toString Override Exception RuntimeException';
+const RS_EXTRA = 'println! print! format! vec! panic! assert! assert_eq! main unwrap expect clone iter into_iter map filter collect push pop len is_empty new into to_string as_str HashMap HashSet derive Debug Clone';
 const EDITOR_WORDS: Record<string, string[]> = {
   js: `${JS_KW} ${JS_EXTRA}`.split(' '),
   py: `${PY_KW} ${PY_EXTRA}`.split(' '),
+  java: `${JAVA_KW} ${JAVA_EXTRA}`.split(' '),
+  rs: `${RS_KW} ${RS_EXTRA}`.split(' '),
   css: CSS_PROPS.split(' '),
   html: HTML_TAGS.split(' '),
   json: ['true', 'false', 'null'],
@@ -5017,7 +5187,7 @@ const commands: Record<string, () => unknown> = {
   'file.newFolder': () => newEntry(targetDir(), true),
   'file.openFolder': openFolderCmd,
   'file.openRecent': openRecentPicker,
-  'file.save': () => saveFile(),
+  'file.save': () => saveFile().then(ok => { if (ok) sfx.play('save'); }),
   'file.saveAll': saveAll,
   'file.closeEditor': () => { if (active) closeTab(active); },
   'file.closeFolder': closeFolderCmd,
@@ -5040,12 +5210,14 @@ const commands: Record<string, () => unknown> = {
   'view.toggleSide': () => {
     const prev = { ...layout };
     layout.sideOpen = !layout.sideOpen;
+    sfx.play('menu');
     pushAppAction({ type: 'layout', prev, next: { ...layout } });
     applyLayoutAnimated();
   },
   'view.toggleAgents': () => {
     const prev = { ...layout };
     layout.agentsOpen = !layout.agentsOpen;
+    sfx.play('menu');
     pushAppAction({ type: 'layout', prev, next: { ...layout } });
     applyLayoutAnimated();
   },
@@ -5093,6 +5265,7 @@ const commands: Record<string, () => unknown> = {
   'term.toggle': () => {
     const prev = { ...layout };
     layout.termOpen = !layout.termOpen;
+    sfx.play('whoosh');
     pushAppAction({ type: 'layout', prev, next: { ...layout } });
     applyLayoutAnimated();
     if (layout.termOpen) termInput.focus();
@@ -5297,6 +5470,7 @@ const MENUS: Menu[] = [
       { label: 'Keyboard Shortcuts', act: 'help.keys' },
       { label: 'Run Setup Again', act: 'help.setup' },
       { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
+      { label: 'Sound Effects', act: 'sound.toggle', checked: () => sfx.on },
       { sep: true },
       { label: 'Breeze Code', act: 'mode.ide', checked: () => appState.mode === 'ide' },
       { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
@@ -5311,6 +5485,7 @@ const BAR_MENUS = MENUS.filter(m => !['Go', 'Run', 'Help'].includes(m.name));
 // Shortcuts handled by the editor itself or by keydown elsewhere, but listed for discoverability.
 const EXTRA_KEYS: [string, string][] = [['F2', 'explorer.rename']];
 commands['explorer.rename'] = () => { if (active) return renameEntry(active); };
+commands['sound.toggle'] = () => sfx.toggle();
 
 const canonKey = (combo: string): string => {
   const parts = combo.split('+');
@@ -5467,6 +5642,7 @@ function closeSubmenu(): void {
 }
 function showMenu(x: number, y: number, items: MenuItem[], viaKeyboard: boolean): void {
   cancelMenuClose();
+  sfx.play('menu');
   menuItems = items;
   kbIdx = viaKeyboard ? items.findIndex(it => !it.sep && !it.header) : -1;
   $('#menuRoot').innerHTML = '';
@@ -6155,6 +6331,7 @@ function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: 
 function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
   const t = tab || getActiveTab(msgSurface);
   const { name, letter, tint } = speaker(k, SURFACES[t.surfaceName]);
+  sfx.play('msg');
   return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`, t);
 }
 
@@ -6278,6 +6455,7 @@ document.addEventListener('click', e => {
 });
 const TOOL_ICON: Record<string, string> = { read: 'eye', edit: 'pencil', run: 'terminal', search: 'search', web: 'globe', todo: 'todo', agent: 'diamond', tool: 'dot', note: 'info' };
 function toolLine(kind: string, label: string, tab?: AgentTabState): void {
+  sfx.play('tool');
   addMsg(`<div class="tool-line ${kind}"><span class="ti">${svgIcon(TOOL_ICON[kind] ?? 'dot', 14)}</span><span class="tl">${esc(label)}</span></div>`, tab);
 }
 
@@ -6732,6 +6910,7 @@ async function sendPrompt(): Promise<void> {
   if (s.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
 
   msgSurface = s;
+  sfx.play('send');
   const uiMode = s.mode.value;
   s.prompt.value = '';
   tab.promptDraft = '';
@@ -6927,12 +7106,14 @@ function showPlan(r: Run, tab: AgentTabState): void {
   const plan = (r.plan || r.lastText).trim();
   if (!plan) { setAgent('planner', 'done', 'Answered', r.tools); return; }
   setAgent('planner', 'waiting', 'Waiting for plan approval', r.tools);
+  sfx.play('plan');
   const el = addMsg(`<div class="card plan"><h5>${svgIcon('todo', 14)} Plan</h5><div class="plan-body">${md(plan)}</div><div class="row" data-live><button class="btn btn-primary btn-sm" data-plan="ok">Approve &amp; build</button><button class="btn btn-sm" data-plan="edit">Change something</button></div></div>`, tab);
   $$('[data-plan]', el).forEach(b => b.onclick = () => {
     const ok = b.dataset.plan === 'ok';
     $('[data-live]', el).outerHTML = `<div class="resolved">${ok ? '✓ Approved' : '✎ Asked for changes'}</div>`;
     saveChat(tab);
     if (ok) {
+      sfx.play('approve');
       setAgent('planner', 'done', 'Plan handed off', r.tools);
       addMsg('<div class="handoff">Planner → Builder</div>', tab);
       void startAgentRun(r.agent, 'build', 'The plan is approved. Implement it now, then summarize what you changed.', 'build', tab);
@@ -6981,6 +7162,7 @@ function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
   }
   const changed = r.files.size ? `Changed ${plural(r.files.size, 'file')}` : 'Answered';
   setAgent(r.phase, 'done', changed, r.tools);
+  sfx.play('success');
   if (allDone) vibeDone(true);
 
   const bits = runSummary(r, ev);
@@ -7761,6 +7943,7 @@ async function commitNow(): Promise<void> {
   const all = !files.some(f => f.x !== ' ' && f.x !== '?');
   let hash = '';
   if (!(await gitOp(async () => { hash = await api.git.commit(msg, all); }))) return;
+  sfx.play('save');
   scmDraft = '';
   renderScm();
   // A checkpoint is committed and pushed in one go (pulling first if the branch is behind).

@@ -18,6 +18,23 @@ const DOTNET_DIRS = (platform, env) => (platform === 'win32'
   ? [env.ProgramFiles && env.ProgramFiles + '\\dotnet', env.USERPROFILE && env.USERPROFILE + '\\.dotnet']
   : ['/usr/local/share/dotnet', '/usr/share/dotnet', '/usr/lib/dotnet', '/opt/homebrew/bin', env.HOME && env.HOME + '/.dotnet']
 ).filter(Boolean);
+// Where JDKs install when they aren't on the PATH: JAVA_HOME, then the usual vendors' folders (one `*` each, for glob).
+const JDK_DIRS = (platform, env) => [
+  env.JAVA_HOME && pathFor(platform).join(env.JAVA_HOME, 'bin'),
+  ...(platform === 'win32'
+    ? ['Java\\jdk*', 'Eclipse Adoptium\\jdk*', 'Microsoft\\jdk*', 'Zulu\\zulu*', 'Amazon Corretto\\jdk*'].map(d => env.ProgramFiles && `${env.ProgramFiles}\\${d}\\bin`)
+    : platform === 'darwin'
+      ? ['/opt/homebrew/opt/openjdk/bin', '/usr/local/opt/openjdk/bin', '/Library/Java/JavaVirtualMachines/*/Contents/Home/bin']
+      : ['/usr/lib/jvm/*/bin']),
+].filter(Boolean);
+// rustup puts rustc and cargo in CARGO_HOME/bin, which is ~/.cargo/bin unless moved.
+const CARGO_DIRS = (platform, env) => {
+  const P = pathFor(platform);
+  const home = platform === 'win32' ? env.USERPROFILE : env.HOME;
+  return [env.CARGO_HOME && P.join(env.CARGO_HOME, 'bin'), home && P.join(home, '.cargo', 'bin')].filter(Boolean);
+};
+// Newest version first when a wildcard matches several (jdk-21 before jdk-17).
+const newestFirst = (a, b) => b.localeCompare(a, undefined, { numeric: true });
 
 // Compilers in lookup order: [C compiler, its C++ partner]
 const COMPILERS = (platform) => [
@@ -82,14 +99,33 @@ async function findTools(o) {
   const dotnetDirs = [...pathDirs];
   for (const d of DOTNET_DIRS(platform, env || {})) if (!dotnetDirs.some((x) => same(x, d))) dotnetDirs.push(d);
   const dotnet = tool(await probe(dotnetDirs, 'dotnet'));
+  // Extra folders after the PATH ones; a wildcard entry expands through glob.
+  const withExtra = (extra) => {
+    const out = [...pathDirs];
+    for (const d of extra.flatMap(x => (x.includes('*') ? glob(x).map(clean).sort(newestFirst) : [x]))) if (!out.some((x) => same(x, d))) out.push(d);
+    return out;
+  };
+
+  // Java: a JDK, found by its javac (`javac --version` needs JDK 9+); java is the launcher beside it.
+  let java = null;
+  const jdk = await probe(withExtra(JDK_DIRS(platform, env || {})), 'javac');
+  if (jdk) {
+    const launcher = await probe([jdk.dir], 'java');
+    if (launcher) java = { path: launcher.path, name: 'java', version: jdk.version };
+  }
+
+  // Rust: rustc compiles a lone .rs file, cargo runs a Cargo project. rustup installs both into the same folder.
+  const rustDirs = withExtra(CARGO_DIRS(platform, env || {}));
+  const rustc = tool(await probe(rustDirs, 'rustc'));
+  const cargo = tool(await probe(rustDirs, 'cargo'));
 
   const binDirs = [];
-  for (const t of [cc, cxx, python, dotnet]) {
+  for (const t of [cc, cxx, python, dotnet, java, rustc, cargo]) {
     if (!t) continue;
     const d = P.dirname(t.path);
     if (!pathDirs.some((x) => same(x, d)) && !binDirs.some((x) => same(x, d))) binDirs.push(d);
   }
-  return { cc, cxx, python, dotnet, binDirs };
+  return { cc, cxx, python, dotnet, java, rustc, cargo, binDirs };
 }
 
 async function freshPath(platform, run) {
@@ -120,6 +156,8 @@ function toolEnv(baseEnv, binDirs, platform, pathValue) {
 // What to tell the user when a tool isn't installed. `cmd` is the single command to run, if there is one;
 // `url` is a page to download it from.
 const DOTNET_URL = 'https://dotnet.microsoft.com/download';
+const JDK_URL = 'https://adoptium.net';
+const RUST_URL = 'https://rustup.rs';
 const MISSING = {
   c: {
     win32: { lead: 'No C/C++ compiler found. Install one with:', cmd: 'winget install BrechtSanders.WinLibs.POSIX.UCRT' },
@@ -135,6 +173,16 @@ const MISSING = {
     win32: { lead: 'No C# compiler found. Install the .NET SDK with:', cmd: 'winget install Microsoft.DotNet.SDK.10', url: DOTNET_URL },
     darwin: { lead: 'No C# compiler found. Install the .NET SDK with:', cmd: 'brew install --cask dotnet-sdk', url: DOTNET_URL },
     other: { lead: 'No C# compiler found. Install the .NET SDK with your package manager', url: 'https://learn.microsoft.com/dotnet/core/install/linux' },
+  },
+  java: {
+    win32: { lead: 'No Java JDK found. Install one with:', cmd: 'winget install Microsoft.OpenJDK.21', url: JDK_URL },
+    darwin: { lead: 'No Java JDK found. Install one with:', cmd: 'brew install openjdk', url: JDK_URL },
+    other: { lead: 'No Java JDK found. Install a JDK with your package manager (e.g. sudo apt install openjdk-21-jdk)', url: JDK_URL },
+  },
+  rs: {
+    win32: { lead: 'No Rust compiler found. Install Rust with:', cmd: 'winget install Rustlang.Rustup', url: RUST_URL },
+    darwin: { lead: 'No Rust compiler found. Install Rust with rustup', url: RUST_URL },
+    other: { lead: 'No Rust compiler found. Install Rust with rustup', url: RUST_URL },
   },
 };
 const entry = (kind, platform) => MISSING[kind][platform] || MISSING[kind].other;
@@ -163,7 +211,8 @@ function mergePath(fresh, inherited, platform) {
   return out.join(delim);
 }
 
-// `opts.csproj` is the nearest .csproj at or above a .cs file, if any (main.js looks it up).
+// `opts.csproj` is the nearest .csproj at or above a .cs file, and `opts.cargoToml` the nearest Cargo.toml at or
+// above a .rs file, if any (main.js looks them up).
 function runPlan(absFile, tools, platform, stdioHeader, opts = {}) {
   const P = pathFor(platform);
   const cwd = P.dirname(absFile);
@@ -198,12 +247,46 @@ function runPlan(absFile, tools, platform, stdioHeader, opts = {}) {
     };
   }
 
+  const out = P.join('build', name + (platform === 'win32' ? '.exe' : ''));
+  const runOut = { display: platform === 'win32' ? out : './' + out, file: P.join(cwd, out), args: [], cwd };
+
+  if (e === '.java') {
+    const java = tools.java;
+    if (!java) return { error: missing('java', platform) };
+    // `java File.java` compiles and runs in one go (the source launcher), which needs JDK 11 or newer.
+    const major = Number(/(\d+)(?:\.\d+)*/.exec(java.version)?.[1] || 0);
+    if (major && major < 11) {
+      const m = entry('java', platform);
+      return { error: `${java.version} can't run a .java file directly; that needs JDK 11 or newer.` + (m.cmd ? `\nUpdate with:\n${m.cmd}` : '') + download(m) };
+    }
+    return {
+      // UTF-8 so System.out.println("café ✓") survives the pipe on a non-UTF-8 Windows code page
+      steps: [{ display: `java "${base}"`, file: java.path, args: ['-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8', absFile], cwd }],
+    };
+  }
+
+  if (e === '.rs') {
+    // Inside a Cargo project, run the project: it builds every file and dependency in it.
+    if (opts.cargoToml) {
+      if (!tools.cargo) return { error: missing('rs', platform) };
+      return { steps: [{ display: 'cargo run', file: tools.cargo.path, args: ['run'], cwd: P.dirname(opts.cargoToml) }] };
+    }
+    const rustc = tools.rustc;
+    if (!rustc) return { error: missing('rs', platform) };
+    const flags = ['--edition', '2021', '-g'];
+    return {
+      steps: [
+        { display: `rustc "${base}" -o "${out}" ${flags.join(' ')}`, file: rustc.path, args: [absFile, '-o', out, ...flags], cwd },
+        runOut,
+      ],
+    };
+  }
+
   const cpp = ['.cpp', '.cc', '.cxx'].includes(e);
-  if (e !== '.c' && !cpp) return { error: 'Breeze can run .c, .cpp, .cs and .py files' };
+  if (e !== '.c' && !cpp) return { error: 'Breeze can run .c, .cpp, .cs, .java, .py and .rs files' };
   const compiler = cpp ? tools.cxx : tools.cc;
   if (!compiler) return { error: missing('c', platform) };
 
-  const out = P.join('build', name + (platform === 'win32' ? '.exe' : ''));
   const std = cpp ? '-std=c++20' : '-std=c17';
   const flags = [std, '-Wall', '-g'];
   return {
@@ -214,7 +297,7 @@ function runPlan(absFile, tools, platform, stdioHeader, opts = {}) {
         args: [absFile, '-o', out, ...flags, '-include', stdioHeader],
         cwd,
       },
-      { display: platform === 'win32' ? out : './' + out, file: P.join(cwd, out), args: [], cwd },
+      runOut,
     ],
   };
 }
