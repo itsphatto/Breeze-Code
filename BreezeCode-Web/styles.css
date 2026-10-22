@@ -216,9 +216,9 @@ p {
   object-fit: contain;
 }
 
-/* ---------- Top bar: just the logo, no backing ---------- */
+/* ---------- Top bar: just the logo, no backing. It sits at the top of the page and scrolls away with it. ---------- */
 .topbar {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
@@ -344,7 +344,9 @@ p {
 }
 
 /* .wrap centres it; .shot alone would reset the side margins to 0. */
+/* As wide as the screen allows while the 16:9 window still fits under the 60px top bar when pinned */
 .shot.hero-shot {
+  width: min(1520px, 100%, calc((100vh - 84px) * 16 / 9 + 2 * var(--gutter)));
   margin: clamp(96px, 12vw, 160px) auto 0;
 }
 

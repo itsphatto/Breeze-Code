@@ -100,7 +100,7 @@
     {
       "name": "breeze-web",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "5174", "--bind", "127.0.0.1", "--directory", "D:\\\\BreezeIDE-Web"],
+      "runtimeArgs": ["-m", "http.server", "5174", "--bind", "127.0.0.1", "--directory", "D:\\\\Demo-IDE"],
       "port": 5174
     }
   ]
@@ -110,74 +110,114 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Breeze Web</title>
+  <title>Tidal Coffee</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="hero">
-    <h1>Hello from <span>Breeze</span></h1>
-    <p>Change anything here, then press F5 to see it live.</p>
-    <button id="wave">Wave 👋</button>
-    <p class="count" id="count">No waves yet</p>
+  <header class="top">
+    <span class="name">Tidal Coffee</span>
+    <span class="status" id="status">Open today</span>
+  </header>
+  <main>
+    <h1>Slow coffee on the river.</h1>
+    <p class="intro">A six-seat bar on Charoen Krung. We roast on Mondays and pour until the beans run out.</p>
+    <ul class="menu">
+      <li><span>Espresso</span><span>฿60</span></li>
+      <li><span>Iced long black</span><span>฿75</span></li>
+      <li><span>Thai tea latte</span><span>฿85</span></li>
+      <li><span>Pour-over, single origin</span><span>฿120</span></li>
+    </ul>
+    <button class="order" id="order">Order ahead</button>
   </main>
   <script src="site.js"></script>
 </body>
 </html>
 `;
-  const SITE = `// Count the waves and show the total under the button.
-const button = document.querySelector('#wave');
-const count = document.querySelector('#count');
-let waves = 0;
+  const SITE = `// Open 7:00 to 16:00, closed on Tuesdays.
+const status = document.querySelector('#status');
+const order = document.querySelector('#order');
+const now = new Date();
+const open = now.getDay() !== 2 && now.getHours() >= 7 && now.getHours() < 16;
 
-button.addEventListener('click', () => {
-  waves += 1;
-  count.textContent = \`\${waves} wave\${waves === 1 ? '' : 's'} so far\`;
+status.textContent = open ? 'Open now' : 'Closed now';
+status.classList.toggle('closed', !open);
+
+order.addEventListener('click', () => {
+  order.textContent = 'Ready in about 10 minutes';
+  order.disabled = true;
 });
 `;
   const STYLES = `:root {
-  --accent: #005eff;
-  --bg: #0b0b0d;
-  --text: #f5f5f7;
+  --accent: #b4532a;
+  --bg: #f4efe6;
+  --text: #1f1b16;
+  --muted: #7a7064;
+  --line: #ddd3c4;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, system-ui, sans-serif;
+  font: 15px/1.6 system-ui, sans-serif;
 }
 
-.hero {
-  padding: 48px 24px;
-  text-align: center;
+.top {
+  display: flex;
+  justify-content: space-between;
+  padding: 20px 32px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
 }
 
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 44px;
+.name {
+  font-weight: 600;
 }
 
-.hero h1 span {
+.status {
   color: var(--accent);
 }
 
-button {
-  margin-top: 16px;
-  padding: 10px 20px;
+.status.closed {
+  color: var(--muted);
+}
+
+main {
+  max-width: 440px;
+  padding: 48px 32px;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font: 400 40px/1.1 Georgia, serif;
+}
+
+.intro {
+  margin: 0 0 32px;
+  color: var(--muted);
+}
+
+.menu {
+  margin: 0 0 32px;
+  padding: 0;
+  list-style: none;
+}
+
+.menu li {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.order {
+  padding: 10px 18px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--accent);
   color: #fff;
   font: inherit;
   cursor: pointer;
-}
-
-.count {
-  font-size: 14px;
-  opacity: .6;
 }
 `;
   const files = new Map([
@@ -278,7 +318,7 @@ button {
       <span class="bz-logo"><img src="${ASSETS}brand/BreezeCode.png" alt="Breeze Code" width="119" height="20"></span>
       <nav class="bz-menubar" aria-label="Application menu"></nav>
       <span class="bz-spacer"></span>
-      <span class="bz-project">BreezeIDE-Web</span>
+      <span class="bz-project">Demo-IDE</span>
       <span class="bz-spacer"></span>
       <div class="bz-layout-btns">
         <button class="bz-icon-btn" data-act="view.toggleSide" title="Toggle Primary Side Bar (Ctrl+B)"></button>
@@ -323,7 +363,8 @@ button {
       <section class="bz-center">
         <div class="bz-work no-preview" id="bzWork">
           <div class="bz-pane">
-            <div class="bz-tabs" id="bzTabs" role="tablist"></div>
+            <div class="bz-tabrow"><div class="bz-tabs" id="bzTabs" role="tablist"></div>
+              <button class="bz-btn bz-btn-primary bz-run-btn bz-hidden" id="bzRun" data-act="run.start" title="Preview index.html (F5)">${icon('play', 12)} Preview</button></div>
             <div class="bz-editor" id="bzEditor">
               <div class="bz-gutter"><div></div></div>
               <div class="bz-code"><pre class="bz-hl" aria-hidden="true"><div></div></pre><textarea class="bz-ta" id="bzTa" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" aria-label="Code editor"></textarea></div>
@@ -356,7 +397,7 @@ button {
           </div>
           <div class="bz-term-body" id="bzTermBody">
             <div class="bz-term-out" id="bzTermOut"></div>
-            <div class="bz-term-line"><span class="bz-ps">PS D:\\BreezeIDE-Web&gt;</span><input id="bzTermIn" spellcheck="false" autocomplete="off" aria-label="Terminal input"></div>
+            <div class="bz-term-line"><span class="bz-ps">PS D:\\Demo-IDE&gt;</span><input id="bzTermIn" spellcheck="false" autocomplete="off" aria-label="Terminal input"></div>
           </div>
         </div>
       </section>
@@ -412,7 +453,8 @@ button {
   const termBody = $('#bzTermBody');
   const chat = $('#bzChat');
   const promptEl = $('#bzPrompt');
-  const frame = $('.bz-preview-frame');
+  let frame = $('.bz-preview-frame');
+  const runBtn = $('#bzRun');
 
   /* ----- fit the desktop-sized window into the frame ----- */
   let scale = 1;
@@ -436,14 +478,12 @@ button {
   /* ================= State ================= */
   const layout = { side: true, agents: false, term: false, preview: false, view: 'files' };
   const openDirs = new Set();
-  let selected = 'launch.json';
-  let tabs = ['site.js', '.claude/launch.json'];
-  let active = '.claude/launch.json';
+  let selected = 'index.html';
+  let tabs = ['index.html', 'styles.css'];
+  let active = 'index.html';
   const views = new Map(); // path -> { sel, top, left }
   const added = new Map(); // path -> Set of line numbers the agent just wrote
   let pending = null; // inline name box in the explorer: { kind: 'file' | 'dir' | 'rename', parent, path }
-  selected = '.claude/launch.json';
-  views.set(active, { sel: [LAUNCH.length, LAUNCH.length], top: 0, left: 0 });
 
   /* ================= Toasts, menus, modal ================= */
   const toasts = $('.bz-toasts');
@@ -610,6 +650,8 @@ button {
     ind.style.opacity = layout.side ? '1' : '0';
     ind.style.transform = `translateY(${on.offsetTop + 8}px)`;
     $$('[data-panel]').forEach(p => p.classList.toggle('bz-hidden', p.dataset.panel !== layout.view));
+    runBtn.classList.toggle('bz-btn-primary', !layout.preview);
+    updateTour();
   }
   function showView(v) {
     if (layout.side && layout.view === v) { layout.side = false; applyLayout(); return; }
@@ -807,6 +849,9 @@ button {
   function renderTabs() {
     tabsEl.innerHTML = tabs.map(p => `<div class="bz-tab${p === active ? ' on' : ''}${isDirty(p) ? ' dirty' : ''}" role="tab" tabindex="0" aria-selected="${p === active}" data-tab="${esc(p)}" title="${esc(p)}"><span class="bz-ico">${fileIcon(baseName(p))}</span><span class="bz-nm">${esc(baseName(p))}</span><span class="bz-x" data-close="1" title="Close">${icon('x', 12)}</span></div>`).join('');
     tabsEl.querySelector('.bz-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    // Only the page itself can be previewed, so the button shows on index.html alone.
+    runBtn.classList.toggle('bz-hidden', active !== 'index.html');
+    updateTour();
   }
   tabsEl.addEventListener('click', e => {
     const t = e.target.closest('.bz-tab');
@@ -1081,14 +1126,48 @@ button {
   });
 
   /* ================= Preview ================= */
+  // The sandboxed preview can't always fetch from the page's own server (browsers block a sandboxed page from
+  // reaching localhost), so project images go in as small data URLs, made once and cached.
+  const inlined = new Map();
+  function inlineImage(url) {
+    if (inlined.has(url)) return inlined.get(url);
+    inlined.set(url, '');
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = Math.min(960, img.naturalWidth);
+      c.height = Math.round((img.naturalHeight * c.width) / img.naturalWidth);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      inlined.set(url, c.toDataURL('image/jpeg', 0.82));
+      if (layout.preview) refreshPreview();
+    };
+    img.src = url;
+    return '';
+  }
   function buildPage() {
     const read = p => files.get(p)?.text ?? '';
     let html = read('index.html') || '<p style="font-family:sans-serif">index.html is missing.</p>';
     html = html.replace(/<link[^>]*href="([^"]+\.css)"[^>]*>/g, (m, href) => (files.has(href) ? `<style>${read(href)}</style>` : m));
+    html = html.replace(/src="([^"]+\.(?:png|jpe?g|svg))"/g, (m, src) => (files.get(src)?.image ? `src="${inlineImage(files.get(src).image)}"` : m));
     html = html.replace(/<script[^>]*src="([^"]+\.js)"[^>]*><\/script>/g, (m, src) => (files.has(src) ? `<script>${read(src).replace(/<\/script/gi, '<\\/script')}<\/script>` : m));
     return html;
   }
-  function refreshPreview() { frame.srcdoc = buildPage(); }
+  // Each refresh loads into a hidden second frame and swaps it in once loaded, so the page never flashes blank
+  // while an agent types. A newer refresh wins over one still loading.
+  let nextFrame = null;
+  function refreshPreview() {
+    const next = frame.cloneNode(false);
+    nextFrame = next;
+    next.classList.add('loading');
+    next.addEventListener('load', () => {
+      if (next !== nextFrame) { next.remove(); return; }
+      frame.remove();
+      frame = next;
+      next.classList.remove('loading');
+    }, { once: true });
+    next.srcdoc = buildPage();
+    frame.after(next);
+  }
   function startPreview() {
     if (layout.preview) { refreshPreview(); return; }
     layout.preview = true;
@@ -1115,11 +1194,11 @@ button {
     help: () => 'Try: ls, cat <file>, git status, git log, node -v, python --version, touch <file>, mkdir <dir>, rm <file>, echo, date, clear, or start to preview the site (F5).',
     ls: a => listing(resolve(a[0] ?? '').replace(/\/$/, '')),
     dir: a => COMMANDS.ls(a),
-    pwd: () => 'D:\\BreezeIDE-Web',
+    pwd: () => 'D:\\Demo-IDE',
     cat: a => {
       const p = resolve(a[0] ?? '');
       const f = files.get(p);
-      if (!f) return `<span class="err">cat : Cannot find path 'D:\\BreezeIDE-Web\\${esc(a[0] ?? '')}' because it does not exist.</span>`;
+      if (!f) return `<span class="err">cat : Cannot find path 'D:\\Demo-IDE\\${esc(a[0] ?? '')}' because it does not exist.</span>`;
       return f.image ? `<span class="err">${esc(p)} is an image. Open it from the Explorer.</span>` : esc(f.text);
     },
     type: a => COMMANDS.cat(a),
@@ -1155,7 +1234,7 @@ button {
     exit: () => { setTimeout(() => cmd('term.toggle')); return ''; },
   };
   function runTerm(line) {
-    termPrint(`<span class="bz-ps">PS D:\\BreezeIDE-Web&gt;</span> <span class="cmd">${esc(line)}</span>\n`);
+    termPrint(`<span class="bz-ps">PS D:\\Demo-IDE&gt;</span> <span class="cmd">${esc(line)}</span>\n`);
     const [name, ...args] = line.trim().split(/\s+/);
     if (!name) return;
     if (name === 'clear' || name === 'cls') { termOut.innerHTML = ''; return; }
@@ -1185,6 +1264,9 @@ button {
   const AGENTS = ['Claude Code', 'Codex', 'Antigravity', 'Ollama · qwen2.5-coder'];
   let agentName = AGENTS[0];
   let busy = false;
+  let asked = false; // the visitor has sent a message
+  let building = false;
+  let planCard = null; // the plan while it waits for approval
   const cards = $('#bzCards');
   const roster = {};
   const ROLES = { planner: ['P', 'Planner'], builder: ['B', 'Builder'], assistant: ['A', 'Assistant'] };
@@ -1209,39 +1291,105 @@ button {
     el.remove();
   }
   function emptyChat() {
-    chat.innerHTML = `<div class="bz-empty"><img src="${ASSETS}brand/Agent.png" alt="" width="44" height="44"><h4>What should we build?</h4><div>Ask for a change to this site, like<br><b>“make it purple and add a footer”</b>.</div></div>`;
+    chat.innerHTML = `<div class="bz-empty"><img src="${ASSETS}brand/Agent.png" alt="" width="44" height="44"><h4>What should we build?</h4><div>Ask for a change to this site, like<br><b>“add our opening hours”</b>, <b>“put matcha on the menu”</b><br>or <b>“make it dark mode”</b>.</div></div>`;
     for (const k of Object.keys(roster)) delete roster[k];
     cards.classList.add('bz-hidden');
+    planCard = null;
   }
   emptyChat();
 
   // The plan: each step is one real edit to the files, matched from the request.
-  const COLORS = { red: '#ef4444', orange: '#f97316', yellow: '#eab308', gold: '#f59e0b', amber: '#f59e0b', green: '#22c55e', teal: '#14b8a6', cyan: '#06b6d4', blue: '#005eff', purple: '#8b5cf6', violet: '#8b5cf6', pink: '#ec4899', magenta: '#d946ef' };
+  const COLORS = {
+    red: '#b23a3a', crimson: '#a8283a', maroon: '#7a2a2a', burgundy: '#7a2438', coral: '#c4584a', rose: '#b4566a', pink: '#b44a7a', magenta: '#a23d8c', plum: '#6a3a5a',
+    orange: '#c4621d', terracotta: '#b4532a', yellow: '#a8801a', gold: '#a8801a', amber: '#b07415', brown: '#7a4a2a',
+    green: '#2f7a4f', emerald: '#2a7a5a', forest: '#2f5a3a', olive: '#6b6a2a', lime: '#5a7a1f', mint: '#3f8f75', teal: '#2b7a78',
+    cyan: '#1f7a93', sky: '#3a7ab0', blue: '#2a5db0', navy: '#24365e', indigo: '#3f4aa0', purple: '#6b4fa0', violet: '#6b4fa0', lavender: '#7a6aa8',
+    black: '#1f1b16', charcoal: '#3a3632', gray: '#6b6560', grey: '#6b6560',
+  };
+  const THEMES = {
+    dark: ['Switch the page to a dark theme', { bg: '#171513', text: '#f1ebe2', muted: '#a39a8d', line: '#2e2a25' }],
+    light: ['Switch the page back to the light theme', { bg: '#f4efe6', text: '#1f1b16', muted: '#7a7064', line: '#ddd3c4' }],
+  };
+  // Things the visitor might put on the menu: [what they type, name on the menu, price in baht]
+  const NEW_ITEMS = [
+    ['matcha', 'Matcha latte', 95], ['cappuccino', 'Cappuccino', 80], ['flat white', 'Flat white', 80], ['mocha', 'Mocha', 90],
+    ['cold brew', 'Cold brew', 90], ['americano', 'Americano', 65], ['affogato', 'Affogato', 110], ['hot chocolate', 'Hot chocolate', 85],
+    ['cocoa', 'Hot chocolate', 85], ['croissant', 'Butter croissant', 70], ['banana bread', 'Banana bread', 75], ['cake', 'Coconut cake', 95],
+    ['cookie', 'Brown butter cookie', 55], ['sandwich', 'Ham and cheese toastie', 120],
+  ];
+  const MENU_ITEMS = [['espresso', 'Espresso'], ['long black', 'Iced long black'], ['thai tea', 'Thai tea latte'], ['pour-over', 'Pour-over, single origin'], ['pour over', 'Pour-over, single origin']];
+  const addCss = (marker, css) => t => (t.includes(marker) ? t : `${t}\n${css}`);
   const STEP = {
     accent: c => ({ say: `Switch the accent color to ${c}`, file: 'styles.css', edit: t => t.replace(/--accent: [^;]+;/, `--accent: ${COLORS[c]};`) }),
-    light: () => ({ say: 'Give the page a light background', file: 'styles.css', edit: t => t.replace(/--bg: [^;]+;/, '--bg: #f6f6f8;').replace(/--text: [^;]+;/, '--text: #121216;') }),
+    theme: name => ({ say: THEMES[name][0], file: 'styles.css', edit: t => Object.entries(THEMES[name][1]).reduce((s, [k, v]) => s.replace(new RegExp(`--${k}: [^;]+;`), `--${k}: ${v};`), t) }),
     heading: words => ({ say: `Change the heading to “${words}”`, file: 'index.html', edit: t => t.replace(/<h1>[\s\S]*?<\/h1>/, `<h1>${esc(words)}</h1>`) }),
-    footer: () => ({
-      say: 'Add a footer with a short credit line', file: 'index.html', also: 'styles.css',
-      edit: t => (t.includes('class="footer"') ? t : t.replace('  <script', `  <footer class="footer">Made with Breeze Code · ${new Date().getFullYear()}</footer>\n  <script`)),
-      alsoEdit: t => (t.includes('.footer {') ? t : `${t}\n.footer {\n  position: fixed;\n  bottom: 16px;\n  left: 0;\n  right: 0;\n  font-size: 13px;\n  text-align: center;\n  opacity: .5;\n}\n`),
+    rename: name => ({ say: `Rename the café to “${name}”`, file: 'index.html', edit: t => t.replace(/<title>[^<]*<\/title>/, `<title>${esc(name)}</title>`).replace(/<span class="name">[^<]*<\/span>/, `<span class="name">${esc(name)}</span>`) }),
+    addItem: ([, name, price]) => ({ say: `Add ${name} to the menu at ฿${price}`, file: 'index.html', edit: t => (t.includes(`<span>${name}</span>`) ? t : t.replace('    </ul>', `      <li><span>${name}</span><span>฿${price}</span></li>\n    </ul>`)) }),
+    removeItem: name => ({ say: `Take ${name} off the menu`, file: 'index.html', edit: t => t.replace(new RegExp(`\\n *<li><span>${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</span>.*?</li>`), '') }),
+    prices: up => ({ say: up ? 'Raise every price by about 10%' : 'Take about 10% off every price', file: 'index.html', edit: t => t.replace(/฿(\d+)/g, (m, n) => `฿${Math.round((n * (up ? 1.1 : 0.9)) / 5) * 5}`) }),
+    hours: () => ({
+      say: 'Add the opening hours under the menu', file: 'index.html', also: 'styles.css',
+      edit: t => (t.includes('class="hours"') ? t : t.replace('    <button class="order"', '    <dl class="hours">\n      <dt>Wednesday – Monday</dt><dd>7:00 – 16:00</dd>\n      <dt>Tuesday</dt><dd>Closed</dd>\n    </dl>\n    <button class="order"')),
+      alsoEdit: addCss('.hours {', '.hours {\n  display: grid;\n  grid-template-columns: 1fr auto;\n  gap: 4px 16px;\n  margin: 0 0 32px;\n  font-size: 13px;\n}\n\n.hours dt {\n  color: var(--muted);\n}\n\n.hours dd {\n  margin: 0;\n}\n'),
     }),
-    button: () => ({ say: 'Give the button a glow and a lift on hover', file: 'styles.css', edit: t => (t.includes('button:hover') ? t : `${t}\nbutton {\n  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 45%, transparent);\n  transition: transform .15s;\n}\n\nbutton:hover {\n  transform: translateY(-2px);\n}\n`) }),
-    glow: () => ({ say: 'Light the hero with a soft glow in the accent color', file: 'styles.css', edit: t => (t.includes('radial-gradient') ? t : t.replace('.hero {\n', '.hero {\n  background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 70%);\n  border-radius: 24px;\n')) }),
+    footer: social => ({
+      say: social ? 'Add a footer with the address and Instagram' : 'Add a footer with the address', file: 'index.html', also: 'styles.css',
+      edit: t => (t.includes('class="footer"') ? t : t.replace('  <script', `  <footer class="footer">Charoen Krung Soi 38, Bangkok · ${social ? '<a href="#">@tidalcoffee</a>' : 'Walk-ins only'}</footer>\n  <script`)),
+      alsoEdit: addCss('.footer {', '.footer {\n  padding: 20px 32px;\n  border-top: 1px solid var(--line);\n  color: var(--muted);\n  font-size: 13px;\n}\n\n.footer a {\n  color: var(--accent);\n}\n'),
+    }),
+    banner: () => ({
+      say: 'Add an announcement bar above the header', file: 'index.html', also: 'styles.css',
+      edit: t => (t.includes('class="banner"') ? t : t.replace('<body>\n', '<body>\n  <p class="banner">New beans this week: Doi Chang, washed. Ask at the bar.</p>\n')),
+      alsoEdit: addCss('.banner {', '.banner {\n  margin: 0;\n  padding: 8px 32px;\n  background: var(--accent);\n  color: #fff;\n  font-size: 13px;\n}\n'),
+    }),
+    photo: () => ({
+      say: 'Put a photo of the river above the heading', file: 'index.html', also: 'styles.css',
+      edit: t => (t.includes('class="photo"') ? t : t.replace('    <h1>', '    <img class="photo" src="assets/city.png" alt="The river at dusk">\n    <h1>')),
+      alsoEdit: addCss('.photo {', '.photo {\n  display: block;\n  width: 100%;\n  height: 180px;\n  margin: 0 0 28px;\n  border-radius: 4px;\n  object-fit: cover;\n}\n'),
+    }),
+    button: () => ({ say: 'Round the order button and darken it on hover', file: 'styles.css', edit: t => (t.includes('.order:hover') ? t : `${t.replace(/(\.order \{[\s\S]*?border-radius: )4px/, '$1999px')}\n.order:hover {\n  background: color-mix(in srgb, var(--accent) 82%, black);\n}\n`) }),
+    leaders: () => ({ say: 'Join each menu item to its price with a dotted leader', file: 'styles.css', edit: addCss('dotted', '.menu li span:first-child {\n  display: flex;\n  flex: 1;\n  gap: 8px;\n}\n\n.menu li span:first-child::after {\n  content: "";\n  flex: 1;\n  margin: 0 8px 6px 0;\n  border-bottom: 1px dotted var(--muted);\n}\n') }),
+    sans: () => ({ say: 'Set the heading in a clean sans-serif', file: 'styles.css', edit: t => t.replace(/(h1 \{[\s\S]*?font: )\d+ (\d+px\/[\d.]+) Georgia, serif;/, '$1650 $2 system-ui, sans-serif;\n  letter-spacing: -.02em;') }),
+    size: big => ({ say: big ? 'Make the heading bigger' : 'Make the heading smaller', file: 'styles.css', edit: t => t.replace(/(h1 \{[\s\S]*?font: \d+ )(\d+)px/, (m, a, n) => `${a}${Math.round(n * (big ? 1.3 : 0.8))}px`) }),
+    center: () => ({ say: 'Center the content on the page', file: 'styles.css', edit: t => t.replace(/(main \{\n)(?!  margin: 0 auto)/, '$1  margin: 0 auto;\n') }),
+    roomy: () => ({ say: 'Give the page more room to breathe', file: 'styles.css', edit: t => t.replace('padding: 48px 32px;', 'padding: 72px 40px;').replace('padding: 10px 0;', 'padding: 14px 0;') }),
   };
   function planFor(prompt) {
-    const p = prompt.toLowerCase();
+    const quoted = prompt.match(/["“]([^"”]{2,60})["”]/);
+    const p = prompt.replace(/["“][^"”]*["”]/g, ' ').toLowerCase(); // words inside quotes are content, not instructions
     const steps = [];
+    const has = re => re.test(p);
     const color = Object.keys(COLORS).find(c => new RegExp(`\\b${c}\\b`).test(p));
     if (color) steps.push(STEP.accent(color));
-    if (/\blight\b|white background|bright/.test(p)) steps.push(STEP.light());
-    const quoted = prompt.match(/["“]([^"”]{2,60})["”]/);
-    if (quoted || /\b(title|heading|headline)\b/.test(p)) steps.push(STEP.heading(quoted ? quoted[1] : 'Built with Breeze'));
-    if (/footer|credit|copyright|contact|hours/.test(p)) steps.push(STEP.footer());
-    if (/button|cta|click/.test(p)) steps.push(STEP.button());
-    if (/glow|gradient|warm|hero|fancy|pretty|nicer|better|cool|beautiful|polish/.test(p)) steps.push(STEP.glow());
-    if (!steps.length) steps.push(STEP.glow(), STEP.footer());
-    return steps.slice(0, 3);
+    else if (has(/\b(colou?rs?|accent|palette|brand)\b/)) steps.push(STEP.accent('teal'));
+    if (has(/\bdark(er)?\b|dark mode|\bnight\b|black background|moody/)) steps.push(STEP.theme('dark'));
+    else if (has(/\blight(er)?\b|light mode|white background|bright|cream/) && files.get('styles.css')?.text.includes(THEMES.dark[1].bg)) steps.push(STEP.theme('light'));
+    const renamed = prompt.match(/\b(?:rename(?: it| the \w+)?(?: to)?|call it|name it)\s+["“]?([^"”.,!?]{2,30})/i);
+    if (renamed) steps.push(STEP.rename(renamed[1].trim()));
+    else if (quoted || has(/\b(change|rewrite|reword|new|different|replace)\b.*\b(title|heading|headline|tagline|slogan|h1|hero text)\b/)) steps.push(STEP.heading(quoted ? quoted[1] : 'Coffee worth the walk.'));
+    if (has(/\b(remove|delete|drop|take off|get rid of|no more|stop selling|replace|swap)\b/)) {
+      const gone = MENU_ITEMS.find(([k]) => p.includes(k));
+      if (gone) steps.push(STEP.removeItem(gone[1]));
+    }
+    const item = NEW_ITEMS.find(([k]) => p.includes(k));
+    if (item) steps.push(STEP.addItem(item));
+    else if (has(/\badd\b.*\b(drink|item|dish|pastry|food|snack|dessert)\b|\bnew (drink|item)\b/)) steps.push(STEP.addItem(has(/pastry|food|snack|dessert/) ? NEW_ITEMS[9] : NEW_ITEMS[4]));
+    if (has(/\b(raise|increase|higher|more expensive|inflation)\b/) && has(/pric|cost/)) steps.push(STEP.prices(true));
+    else if (has(/cheaper|discount|\bsale\b|lower (the )?prices?|reduce (the )?prices?|happy hour|% off/)) steps.push(STEP.prices(false));
+    if (has(/hours|opening|open(ing)? times|closing|schedule|timetable|when .*open/)) steps.push(STEP.hours());
+    const social = has(/instagram|social|\big\b|facebook|tiktok/);
+    if (social || has(/footer|address|contact|location|\bmap\b|phone|email|copyright/)) steps.push(STEP.footer(social));
+    if (has(/banner|announce|notice|promo|special|news|this week/)) steps.push(STEP.banner());
+    if (has(/photo|image|picture|\bpic\b|hero image|gallery/)) steps.push(STEP.photo());
+    if (has(/button|order|cta|checkout|pill|rounded|hover/)) steps.push(STEP.button());
+    if (has(/dots?\b|dotted|leader|align(ed)? (the )?prices|tidy|polish|neater|cleaner|menu look/)) steps.push(STEP.leaders());
+    if (has(/sans|modern font|clean font|change the font|typeface|typography/)) steps.push(STEP.sans());
+    if (has(/(bigger|larger|huge|giant|bolder) (heading|title|headline|text)|(heading|title|headline) (bigger|larger)/)) steps.push(STEP.size(true));
+    else if (has(/(smaller|tiny) (heading|title|headline)|(heading|title|headline) smaller/)) steps.push(STEP.size(false));
+    if (has(/\bcent(er|re)(ed)?\b|\bmiddle\b/)) steps.push(STEP.center());
+    if (has(/spacing|space out|more space|roomier|breath|whitespace|airy|padding/)) steps.push(STEP.roomy());
+    if (!steps.length) steps.push(STEP.hours(), STEP.footer(false));
+    return steps.slice(0, 4);
   }
   // Lines in `after` that weren't there before (one contiguous change).
   function changedLines(before, after) {
@@ -1277,7 +1425,43 @@ button {
     if (layout.preview) refreshPreview();
     return { add: lines.size, del };
   }
+  // The same edit, typed out: the old text goes, the new text arrives a few characters at a time, and the
+  // preview catches up each time a line lands.
+  async function typeOut(path, fn) {
+    const f = files.get(path);
+    if (!f) return null;
+    const before = f.text;
+    const after = fn(before);
+    if (after === before || calm) return write(path, () => after);
+    let s = 0;
+    while (s < before.length && s < after.length && before[s] === after[s]) s++;
+    let e = 0;
+    while (e < before.length - s && e < after.length - s && before[before.length - 1 - e] === after[after.length - 1 - e]) e++;
+    const head = after.slice(0, s), mid = after.slice(s, after.length - e), tail = after.slice(after.length - e);
+    const first = head.split('\n').length - 1;
+    if (!tabs.includes(path)) tabs.push(path);
+    if (document.activeElement !== ta) { saveView(); active = path; renderTabs(); renderEditor(); }
+    for (let i = 0; i < mid.length;) {
+      const next = Math.min(mid.length, i + 3);
+      const newLine = mid.slice(i, next).includes('\n');
+      i = next;
+      f.text = f.saved = head + mid.slice(0, i) + tail;
+      const caret = first + (mid.slice(0, i).match(/\n/g)?.length ?? 0);
+      added.set(path, new Set(Array.from({ length: caret - first + 1 }, (_, n) => first + n)));
+      if (active === path && document.activeElement !== ta) {
+        ta.value = f.text;
+        paint();
+        revealLine(caret);
+      }
+      if (newLine && layout.preview) refreshPreview();
+      await sleep(16);
+    }
+    f.text = f.saved = before;
+    return write(path, () => after);
+  }
   async function build(steps) {
+    building = true;
+    updateTour();
     setAgent('builder', 'working', 'Building the plan');
     await sleep(500);
     for (const [i, st] of steps.entries()) {
@@ -1286,7 +1470,7 @@ button {
       await sleep(700);
       const edits = [[st.file, st.edit], ...(st.also ? [[st.also, st.alsoEdit]] : [])];
       for (const [file, fn] of edits) {
-        const r = write(file, fn);
+        const r = await typeOut(file, fn);
         if (!r) tool('', 'eye', `${esc(file)} is missing, skipped`);
         else if (!r.add && !r.del) tool('', 'check', `${esc(file)} already does this`);
         else tool('edit', 'pencil', `Edited ${esc(file)} <b>+${r.add}</b>${r.del ? ` −${r.del}` : ''}`);
@@ -1299,12 +1483,17 @@ button {
     setAgent('builder', 'done', `${steps.length} change${steps.length === 1 ? '' : 's'} made`);
     if (roster.planner) setAgent('planner', 'done', 'Plan approved and built');
     busy = false;
+    building = false;
+    if (tourStep === 'watch') tourOff = true; // the tour ends on the finished build
+    updateTour();
     return msg;
   }
   async function send() {
     const text = promptEl.value.trim();
     if (!text || busy) return;
     busy = true;
+    asked = true;
+    updateTour();
     promptEl.value = '';
     const mode = $('#bzMode').value;
     for (const k of Object.keys(roster)) delete roster[k];
@@ -1318,7 +1507,7 @@ button {
       await sleep(300);
       tool('', 'eye', 'Read site.js');
       await typing(900);
-      say('assistant', `This is a small static site. <code>index.html</code> holds the page, <code>styles.css</code> sets the colors through <code>--accent</code>, <code>--bg</code> and <code>--text</code>, and <code>site.js</code> counts clicks on the Wave button. Switch to <b>Plan, then build</b> and I'll make changes for you.`);
+      say('assistant', `This is the one-page site for Tidal Coffee. <code>index.html</code> has the menu, <code>styles.css</code> sets the colors through <code>--accent</code>, <code>--bg</code> and <code>--text</code>, and <code>site.js</code> shows whether the bar is open and handles the Order ahead button. Switch to <b>Plan, then build</b> and I'll make changes for you.`);
       setAgent('assistant', 'done', 'Answered');
       busy = false;
       return;
@@ -1340,9 +1529,13 @@ button {
     await sleep(250);
     const card = addChat(`<div class="bz-plan"><h5>${icon('todo', 15)} Plan</h5><ol>${steps.map(s => `<li>${esc(s.say)}</li>`).join('')}</ol><div class="bz-row"><button class="bz-btn bz-btn-primary" data-plan="go">Approve &amp; build</button><button class="bz-btn" data-plan="change">Change something</button></div></div>`);
     setAgent('planner', 'waiting', 'Waiting for plan approval');
+    planCard = card;
+    updateTour();
     card.addEventListener('click', async e => {
       const b = e.target.closest('[data-plan]');
       if (!b) return;
+      planCard = null;
+      updateTour();
       card.querySelector('.bz-row').outerHTML = `<div class="bz-resolved">${b.dataset.plan === 'go' ? '✓ Approved' : 'Sent back to the Planner'}</div>`;
       if (b.dataset.plan === 'go') {
         setAgent('planner', 'done', 'Plan approved');
@@ -1365,7 +1558,7 @@ button {
     'view.search': () => showView('search'),
     'view.git': () => { if (!(layout.side && layout.view === 'git')) showView('git'); },
     'view.toggleSide': () => { layout.side = !layout.side; applyLayout(); },
-    'view.toggleAgents': () => { layout.agents = !layout.agents; applyLayout(); if (layout.agents) setTimeout(() => promptEl.focus({ preventScroll: true }), 230); },
+    'view.toggleAgents': () => { layout.agents = !layout.agents; if (layout.agents && layout.preview) layout.side = false; applyLayout(); if (layout.agents) setTimeout(() => promptEl.focus({ preventScroll: true }), 230); },
     'view.reset': () => { Object.assign(layout, { side: true, agents: false, term: false, preview: false, view: 'files' }); applyLayout(); renderSide(); },
     'term.toggle': () => { layout.term = !layout.term; applyLayout(); if (layout.term) setTimeout(() => termIn.focus({ preventScroll: true }), 230); },
     'term.focus': () => { layout.term = true; applyLayout(); setTimeout(() => termIn.focus({ preventScroll: true }), 230); },
@@ -1392,7 +1585,7 @@ button {
     'editor.focus': () => focusEditor(),
     'git.commit': () => commit(),
     'agent.send': () => send(),
-    'chat.new': () => { if (busy) return; emptyChat(); },
+    'chat.new': () => { if (busy) return; emptyChat(); updateTour(); },
     'agent.pick': () => openMenu(AGENTS.map(a => ({ label: a, checked: a === agentName, run: () => { agentName = a; $('#bzAgentPill').textContent = a.split(' · ')[0]; for (const [r, v] of Object.entries(roster)) setAgent(r, v.status, v.task); } })), $('#bzAgentPill'), 'right'),
     settings: () => openMenu([
       { label: 'Keyboard Shortcuts', run: () => modal(`<h4>Keyboard shortcuts</h4><div class="bz-keys">${SHORTCUTS.map(([a, k]) => `<span>${a}</span><kbd>${k}</kbd>`).join('')}</div>`) },
@@ -1477,7 +1670,93 @@ button {
   root.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; e.stopPropagation(); }, { passive: true });
   root.addEventListener('touchmove', e => { if (touchY != null && scrollsInside(e.target, touchY - e.touches[0].clientY)) e.stopPropagation(); }, { passive: true });
 
-  /* ================= First paint: the same view as the old screenshot ================= */
+  /* ================= Guided tour ================= */
+  // Chat bubbles walk a first-time visitor through it: preview the page, open the agent bar, ask for a change,
+  // approve the plan, then watch the Builder type the edit while the preview follows along.
+  const SUGGESTION = 'Add our opening hours and make the accent green';
+  const TOUR = {
+    index: { at: () => tabsEl.querySelector('[data-tab="index.html"]') ?? $('.bz-tree-item[data-path="index.html"]'), side: 'below', html: 'Open <b>index.html</b> to preview the site.' },
+    preview: { at: () => runBtn, side: 'below', html: '<b>Preview</b> runs this page right next to the code. Give it a click.' },
+    agents: { at: () => $('[data-act="view.toggleAgents"]'), side: 'below', html: 'Now open the <b>agent bar</b>. Your AI agents plan and build right in this project.' },
+    prompt: { at: () => $('.bz-composer-box'), side: 'left', html: `Ask for a change in plain English. Tap this one, then press <kbd>Enter</kbd>:<button class="bz-coach-try" data-try>${esc(SUGGESTION)}</button>` },
+    approve: { at: () => planCard?.querySelector('[data-plan="go"]'), side: 'left', html: 'The Planner wrote a plan. <b>Approve</b> it and the Builder gets to work.' },
+    watch: { at: () => $('.bz-url'), side: 'below', html: 'The Builder is writing the code now. Watch the preview change as it types.' },
+  };
+  const coach = document.createElement('div');
+  coach.className = 'bz-coach bz-hidden';
+  coach.setAttribute('role', 'status');
+  ide.append(coach);
+  let tourStep = null;
+  let tourOff = false;
+  let tourOn = false; // starts the first time the window is on screen
+  let onScreen = false;
+  let coachRaf = 0;
+
+  function tourStepNow() {
+    if (tourOff || !tourOn) return null;
+    if (building) return layout.preview ? 'watch' : null;
+    if (planCard) return layout.agents ? 'approve' : 'agents';
+    if (!layout.preview) return active === 'index.html' ? 'preview' : 'index';
+    if (!layout.agents) return 'agents';
+    return asked ? null : 'prompt';
+  }
+  function placeCoach() {
+    const t = TOUR[tourStep]?.at();
+    const r = t?.getBoundingClientRect();
+    $$('.bz-coach-target').forEach(el => el !== t && el.classList.remove('bz-coach-target'));
+    if (!r?.width) { coach.style.visibility = 'hidden'; return; }
+    t.classList.add('bz-coach-target');
+    coach.style.visibility = '';
+    const k = ide.getBoundingClientRect().width / ide.offsetWidth;
+    const [x, y] = toIde(r.left, r.top);
+    const w = r.width / k, h = r.height / k;
+    const cw = coach.offsetWidth, ch = coach.offsetHeight;
+    const W = ide.offsetWidth, H = ide.offsetHeight;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    let left, top;
+    if (TOUR[tourStep].side === 'below') {
+      top = y + h + 12;
+      left = clamp(x + w / 2 - cw / 2, 10, W - cw - 10);
+      coach.style.setProperty('--arrow', `${clamp(x + w / 2 - left, 16, cw - 16)}px`);
+    } else {
+      left = x - cw - 14;
+      top = clamp(y + h / 2 - ch / 2, 10, H - ch - 10);
+      coach.style.setProperty('--arrow', `${clamp(y + h / 2 - top, 14, ch - 14)}px`);
+    }
+    coach.style.left = `${left}px`;
+    coach.style.top = `${top}px`;
+  }
+  // Panels slide open, so the bubble follows its target every frame while it shows.
+  function followCoach() { placeCoach(); coachRaf = requestAnimationFrame(followCoach); }
+  function updateTour() {
+    const step = tourStepNow();
+    if (step !== tourStep) {
+      tourStep = step;
+      if (step) {
+        coach.innerHTML = `<div>${TOUR[step].html}</div><button class="bz-coach-x" data-coach="skip" title="Skip the tour" aria-label="Skip the tour">${icon('x', 12)}</button>`;
+        coach.dataset.side = TOUR[step].side;
+        coach.classList.remove('bz-hidden', 'pop');
+        void coach.offsetWidth;
+        coach.classList.add('pop');
+      } else {
+        coach.classList.add('bz-hidden');
+        $$('.bz-coach-target').forEach(el => el.classList.remove('bz-coach-target'));
+      }
+    }
+    cancelAnimationFrame(coachRaf);
+    if (tourStep && onScreen) followCoach();
+  }
+  coach.addEventListener('click', e => {
+    if (e.target.closest('[data-coach="skip"]')) { tourOff = true; updateTour(); }
+    else if (e.target.closest('[data-try]')) { promptEl.value = SUGGESTION; promptEl.focus({ preventScroll: true }); }
+  });
+  new IntersectionObserver(([entry]) => {
+    onScreen = entry.isIntersecting;
+    if (onScreen && !tourOn) setTimeout(() => { tourOn = true; updateTour(); }, 900);
+    else updateTour();
+  }, { threshold: 0.35 }).observe(root);
+
+  /* ================= First paint: index.html and its styles, ready to preview ================= */
   openDirs.clear();
   applyLayout();
   renderTabs();
