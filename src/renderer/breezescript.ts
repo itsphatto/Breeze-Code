@@ -7510,10 +7510,9 @@ document.addEventListener('keyup', e => {
 
 /* ================= Settings ================= */
 // One pop-up for everything: the gear opens it (in the IDE and in Breeze Box) and turns while it is open.
-type SettingsTab = 'general' | 'account' | 'agents' | 'vibe' | 'discord' | 'help';
+type SettingsTab = 'general' | 'agents' | 'vibe' | 'discord' | 'help';
 const SETTINGS_TABS: [SettingsTab, string, string][] = [
   ['general', 'General', 'gear'],
-  ['account', 'Account', 'user'],
   ['agents', 'Agents', 'terminal'],
   ['vibe', 'Vibe Code Mode', 'circleDot'],
   ['discord', 'Discord', 'globe'],
@@ -7531,9 +7530,20 @@ const settingRow = (title: string, sub: string, control: string) =>
 const segHtml = (id: string, opts: [string, string][], cur: string) =>
   `<div class="seg set-seg" id="${id}">${opts.map(([v, l]) => `<button data-v="${v}" class="${v === cur ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>`;
 
+// The account card sits at the top of General.
+function accountHtml(): string {
+  const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
+      <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
+  return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div></div>
+    ${others ? `<h5>Accounts</h5>${others}` : ''}
+    <div class="row end mt-12"><button class="btn" id="sAddAcct">Add account…</button>${user ? '<button class="btn" id="sSignOut">Sign out</button>' : ''}</div>`;
+}
+
 function settingsBody(tab: SettingsTab): string {
   switch (tab) {
     case 'general': return `<h4>General</h4>
+      ${accountHtml()}
+      <h5>Preferences</h5>
       ${settingRow('Workspace', 'Full editor, or chat only.', segHtml('sMode', [['ide', 'Breeze Code'], ['box', 'Breeze Box']], appState.mode))}
       ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="5" value="${sfx.volume}" aria-label="Sound volume" style="--fill:${sfx.volume}%"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
       <h5>Layout</h5>
@@ -7567,14 +7577,6 @@ function settingsBody(tab: SettingsTab): string {
         <h5>Friends will see</h5>
         <div class="setup-card"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
         <p class="set-sub">The Discord app must be running on this computer.</p>`;
-    }
-    case 'account': {
-      const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
-          <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
-      return `<h4>Account</h4>
-        <div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div></div>
-        ${others ? `<h5>Accounts</h5>${others}` : ''}
-        <div class="row end mt-12"><button class="btn" id="sAddAcct">Add account…</button>${user ? '<button class="btn" id="sSignOut">Sign out</button>' : ''}</div>`;
     }
     case 'help': return `<h4>Help & About</h4>
       ${settingRow('Keyboard shortcuts', '', '<button class="btn btn-sm" data-set-cmd="help.keys">Show</button>')}
