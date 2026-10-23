@@ -99,6 +99,12 @@ contextBridge.exposeInMainWorld('breeze', {
     signOut: () => invoke('auth:signOut'),
     onEvent: cb => listen('auth:event', cb),
   },
+  sync: {
+    status: () => invoke('sync:status'),
+    run: mode => invoke('sync:run', mode),
+    clone: id => invoke('sync:clone', id),
+    settings: local => invoke('sync:settings', local),
+  },
   vibe: {
     status: () => invoke('vibe:status'),
     connect: id => invoke('vibe:connect', id),
