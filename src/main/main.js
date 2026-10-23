@@ -13,6 +13,7 @@ const vm = require('node:vm');
 const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, mergePath, installHint, installCmd, installUrl, unpacked } = require('./toolchains');
 const { isFileUrl, resolveUnder, blockedRel, agentBlocked, isLocalHost, safeGitArgs, shellCommand } = require('./guard');
 const { AntigravityAgentService } = require('./antigravityAgentService.js');
+const syncEngine = require('./sync');
 
 let autoUpdater = null;
 try {
@@ -2076,7 +2077,7 @@ async function githubSignIn({ clientId }, signal) {
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })).json();
-  const dc = await post('https://github.com/login/device/code', { client_id: clientId, scope: 'read:user user:email' });
+  const dc = await post('https://github.com/login/device/code', { client_id: clientId, scope: 'read:user user:email repo' }); // repo: workspace sync keeps a private breeze-sync repo
   if (dc.error) throw new Error(dc.error_description || dc.error);
   authEmit({ t: 'code', provider: 'GitHub', code: dc.user_code, uri: dc.verification_uri });
   openInBrowser(dc.verification_uri);
@@ -2176,8 +2177,9 @@ function waitForGoogleCode({ clientId, challenge, state }, signal) {
       redirect = `http://127.0.0.1:${server.address().port}`;
       const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth');
       auth.search = new URLSearchParams({
-        client_id: clientId, redirect_uri: redirect, response_type: 'code', scope: 'openid email profile',
-        code_challenge: challenge, code_challenge_method: 'S256', state, prompt: 'select_account',
+        // drive.appdata reaches only Breeze's hidden app folder in Drive, where workspace sync lives.
+        client_id: clientId, redirect_uri: redirect, response_type: 'code', scope: `openid email profile ${DRIVE_SCOPE}`,
+        code_challenge: challenge, code_challenge_method: 'S256', state, access_type: 'offline', prompt: 'consent select_account',
       }).toString();
       openInBrowser(auth.href);
       authEmit({ t: 'waiting', provider: 'Google' });
@@ -2207,6 +2209,91 @@ async function googleSignIn({ clientId, clientSecret }, signal) {
   if (tok.refresh_token) setSecret(`token:${accountId(user)}`, tok.refresh_token);
   return user;
 }
+
+/* ================= Workspace sync ================= */
+// The engine is in sync.js. Here: which cloud the signed-in account uses, and what each folder last synced.
+const DRIVE_SCOPE = syncEngine.DRIVE_SCOPE;
+const syncDir = () => path.join(app.getPath('userData'), 'sync');
+// One small file per account and folder: { id, rev, base } from the last sync.
+const linkFile = (acct, dir) => path.join(syncDir(), `${crypto.createHash('sha1').update(`${acct}\0${dir}`).digest('hex')}.json`);
+function readLink(acct, dir) {
+  try { return JSON.parse(fs.readFileSync(linkFile(acct, dir), 'utf8')); } catch { return null; }
+}
+function writeLink(acct, dir, link) {
+  fs.mkdirSync(syncDir(), { recursive: true });
+  fs.writeFileSync(linkFile(acct, dir), JSON.stringify(link));
+}
+async function syncStore() {
+  const user = loadState().user;
+  if (!user) throw new syncEngine.SyncError('Sign in to sync your workspaces.', 'signed-out');
+  const acct = accountId(user);
+  const secret = getSecret(`token:${acct}`);
+  if (!secret) throw new syncEngine.SyncError(`Sign in to ${user.provider} again to let Breeze sync your workspaces.`, 'reauth');
+  if (user.provider === 'GitHub') return { acct, store: syncEngine.githubStore({ token: secret, login: user.login }) };
+  const accessToken = await syncEngine.googleAccessToken({ ...authConfig().google, refreshToken: secret });
+  return { acct, store: syncEngine.driveStore({ accessToken }) };
+}
+// IPC drops an error's code, so sync failures come back as { error, code } for the renderer to act on.
+function syncHandle(channel, fn) {
+  handle(channel, async (...args) => {
+    try { return await fn(...args); } catch (err) {
+      if (err instanceof syncEngine.SyncError) return { error: err.message, code: err.code || null };
+      throw err;
+    }
+  });
+}
+let syncBusy = false;
+async function oneSync(work) {
+  if (syncBusy) throw new syncEngine.SyncError('A sync is already running.');
+  syncBusy = true;
+  try { return await work(); } finally { syncBusy = false; }
+}
+const syncBackupDir = () => path.join(app.getPath('userData'), 'sync-backups', new Date().toISOString().replace(/[:.]/g, '-'));
+
+// What the cloud holds, and whether it is ahead of the open folder.
+syncHandle('sync:status', async () => {
+  const { acct, store } = await syncStore();
+  const link = root ? readLink(acct, root) : null;
+  const status = await syncEngine.workspaceStatus(store, link);
+  return { ...status, linked: !!link, device: os.hostname() };
+});
+// mode 'sync' merges both ways; 'pull' makes this folder match the cloud (edits it replaces are backed up).
+syncHandle('sync:run', (_e, mode) => oneSync(async () => {
+  if (!root) throw new syncEngine.SyncError('Open a folder to sync it.');
+  const { acct, store } = await syncStore();
+  const dir = root;
+  const { link, summary } = await syncEngine.syncWorkspace({
+    store, dir, link: readLink(acct, dir), mode: mode === 'pull' ? 'pull' : 'sync',
+    device: os.hostname(), name: path.basename(dir), backupDir: syncBackupDir(),
+  });
+  writeLink(acct, dir, link);
+  return summary;
+}));
+// Downloads a cloud workspace into a new folder the user picks the place of, then opens it.
+syncHandle('sync:clone', (_e, id) => oneSync(async () => {
+  const { acct, store } = await syncStore();
+  const ws = (await syncEngine.listWorkspaces(store)).find(w => w.id === id);
+  if (!ws) throw new syncEngine.SyncError('That workspace is no longer in the cloud.');
+  const r = await dialog.showOpenDialog(win, {
+    title: `Where should ${ws.name} go?`, buttonLabel: 'Download here',
+    defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const safeName = ws.name.replace(/[\/:*?"<>|]/g, '-') || 'workspace';
+  let dir = path.join(r.filePaths[0], safeName);
+  for (let n = 2; fs.existsSync(dir) && (await fsp.readdir(dir)).length; n++) dir = path.join(r.filePaths[0], `${safeName} (${n})`);
+  await fsp.mkdir(dir, { recursive: true });
+  const { link, summary } = await syncEngine.syncWorkspace({
+    store, dir, link: { id, rev: 0, base: {} }, mode: 'pull', device: os.hostname(), name: ws.name,
+  });
+  writeLink(acct, dir, link);
+  return { info: await setRoot(dir), summary };
+}));
+// The renderer's shared settings ({ updatedAt, values }); the newer side wins.
+syncHandle('sync:settings', async (_e, local) => {
+  const { store } = await syncStore();
+  return syncEngine.syncSettings(store, local && typeof local === 'object' ? local : null);
+});
 
 /* ================= Vibe Mode: social feeds ================= */
 // Feeds live in their own browser session (persist:vibe), apart from the app. Signing in happens on the

@@ -7833,3 +7833,172 @@ body.layout-animating #previewPane {
     white-space: nowrap;
   }
 }
+
+/* ---------- cloud workspaces (sync picker) ---------- */
+.cloud-ws-list {
+  display: grid;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.cloud-ws {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-1);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.cloud-ws:hover,
+.cloud-ws:focus-visible {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.cloud-ws-face {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.cloud-ws-face img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* The computer's number, like a notification badge on the picture. */
+.cloud-ws-pc {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  border: 2px solid var(--bg-1);
+  background: var(--blue);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+}
+
+.cloud-ws:hover .cloud-ws-pc { border-color: #0a1530; }
+
+.cloud-ws-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cloud-ws-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cloud-ws-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-ws-here {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.cloud-ws-meta {
+  color: var(--text-3);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cloud-ws-go {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-3);
+  transition: color .15s, background .15s;
+}
+
+.cloud-ws:hover .cloud-ws-go {
+  color: #fff;
+  background: var(--blue);
+}
+
+.cloud-ws-empty {
+  padding: 22px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ---------- title bar sync button ---------- */
+.sync-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-right: 8px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background .15s, opacity .15s;
+}
+
+.sync-btn:hover { background: #1a6fff; }
+.sync-btn:disabled { opacity: .7; cursor: default; }
+.sync-btn.busy svg { animation: spin .9s linear infinite; }
+
+/* Another computer synced something newer. */
+.sync-btn.has-update::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-1);
+  background: var(--warn);
+}
