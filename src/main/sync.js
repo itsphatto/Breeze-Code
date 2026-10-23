@@ -97,11 +97,21 @@ async function readJson(store, listing, file, fallback) {
 }
 const writeJson = obj => Buffer.from(JSON.stringify(obj, null, 2));
 
-// Remote workspaces, newest first.
+// Each computer gets a number the first time it syncs: PC 1, PC 2, … A new one takes the next free number.
+function numberDevice(devices, device) {
+  if (!devices[device]) devices[device] = Math.max(0, ...Object.values(devices)) + 1;
+  return devices;
+}
+
+// Remote workspaces, newest first, each with its computer's number.
 async function listWorkspaces(store) {
   const listing = await store.list();
-  const { workspaces = {} } = await readJson(store, listing, INDEX, {});
-  return Object.entries(workspaces).map(([id, w]) => ({ id, ...w })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const { workspaces = {}, devices: saved = {} } = await readJson(store, listing, INDEX, {});
+  const list = Object.entries(workspaces).map(([id, w]) => ({ id, ...w }));
+  // Clouds synced before numbering existed: number their computers oldest first.
+  const devices = { ...saved };
+  for (const w of [...list].sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))) numberDevice(devices, w.device);
+  return list.map(w => ({ ...w, deviceNo: devices[w.device] })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
 // Brings dir and the cloud copy of a workspace together. link is { id, rev, base } from the last sync, or null.
@@ -172,7 +182,8 @@ async function syncWorkspace({ store, dir, link, mode = 'sync', device, name, ba
     for (const rel of plan.removeRemote) delete remoteAfter[rel];
     rev += 1;
     workspaces[id] = { name: meta?.name || name, rev, device, updatedAt: now() };
-    upload.push({ path: INDEX, data: writeJson({ ...index, workspaces }) });
+    const devices = numberDevice({ ...(index.devices || {}) }, device);
+    upload.push({ path: INDEX, data: writeJson({ ...index, workspaces, devices }) });
     await store.commit({ puts: upload, removes: plan.removeRemote.map(rel => prefix + rel), message: `Sync ${workspaces[id].name} from ${device}` });
   }
   return {

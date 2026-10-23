@@ -38,7 +38,7 @@ interface DetectedAgent { id: string; name: string; vendor: string; url: string;
 interface Accounts { accounts: User[]; active: string | null; }
 // Workspace sync (main.js + sync.js). A failure comes back as { error, code } instead of throwing.
 interface SyncFail { error: string; code: string | null; }
-interface CloudWorkspace { id: string; name: string; rev: number; device: string; updatedAt: string; }
+interface CloudWorkspace { id: string; name: string; rev: number; device: string; deviceNo?: number; updatedAt: string; }
 interface SyncStatus { remote: CloudWorkspace | null; newer: boolean; workspaces: CloudWorkspace[]; linked: boolean; device: string; }
 interface SyncSummary { id: string; rev: number; uploaded: number; downloaded: number; removed: number; conflicts: string[]; backedUp: string[]; skipped: number; }
 interface SharedSettings { updatedAt: string; values: Record<string, unknown>; }
@@ -1042,13 +1042,21 @@ function confirmPull(): void {
 async function openCloudWorkspaces(auto = false): Promise<void> {
   const st = syncOk(await api.sync.status(), auto);
   if (!st || (auto && !st.workspaces.length)) return;
-  const rows = st.workspaces.map(w => `<button class="agent-opt" data-ws="${escAttr(w.id)}">
-      <span class="mark avatar tint-host">${esc(initialsOf(w.name) || '?')}</span><span class="nm">${esc(w.name)}</span>
-      <span class="sub">From ${esc(w.device)} · ${esc(timeAgo(Date.parse(w.updatedAt)))}</span></button>`).join('');
-  const empty = 'Nothing synced yet. Open a folder and choose Sync Workspace from your picture to put it in the cloud.';
+  // Your picture on every row, badged with the number of the computer that synced it.
+  const face = user?.avatar ? `<img src="${escAttr(user.avatar)}" alt="">` : esc(initialsOf(user?.name ?? '?'));
+  const rows = st.workspaces.map(w => {
+    const here = w.device === st.device;
+    const pc = w.deviceNo ? `PC ${w.deviceNo}` : 'PC';
+    return `<button class="cloud-ws" data-ws="${escAttr(w.id)}" title="Download ${escAttr(w.name)} to this computer">
+      <span class="cloud-ws-face">${face}<span class="cloud-ws-pc" title="${escAttr(`${pc} · ${w.device}`)}">${w.deviceNo ?? '?'}</span></span>
+      <span class="cloud-ws-text"><span class="cloud-ws-name"><span class="cloud-ws-title">${esc(w.name)}</span>${here ? '<span class="cloud-ws-here">This PC</span>' : ''}</span>
+        <span class="cloud-ws-meta">${esc(pc)} · ${esc(w.device)} · ${esc(timeAgo(Date.parse(w.updatedAt)))}</span></span>
+      <span class="cloud-ws-go">${svgIcon('download', 15)}</span></button>`;
+  }).join('');
+  const empty = '<div class="cloud-ws-empty">Nothing synced yet. Open a folder and choose Sync Workspace from your picture to put it in the cloud.</div>';
   openModal(`<h3>${auto ? 'Pick up where you left off' : 'Your cloud workspaces'}</h3>
-    <p class="sub">${st.workspaces.length ? 'Workspaces synced from your other computers. Pick one to download it here.' : empty}</p>
-    <div class="agent-list">${rows}</div>
+    ${st.workspaces.length ? '<p class="sub">Synced from your computers. Pick one to download it here.</p>' : ''}
+    <div class="cloud-ws-list">${rows || empty}</div>
     <div class="row end spaced"><button class="btn" data-close>${auto ? 'Later' : 'Close'}</button></div>`, m => {
     $$<HTMLElement>('[data-ws]', m).forEach(b => b.onclick = () => background((async () => {
       closeModal();

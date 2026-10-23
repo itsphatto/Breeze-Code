@@ -118,6 +118,19 @@ test('edits on both sides keep both copies', async () => {
   assert.equal(read(laptop1, 'a (conflict Laptop1).txt'), 'from 1');
 });
 
+test('each computer keeps its own number', async () => {
+  const cloud = memoryStore();
+  const a = tmp(), b = tmp();
+  write(a, 'x.txt', '1');
+  write(b, 'y.txt', '2');
+  const la = (await syncWorkspace({ store: cloud, dir: a, link: null, device: 'Desk', name: 'one' })).link;
+  await syncWorkspace({ store: cloud, dir: b, link: null, device: 'Laptop', name: 'two' });
+  write(a, 'x.txt', '3');
+  await syncWorkspace({ store: cloud, dir: a, link: la, device: 'Desk', name: 'one' });
+  const byName = Object.fromEntries((await listWorkspaces(cloud)).map(w => [w.name, w.deviceNo]));
+  assert.deepEqual(byName, { one: 1, two: 2 });
+});
+
 test('pull backs up unsynced local edits before replacing them', async () => {
   const cloud = memoryStore();
   const laptop1 = tmp(), laptop2 = tmp(), backups = tmp();
