@@ -219,7 +219,8 @@ const sfx = (() => {
     osc.stop(t0 + dur + 0.02);
   }
 
-  const jitter = (n: number) => 1 + (Math.random() - 0.5) * n;
+  const secureRandom = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; };
+  const jitter = (n: number) => 1 + (secureRandom() - 0.5) * n;
   const SOUNDS = {
     click: () => tone(1500 * jitter(0.06), 0.05, { to: 900, vol: 0.09 }),
     hover: () => tone(2400, 0.025, { vol: 0.025 }),
@@ -415,7 +416,7 @@ function demoApi(): BreezeApi {
       },
 
 
-      async openFolder() { store.set('breeze.demoOpen', true); return info; },
+      openFolder() { store.set('breeze.demoOpen', true); return Promise.resolve(info); },
       // Browser preview: a new, empty in-memory project.
       async createFolder() {
         files.clear(); dirs.clear(); binary.clear();
@@ -426,10 +427,10 @@ function demoApi(): BreezeApi {
 
 
       },
-      async restore() { return store.get('breeze.demoOpen', false) ? info : null; },
-      async closeFolder() { store.del('breeze.demoOpen'); },
-      async recent() { return [{ path: info.root, name: info.name }]; },
-      async openRecent() { store.set('breeze.demoOpen', true); return info; },
+      restore() { return Promise.resolve(store.get('breeze.demoOpen', false) ? info : null); },
+      closeFolder() { store.del('breeze.demoOpen'); return Promise.resolve(); },
+      recent() { return Promise.resolve([{ path: info.root, name: info.name }]); },
+      openRecent() { store.set('breeze.demoOpen', true); return Promise.resolve(info); },
       async readDir(rel) {
         needOpen();
         const seen = new Map<string, boolean>();
@@ -443,7 +444,7 @@ function demoApi(): BreezeApi {
         if (binary.has(rel)) return IMAGE_FILE.test(rel) ? { image: true, size: 48213 } : { binary: true, size: 48213 };
         return { text: files.get(rel), size: (files.get(rel) ?? '').length };
       },
-      async writeFile(rel, text) { files.set(rel, text); },
+      writeFile(rel, text) { files.set(rel, text); return Promise.resolve(); },
       async createFile(rel) {
         if (exists(rel)) throw new Error('A file with that name already exists');
         files.set(rel, '');
@@ -467,7 +468,7 @@ function demoApi(): BreezeApi {
         const gone = [...files.keys(), ...dirs, ...binary].filter(k => inside(k, rel));
         for (const k of gone) { files.delete(k); dirs.delete(k); binary.delete(k); }
       },
-      async listFiles() { return [...files.keys()]; },
+      listFiles() { return Promise.resolve([...files.keys()]); },
       async search(query, matchCase) {
         const out: SearchHit[] = [];
         const needle = matchCase ? query : query.toLowerCase();
@@ -485,7 +486,7 @@ function demoApi(): BreezeApi {
       async previewUrl() { return ''; },
       onChange() { return () => { }; },
     },
-    lint: { async check() { return null; } },
+    lint: { check() { return Promise.resolve(null); } },
     term: {
       async cwd() { return 'coffee-shop-landing'; },
       async run() { return { error: 'The terminal runs commands only in the Breeze desktop app (npm start).' }; },
@@ -498,7 +499,7 @@ function demoApi(): BreezeApi {
       onData() { return () => { }; },
       onExit() { return () => { }; },
     },
-    run: { async file() { return { error: 'Programs run only in the Breeze desktop app (npm start).' }; } },
+    run: { file() { return Promise.resolve({ error: 'Programs run only in the Breeze desktop app (npm start).' }); } },
     sys: {
       async detect() {
         await wait(500);
@@ -716,6 +717,7 @@ const LINE_ICONS: Record<string, IconNode> = {
   copy: [['rect', { x: 8, y: 8, width: 14, height: 14, rx: 2 }], ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]],
   download: [['path', { d: 'M12 15V3' }], ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['path', { d: 'm7 10 5 5 5-5' }]],
   circleDot: [['circle', { cx: 12, cy: 12, r: 9 }], ['circle', { cx: 12, cy: 12, r: 3, fill: 'currentColor' }]],
+  phone: [['rect', { x: 5, y: 2, width: 14, height: 20, rx: 2 }], ['path', { d: 'M12 18h.01' }]],
   trash: [['path', { d: 'M3 6h18' }], ['path', { d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' }], ['path', { d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' }], ['path', { d: 'M10 11v6' }], ['path', { d: 'M14 11v6' }]],
   folder: [['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }]],
 };
@@ -1525,7 +1527,7 @@ const LEXERS: Record<string, RegExp> = {
   // Rust: strings may span lines, r#"raw"# strings, 'c' chars but 'lifetimes, #[attributes] and macro! calls.
   rs: lexer([
     ['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['kw', /#!?\[[^\]\n]*\]?/],
-    ['str', either(/b?r#"[\s\S]*?(?:"#|$)/, /b?r"[^"]*"?/, /b?"(?:\\[\s\S]|[^"\\])*"?/, /b?'(?:\\(?:x[\da-fA-F]{2}|u\{[\da-fA-F]{1,6}\}|.)|[^\\'\n])'/)],
+    ['str', either(/b?r#"[\s\S]*?(?:"#|$)/, /b?r"[^"]*"?/, /b?"(?:\\[\s\S]|[^"\\])*"?/, /b?'(?:\\[\s\S]|[^\\'\n])'/)],
     ['attr', /'[A-Za-z_]\w*/],
     ['num', either(/\b0[xob][\da-fA-F_]+(?:[iu](?:8|16|32|64|128|size))?\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?(?:[iu](?:8|16|32|64|128|size)|f32|f64)?\b/)],
     ['kw', keywords(RS_KW)], ['prop', either(/\b[A-Za-z_]\w*!/, CALL)],
@@ -1571,7 +1573,7 @@ function markSelectors(toks: Tok[]): Tok[] {
 }
 // HTML with its <style> and <script> blocks coloured as CSS and JavaScript (TS/JSX and JSON scripts too).
 // Comments come first in the pattern, so a commented-out <script> stays a comment.
-const EMBEDDED = /<!--[\s\S]*?(?:-->|$)|(<(style|script)\b(?:"[^"]*"|'[^']*'|[^>"'])*>)([\s\S]*?)(?=<\/\2\s*>|$)/gi;
+const EMBEDDED = /<!--[\s\S]*?(?:-->|$)|(<(style|script)\b[^>]*>)([\s\S]*?)(?=<\/\2\s*>|$)/gi;
 function htmlToks(text: string): Tok[] {
   const out: Tok[] = [];
   let last = 0;
@@ -2017,7 +2019,7 @@ function lintPy(text: string): RawDiag[] {
 }
 // Rust strings may span lines and hold raw text (r#"…"#), and a lone ' starts a lifetime rather than a string, so
 // strings and chars are blanked first (comments stay for the scanner).
-const RS_TEXT = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|b?r(#?)"[\s\S]*?(?:"\1|$)|b?"(?:\\[\s\S]|[^"\\])*(?:"|$)|b?'(?:\\(?:x[\da-fA-F]{2}|u\{[\da-fA-F]{1,6}\}|.)|[^\\'\n])'/g;
+const RS_TEXT = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|b?r(#?)"[\s\S]*?(?:"\1|$)|b?"(?:\\[\s\S]|[^"\\])*(?:"|$)|b?'(?:\\[\s\S]|[^\\'\n])'/g;
 function lintRust(text: string): RawDiag[] {
   const diags: RawDiag[] = [];
   const blanked = text.replace(RS_TEXT, (m: string, hash: string | undefined, at: number) => {
@@ -2299,7 +2301,7 @@ function sampleBorder(W: number, H: number, R: number, count: number): BorderSam
   const samples: BorderSample[] = [];
   for (let i = 0; i < count; i++) {
     const s = (i / count) * P;
-    let bx = 0, by = 0, nx = 0, ny = 0;
+    let bx: number, by: number, nx: number, ny: number;
 
     if (r <= 0.5) {
       if (s <= W) {
@@ -2383,22 +2385,24 @@ function sampleBorder(W: number, H: number, R: number, count: number): BorderSam
   return { P, samples };
 }
 
-function drawFluidBlurFade(
-  ctx: CanvasRenderingContext2D,
-  samples: BorderSample[],
-  P: number,
-  energies: Float32Array,
-  gx: number,
-  gy: number,
-  cfg: WaveConfig,
-  W: number,
-  H: number
-): void {
+interface BlurFadeParams {
+  ctx: CanvasRenderingContext2D;
+  samples: BorderSample[];
+  P: number;
+  energies: Float32Array;
+  gx: number;
+  gy: number;
+  cfg: WaveConfig;
+  W: number;
+  H: number;
+}
+function drawFluidBlurFade(p: BlurFadeParams): void {
+  const { ctx, samples, P, energies, gx, gy, cfg, W, H } = p;
   const N = samples.length;
   if (N < 4 || P <= 0) return;
 
   const t = cfg.t * cfg.speed;
-  const maxSafeDepth = Math.max(16, Math.min(105, Math.min(W, H) * 0.45));
+  const maxSafeDepth = Math.max(24, Math.min(150, Math.min(W, H) * 0.45));
 
   const [m1, m2, m3, m4] = cfg.harmonics;
   const k1 = (2 * Math.PI * m1) / P;
@@ -2410,9 +2414,8 @@ function drawFluidBlurFade(
   const outerPts: [number, number][] = [];
   const innerPts: [number, number][] = [];
 
-  // Buffer offset from the outer border so the blur fade shape never touches the border edge directly
-  // This completely eliminates any sharp boundary line when clipped to the container edge
-  const borderBuffer = 5;
+  // Buffer offset set to 0 so the blur fade shape fills out directly to the border gap
+  const borderBuffer = 0;
 
   for (let i = 0; i < N; i++) {
     const s = samples[i];
@@ -2494,22 +2497,25 @@ function getDistToRoundedBorder(x: number, y: number, w: number, h: number, r: n
   return Math.min(x, w - x, y, h - y);
 }
 
-function drawFluidDotGrid(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  rawR: number,
-  gx: number,
-  gy: number,
-  t: number,
-  maxEnergy: number
-): void {
+interface DotGridParams {
+  ctx: CanvasRenderingContext2D;
+  w: number;
+  h: number;
+  rawR: number;
+  gx: number;
+  gy: number;
+  t: number;
+  maxEnergy: number;
+}
+function drawFluidDotGrid(params: DotGridParams): void {
+  const { ctx, w, h, rawR, gx, gy, t, maxEnergy } = params;
   if (maxEnergy <= 0.015) return;
 
-  const influenceRadius = 480;
-  // High-density stippled dot matrix field with elevated dot count (~7.5x more dots)
-  const stepX = 4.2;
-  const stepY = 3.6;
+  const influenceRadius = 580;
+  const influenceRadiusSq = influenceRadius * influenceRadius;
+  // High-performance stippled dot matrix field with silky smooth 60fps pacing
+  const stepX = 5.0;
+  const stepY = 4.2;
 
   // Active bounding box around glow focal point (gx, gy)
   const minX = Math.max(0, Math.floor((gx - influenceRadius) / stepX) * stepX);
@@ -2543,30 +2549,36 @@ function drawFluidDotGrid(
       const dotX = col * stepX + rowOffset;
       if (dotX < 0 || dotX > w) continue;
 
-      // Distance to glow center
-      const distToGlow = Math.hypot(dotX - gx, dotY - gy);
-      if (distToGlow > influenceRadius) continue;
+      // Distance to glow center (fast squared distance check first)
+      const dx = dotX - gx, dy = dotY - gy;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > influenceRadiusSq) continue;
+      const distToGlow = Math.sqrt(distSq);
 
       const glowP = Math.max(0, 1 - distToGlow / influenceRadius);
       const energy = glowP * glowP * (3 - 2 * glowP) * maxEnergy;
       if (energy <= 0.02) continue;
 
-      // Distance to border with exact rounded-corner calculation
+      // Distance to border with exact rounded-corner calculation (fills out border gap)
       const distToBorder = getDistToRoundedBorder(dotX, dotY, w, h, rawR);
-      // Stay at least 5px away from border to prevent any border edge lining
-      if (distToBorder < 5) continue;
+      if (distToBorder < 0) continue;
 
       // Border perimeter coordinate measured along the nearest edge (clockwise from top-left),
       // so wave crests stand straight out from the border instead of slanting diagonally
       const dTop = dotY, dRight = w - dotX, dBottom = h - dotY, dLeft = dotX;
       const dMin = Math.min(dTop, dRight, dBottom, dLeft);
-      const u = dMin === dTop ? dotX
-        : dMin === dRight ? w + dotY
-        : dMin === dBottom ? w + h + (w - dotX)
-        : 2 * w + h + (h - dotY);
+      let u: number;
+      if (Math.abs(dMin - dTop) < 0.001) {
+        u = dotX;
+      } else if (Math.abs(dMin - dRight) < 0.001) {
+        u = w + dotY;
+      } else if (Math.abs(dMin - dBottom) < 0.001) {
+        u = w + h + (w - dotX);
+      } else {
+        u = 2 * w + h + (h - dotY);
+      }
 
       // Multi-harmonic undulating wave terrain for organic mountain crests and valleys
-
       const wave1 = Math.sin(k1 * u + t * 1.6);
       const wave2 = Math.sin(k2 * u - t * 2.2 + 1.25);
       const wave3 = Math.cos(k3 * u + t * 3.0 + 2.6);
@@ -2574,8 +2586,8 @@ function drawFluidDotGrid(
       const crestFactor = Math.max(0.15, 0.52 + 0.28 * wave1 + 0.16 * wave2 + 0.10 * wave3);
 
       // Increased wave height and reach matching the expanded blur fade depth
-      const maxAllowedDepth = Math.max(20, Math.min(95, Math.min(w, h) * 0.42));
-      const targetReach = (14 + 58 * crestFactor) * energy;
+      const maxAllowedDepth = Math.max(24, Math.min(135, Math.min(w, h) * 0.4));
+      const targetReach = (18 + 78 * crestFactor) * energy;
       const maxWaveDepth = Math.min(maxAllowedDepth, targetReach);
 
       if (distToBorder > maxWaveDepth) continue;
@@ -2583,9 +2595,9 @@ function drawFluidDotGrid(
       // Depth ratio: 0 at container border to 1.0 at crest peak
       const depthRatio = distToBorder / maxWaveDepth;
 
-      // Soft feathering at crest front and near container boundary (fades smoothly to zero near border)
+      // Soft feathering at crest front and near container boundary (reaches right up to border)
       const crestFeather = Math.max(0, Math.min(1, (1 - depthRatio) / 0.11));
-      const borderFeather = Math.max(0, Math.min(1, (distToBorder - 5) / 6.0));
+      const borderFeather = Math.max(0, Math.min(1, distToBorder / 2.0));
       const edgeFeather = crestFeather * borderFeather;
 
       // Crest ridge prominence (dots are largest and brightest along the wave ridge)
@@ -2605,7 +2617,7 @@ function drawFluidDotGrid(
       // Multi-blue gradients with Google Gemini chromatic wave crest tips
       const chromaticShift = 0.5 + 0.5 * Math.sin(kc * u + t * 0.9);
 
-      let r = 56, g = 189, b = 248;
+      let r: number, g: number, b: number;
       if (depthRatio < 0.38) {
         // Deep Royal Sapphire into Vivid Azure
         const f = depthRatio / 0.38;
@@ -2673,16 +2685,20 @@ function renderFluidFrame(state: FluidCanvasState): void {
   state.curY += (state.targetY - state.curY) * ease;
   state.time += 0.009;
 
-  // Read actual container border radius
-  const compStyle = window.getComputedStyle(container);
-  const rawR = parseFloat(compStyle.borderRadius) || 0;
+  // Read container border radius with frame-level caching to prevent forced reflows
+  const stateAny = state as any;
+  let rawR = stateAny.cachedR;
+  if (rawR === undefined || canvas.width !== pw || canvas.height !== ph) {
+    const compStyle = window.getComputedStyle(container);
+    rawR = stateAny.cachedR = Number.parseFloat(compStyle.borderRadius) || 0;
+  }
 
   const { P, samples } = sampleBorder(w, h, rawR, 180);
   const N = samples.length;
   if (N < 4 || P <= 0) return;
 
   // Initialize or resize energies Float32Array if needed
-  if (!state.energies || state.energies.length !== N) {
+  if (state.energies?.length !== N) {
     state.energies = new Float32Array(N);
   }
 
@@ -2715,8 +2731,8 @@ function renderFluidFrame(state: FluidCanvasState): void {
   // - Active Attack: smooth, organic swell
   // - Active Decay: graceful wave dissipation when moving between sides (~500ms)
   // - Inactive Decay: fast fade-out when dropped or pointer leaves
-  // Increased influence radius for longer perimeter coverage
-  const influenceRadius = 480;
+  // Increased influence radius for wider perimeter coverage
+  const influenceRadius = 580;
   let maxEnergy = 0;
   for (let i = 0; i < N; i++) {
     const s = samples[i];
@@ -2739,6 +2755,10 @@ function renderFluidFrame(state: FluidCanvasState): void {
     }
   }
 
+  // Update dynamic blur focal coordinates so backdrop filter aligns behind gradient
+  container.style.setProperty('--glow-x', `${Math.round(state.glowX)}px`);
+  container.style.setProperty('--glow-y', `${Math.round(state.glowY)}px`);
+
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, w, h);
@@ -2758,46 +2778,46 @@ function renderFluidFrame(state: FluidCanvasState): void {
   const t = state.time;
 
   // 1. Ambient Deep Blur Fade Layer (Wide atmospheric blue haze with increased height and length)
-  drawFluidBlurFade(ctx, samples, P, state.energies, gx, gy, {
+  drawFluidBlurFade({ ctx, samples, P, energies: state.energies, gx, gy, W: w, H: h, cfg: {
     t,
     speed: 0.65,
-    baseDepth: 22,
-    maxSurge: 54,
-    influenceRadius: 520,
+    baseDepth: 30,
+    maxSurge: 66,
+    influenceRadius: 620,
     harmonics: [2, 5, 8, 12],
     swellM: 1,
-    blurRadius: 36,
+    blurRadius: 48,
     colorStops: [
-      { stop: 0, color: 'rgba(56, 189, 248, 0.35)' },
-      { stop: 0.20, color: 'rgba(14, 165, 233, 0.28)' },
-      { stop: 0.45, color: 'rgba(37, 99, 235, 0.18)' },
-      { stop: 0.70, color: 'rgba(29, 78, 216, 0.08)' },
-      { stop: 0.88, color: 'rgba(30, 58, 138, 0.03)' },
+      { stop: 0, color: 'rgba(56, 189, 248, 0.38)' },
+      { stop: 0.20, color: 'rgba(14, 165, 233, 0.30)' },
+      { stop: 0.45, color: 'rgba(37, 99, 235, 0.20)' },
+      { stop: 0.70, color: 'rgba(29, 78, 216, 0.10)' },
+      { stop: 0.88, color: 'rgba(30, 58, 138, 0.04)' },
       { stop: 1, color: 'rgba(15, 23, 42, 0)' }
     ]
-  }, w, h);
+  } });
 
   // 2. Dynamic Fluid Wave Blur Fade Layer (Oceanic Azure & Cobalt undulating wave with increased height and length)
-  drawFluidBlurFade(ctx, samples, P, state.energies, gx, gy, {
+  drawFluidBlurFade({ ctx, samples, P, energies: state.energies, gx, gy, W: w, H: h, cfg: {
     t,
     speed: 0.9,
-    baseDepth: 16,
-    maxSurge: 42,
-    influenceRadius: 420,
+    baseDepth: 20,
+    maxSurge: 52,
+    influenceRadius: 540,
     harmonics: [3, 6, 11, 16],
     swellM: 2,
-    blurRadius: 22,
+    blurRadius: 28,
     colorStops: [
-      { stop: 0, color: 'rgba(56, 189, 248, 0.45)' },
-      { stop: 0.22, color: 'rgba(14, 165, 233, 0.32)' },
-      { stop: 0.50, color: 'rgba(37, 99, 235, 0.18)' },
-      { stop: 0.78, color: 'rgba(29, 78, 216, 0.06)' },
+      { stop: 0, color: 'rgba(56, 189, 248, 0.48)' },
+      { stop: 0.22, color: 'rgba(14, 165, 233, 0.35)' },
+      { stop: 0.50, color: 'rgba(37, 99, 235, 0.20)' },
+      { stop: 0.78, color: 'rgba(29, 78, 216, 0.08)' },
       { stop: 1, color: 'rgba(30, 27, 75, 0)' }
     ]
-  }, w, h);
+  } });
 
   // 3. Stippled Wave Dot Grid (Gemini-style undulating micro-dot matrix with chromatic crests and increased density)
-  drawFluidDotGrid(ctx, w, h, rawR, gx, gy, t, maxEnergy);
+  drawFluidDotGrid({ ctx, w, h, rawR, gx, gy, t, maxEnergy });
 
   ctx.restore();
 }
@@ -2807,6 +2827,12 @@ function getFluidState(container: HTMLElement): FluidCanvasState | null {
   if (state) return state;
   const canvas = container.querySelector<HTMLCanvasElement>('.agent-fluid-canvas');
   if (!canvas) return null;
+  if (!container.querySelector('.agent-fluid-blur')) {
+    const blurEl = document.createElement('div');
+    blurEl.className = 'agent-fluid-blur';
+    blurEl.setAttribute('aria-hidden', 'true');
+    container.insertBefore(blurEl, canvas);
+  }
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   const rect = container.getBoundingClientRect();
@@ -2862,7 +2888,7 @@ function setFluidContainer(container: HTMLElement | null, clientX: number, clien
     } else {
       c.classList.remove('agent-drop-over', 'drop-over-active');
       const state = fluidCanvases.get(c);
-      if (state && state.active) {
+      if (state?.active) {
         state.active = false;
         state.fadeStartTime = performance.now();
       }
@@ -4395,9 +4421,14 @@ function renderTabs(): void {
   if (!hasTabs) {
     tabsEl.innerHTML = '';
   } else {
-    const runBtn = runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>`
-      : isHtml(active) ? `<button class="tab-run tab-preview" data-preview-file="1" title="Preview this page (F5)">${svgIcon('play', 12)}<span>Preview</span></button>` : '';
-    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitPath ? 'Close Split' : 'Split Editor Right'} (Ctrl+\\)">${svgIcon('columns', 14)}</button>`;
+    let runBtn = '';
+    if (runnable(active)) {
+      runBtn = `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>`;
+    } else if (isHtml(active)) {
+      runBtn = `<button class="tab-run tab-preview" data-preview-file="1" title="Preview this page (F5)">${svgIcon('play', 12)}<span>Preview</span></button>`;
+    }
+    const splitTitle = splitPath ? 'Close Split' : 'Split Editor Right';
+    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitTitle} (Ctrl+\\)">${svgIcon('columns', 14)}</button>`;
     tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn + splitBtn;
   }
   placeTabInk();
@@ -4441,7 +4472,7 @@ function placeTabInk(): void {
 $('#tabs').addEventListener('animationend', e => { if ((e.target as HTMLElement).classList.contains('tab')) placeTabInk(); });
 $('#tabs').addEventListener('click', e => {
   if ((e.target as HTMLElement).closest('[data-run-file]')) { run('run.file'); return; }
-  if ((e.target as HTMLElement).closest('[data-preview-file]')) { if (active) void startPreview(active); return; }
+  if ((e.target as HTMLElement).closest('[data-preview-file]')) { if (active) { void startPreview(active); } return; }
   if ((e.target as HTMLElement).closest('[data-split]')) { run('view.splitEditor'); return; }
   const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
   if (!tab || justDragged) return;
@@ -4849,7 +4880,7 @@ const VOID_HTML = new Set('area base br col embed hr img input link meta param s
 interface TagSpan { start: number; end: number; nameStart: number; nameEnd: number; }
 // Pairs every opening tag with its closing tag (void and self-closing tags have no partner; stray closers are ignored).
 function tagPairs(text: string, xml: boolean): [TagSpan, TagSpan][] {
-  const re = /<!--[\s\S]*?(?:-->|$)|<(\/?)([A-Za-z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+  const re = /<!--[\s\S]*?(?:-->|$)|<(\/?)([A-Za-z][\w:.-]*)([^>]*)>/g;
   const stack: { name: string; span: TagSpan }[] = [];
   const pairs: [TagSpan, TagSpan][] = [];
   for (let m = re.exec(text); m; m = re.exec(text)) {
@@ -5747,7 +5778,7 @@ const term = {
 
 function createPromptHtml(cwd: string): string {
   let path = cwd || '~';
-  path = path.replace(/\//g, '\\');
+  path = path.replaceAll('/', '\\');
   path = path.replace(/^([a-zA-Z]):/, (_, d) => d.toUpperCase() + ':');
   return `<span class="ps-prefix">PS</span> <span class="ps-path" title="${escAttr(cwd || '~')}">${esc(path)}</span><span class="ps-arrow">&gt;</span>`;
 }
@@ -5944,7 +5975,7 @@ function renderTermTabs(): void {
     void el.offsetWidth;
     el.classList.add('leaving');
     let done = false;
-    const finish = () => { if (done) return; done = true; el.remove(); };
+    const finish = () => { if (done) { return; } done = true; el.remove(); };
     el.addEventListener('transitionend', e => { if (e.target === el && e.propertyName === 'width') finish(); });
     setTimeout(finish, TERM_TAB_ANIM_MS + 80);
   }
@@ -6035,8 +6066,8 @@ if (termSessions.length === 0) {
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // Where compilers and Python say the trouble is: `file:line:col: error: msg` (GCC, clang), `File "file", line N`,
 // and `file(line,col): error CS1002: msg [project.csproj]` (C#).
-const GCC_REF = /^((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
-const CS_REF = /^[ \t]*((?:[A-Za-z]:(?=[\\/]))?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
+const GCC_REF = /^((?:[A-Za-z]:[\\/])?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
+const CS_REF = /^[ \t]*((?:[A-Za-z]:[\\/])?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
 const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
 // rustc and cargo name the problem on one line and point at it on a later one: `error[E0308]: mismatched types`, then
 // ` --> src/main.rs:4:18`. The heading is kept between calls, since the output arrives in pieces. (javac's
@@ -6259,7 +6290,7 @@ function formatCommandSyntax(cmd: string): string {
   if (!cmd) return '';
   const trimmed = cmd.trimStart();
   const leading = cmd.slice(0, cmd.length - trimmed.length);
-  const tokenRegex = /--?[a-zA-Z0-9_\-]+|"[^"]*"|'[^']*'|\S+/g;
+  const tokenRegex = /--?[a-zA-Z0-9_-]+|"[^"]*"|'[^']*'|\S+/g;
   let match: RegExpExecArray | null;
   let lastIndex = 0;
   let isFirst = true;
@@ -6409,7 +6440,7 @@ async function runCommand(cmd: string): Promise<void> {
     store.set('breeze.termHistory', session.history);
   }
   session.hIdx = session.history.length;
-  if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { if (session.paneEl) session.paneEl.innerHTML = ''; return; }
+  if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { if (session.paneEl) { session.paneEl.innerHTML = ''; } return; }
   const r = await api.term.run(cmd).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; cwd?: string; error?: string });
   if (r.error) termWrite(r.error + '\n', 'err', session);
   if (r.cwd) { session.cwd = r.cwd; renderPs(); }
@@ -6894,7 +6925,7 @@ const commands: Record<string, () => unknown> = {
     pushAppAction({ type: 'layout', prev, next: { ...layout } });
     applyLayoutAnimated();
   },
-  'view.splitEditor': () => { if (splitPath) closeSplit(); else openSplit(); renderTabs(); },
+  'view.splitEditor': () => { if (splitPath) { closeSplit(); } else { openSplit(); } renderTabs(); },
   'view.resetLayout': () => {
     const prev = { ...layout };
     Object.assign(layout, DEFAULT_LAYOUT, { view: layout.view });
@@ -7514,8 +7545,8 @@ type SettingsTab = 'general' | 'agents' | 'vibe' | 'discord' | 'help';
 const SETTINGS_TABS: [SettingsTab, string, string][] = [
   ['general', 'General', 'gear'],
   ['agents', 'Agents', 'terminal'],
-  ['vibe', 'Vibe Code Mode', 'circleDot'],
-  ['discord', 'Discord', 'globe'],
+  ['vibe', 'Vibe Code Mode', 'phone'],
+  ['discord', 'Discord', 'img:discord.png'],
   ['help', 'Help & About', 'info'],
 ];
 // Agents the user has come first, then this order; anything else keeps its place after.
@@ -7534,9 +7565,9 @@ const segHtml = (id: string, opts: [string, string][], cur: string) =>
 function accountHtml(): string {
   const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
       <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
-  return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div></div>
-    ${others ? `<h5>Accounts</h5>${others}` : ''}
-    <div class="row end mt-12"><button class="btn" id="sAddAcct">Add account…</button>${user ? '<button class="btn" id="sSignOut">Sign out</button>' : ''}</div>`;
+  return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div class="set-user-text"><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div>
+      <div class="set-user-actions"><button class="btn btn-sm" id="sAddAcct">Add account…</button>${user ? '<button class="btn btn-sm" id="sSignOut">Sign out</button>' : ''}</div></div>
+    ${others ? `<h5>Accounts</h5>${others}` : ''}`;
 }
 
 function settingsBody(tab: SettingsTab): string {
@@ -7555,18 +7586,17 @@ function settingsBody(tab: SettingsTab): string {
     case 'agents': {
       const agents = [...appState.detect?.agents ?? []].sort((a, b) => agentRank(a) - agentRank(b));
       const list = agents.length
-        ? agents.map(a => `<button class="set-agent ${a.id === appState.agent ? 'on' : ''}" data-agent-pick="${a.id}" ${a.found ? '' : 'disabled'}>
+        ? agents.map(a => `<button class="set-agent ${a.id === appState.agent ? 'on' : ''}" data-agent-pick="${a.id}" ${a.found ? '' : 'disabled'} title="${escAttr(a.name)} (${escAttr(a.found ? a.version ?? a.vendor : 'not set up')} )">
             ${brandMark('set-agent-mark', a.id, a.name[0])}<span class="nm">${esc(a.name)}</span><span class="set-sub">${a.found ? esc(a.version ?? a.vendor) : 'not set up'}</span></button>`).join('')
         : '<p class="set-sub">No agents found yet. Scan again or run setup.</p>';
       return `<h4>Agents</h4>
-        <h5>Active agent</h5><div class="set-agents">${list}</div>
-        ${settingRow('Effort', 'How hard the agent thinks.', segHtml('sEffort', EFFORTS.map(e => [e, e]), currentEffort()))}
+        <div class="set-agents">${list}</div>
         ${settingRow('Manage agents', 'Install, sign in and pick models.', '<button class="btn btn-sm" id="sAgentPicker">Open…</button>')}
         ${settingRow('Scan again', 'Look for newly installed tools.', '<button class="btn btn-sm" id="sRescan">Scan</button>')}`;
     }
     case 'vibe': return `<h4>Vibe Code Mode</h4>
       ${settingRow('Vibe Code Mode', 'Play your feed while agents work.', switchHtml('sVibe', appState.vibeArmed, 'Vibe Code Mode'))}
-      <h5>Feeds</h5><p class="set-sub mb-12">Connect a site to sign in. Click a connected card to make it the one that plays.</p>
+      <h5>Feed</h5><p class="set-sub mb-12">Connect a site to sign in. Click a connected card to make it the one that plays.</p>
       <div class="social-grid" id="sFeeds"></div>`;
     case 'discord': {
       const a = discordActivity();
@@ -7578,18 +7608,33 @@ function settingsBody(tab: SettingsTab): string {
         <div class="setup-card"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
         <p class="set-sub">The Discord app must be running on this computer.</p>`;
     }
-    case 'help': return `<h4>Help & About</h4>
+    case 'help': {
+      const where = isDesktop ? 'Desktop app' : 'Browser preview';
+      const engine = /Electron\/[\d.]+|Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0] ?? '';
+      return `<h4>Help & About</h4>
       ${settingRow('Keyboard shortcuts', '', '<button class="btn btn-sm" data-set-cmd="help.keys">Show</button>')}
       ${settingRow('Run setup again', 'Pick your agent and workspace again.', '<button class="btn btn-sm" data-set-cmd="help.setup">Start</button>')}
       ${settingRow('Developer tools', 'Ctrl+Shift+I', '<button class="btn btn-sm" data-set-cmd="win.devtools">Toggle</button>')}
       ${settingRow('Reload window', 'Ctrl+R', '<button class="btn btn-sm" data-set-cmd="win.reload">Reload</button>')}
-      ${settingRow('About Breeze Code', '', '<button class="btn btn-sm" data-set-cmd="help.about">About</button>')}`;
+      ${settingRow('About Breeze Code', `Smooth as a breeze · ${where}${engine ? ` · ${esc(engine)}` : ''}`, '<span class="pill blue">v0.5.0</span>')}`;
+    }
   }
 }
 
 function bindSettings(m: HTMLElement): void {
   const pane = $('.set-pane', m);
+  // Switches are rebuilt with the pane, so remember where each one was and replay the move.
+  const prevSwitch = new Map<string, boolean>();
+  pane.querySelectorAll<HTMLElement>('.switch').forEach(s => prevSwitch.set(s.id, s.classList.contains('on')));
   pane.innerHTML = settingsBody(settingsTab);
+  pane.querySelectorAll<HTMLElement>('.switch').forEach(s => {
+    const was = prevSwitch.get(s.id), now = s.classList.contains('on');
+    if (was === undefined || was === now) return;
+    s.classList.toggle('on', was);
+    void s.offsetWidth;
+    s.classList.toggle('on', now);
+    s.classList.add(now ? 'bounce-on' : 'bounce-off');
+  });
   $$('[data-set-tab]', m).forEach(b => b.classList.toggle('on', b.dataset.setTab === settingsTab));
   const on = (id: string, fn: (el: HTMLElement) => void) => { const el = $(`#${id}`, pane); if (el) el.onclick = () => fn(el); };
   const layoutSwitch = (id: string, act: string) => on(id, () => { run(act); refreshSettings(); });
@@ -7612,7 +7657,7 @@ function bindSettings(m: HTMLElement): void {
     saveApp(); renderAgentPill(); updateScmGenBtn();
     refreshSettings();
   });
-  seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentPill(); refreshSettings(); });
+  if ($('#sEffort', pane)) seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentPill(); refreshSettings(); });
   on('sAgentPicker', () => openAgentPicker());
   on('sRescan', el => {
     el.textContent = 'Scanning…'; (el as HTMLButtonElement).disabled = true;
@@ -7665,14 +7710,29 @@ function openSettings(gear: HTMLElement, tab?: SettingsTab): void {
   if (tab) settingsTab = tab;
   const gears = [$('#settingsBtn'), $('#boxSettings')];
   gears.forEach(g => { g.classList.add('open'); g.setAttribute('aria-expanded', 'true'); });
-  const nav = SETTINGS_TABS.map(([id, label, icon]) => `<button data-set-tab="${id}">${svgIcon(icon, 15)}<span>${esc(label)}</span></button>`).join('');
+  const nav = SETTINGS_TABS.map(([id, label, icon]) => {
+    const iconHtml = icon.startsWith('img:')
+      ? '<img class="set-nav-img" src="../../assets/icons/' + icon.slice(4) + '" width="15" height="15" alt="" draggable="false">'
+      : svgIcon(icon, 15);
+    return '<button data-set-tab="' + id + '">' + iconHtml + '<span>' + esc(label) + '</span></button>';
+  }).join('');
   openModal(`<div class="settings-modal" aria-label="Settings">
       <nav class="set-nav"><h3>Settings</h3>${nav}</nav>
-      <div class="set-main"><button class="icon-btn set-close" data-close title="Close (Esc)" aria-label="Close">${svgIcon('circleX', 16)}</button><div class="set-pane"></div></div>
+      <div class="set-main"><button class="set-close tab-close" data-close title="Close (Esc)" aria-label="Close"><svg class="tab-close-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="set-pane"></div></div>
     </div>`, m => {
     m.classList.add('settings-shell');
     const root = $('.settings-modal', m);
-    $$('[data-set-tab]', root).forEach(b => b.onclick = () => { settingsTab = b.dataset.setTab as SettingsTab; bindSettings(root); });
+    $$('[data-set-tab]', root).forEach(b => b.onclick = () => {
+      if (settingsTab === b.dataset.setTab) return;
+      settingsTab = b.dataset.setTab as SettingsTab;
+      const pane = $('.set-pane', root);
+      if (pane) {
+        pane.style.animation = 'none';
+        void pane.offsetHeight;
+        pane.style.animation = '';
+      }
+      bindSettings(root);
+    });
     background(refreshAccounts().then(refreshSettings));
     bindSettings(root);
     gear.blur();
@@ -7885,7 +7945,7 @@ function getActiveTab(s: Surface = surface): AgentTabState {
 function createAgentTab(s: Surface, title?: string, initialHtml?: string, session?: string | null, markNew = false): AgentTabState {
   const count = surfaceTabs[s.name].length + 1;
   const tab: AgentTabState = {
-    id: 'atab_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    id: 'atab_' + crypto.randomUUID().slice(0, 8),
     surfaceName: s.name,
     title: title || `Chat ${count}`,
     panel: document.createElement('div'),
@@ -8347,7 +8407,7 @@ interface ChatEntry { id: string; title: string; at: number; html: string; agent
 const historyKey = (s: Surface) => `breeze.history:${chatScope(s)}`;
 const chatIdKey = (s: Surface) => `breeze.chatId:${chatScope(s)}`;
 const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
-const newChatId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const newChatId = () => crypto.randomUUID();
 const chatHistory = (s: Surface) => store.get<ChatEntry[]>(historyKey(s), []);
 
 function archiveChatTab(s: Surface, tab: AgentTabState): void {
@@ -8566,7 +8626,7 @@ async function addPastedImage(file: File, s: Surface, tab?: AgentTabState): Prom
   } catch {
     // In browser demo or if import fails, keep dataUrl
   }
-  const att: AgentAttachment = { id: Math.random().toString(36).slice(2), name, kind: 'image', dataUrl, fileUrl, fileRel, path: fileRel };
+  const att: AgentAttachment = { id: crypto.randomUUID().slice(0, 8), name, kind: 'image', dataUrl, fileUrl, fileRel, path: fileRel };
   attachmentsMap[s.name].push(att);
   targetTab.attachments = [...attachmentsMap[s.name]];
   renderAttachments(s);
@@ -8599,7 +8659,7 @@ async function attachPathToAgent(rawPath: string, isDir: boolean, s: Surface, ta
   }
 
   const att: AgentAttachment = {
-    id: Math.random().toString(36).slice(2),
+    id: crypto.randomUUID().slice(0, 8),
     name,
     kind,
     path: cleanPath,
@@ -9369,7 +9429,7 @@ async function generateCommitMsg(): Promise<void> {
     genBtnEl.innerHTML = `<div class="spinner sm"></div>`;
   }
   try {
-    if (!activeAg || !activeAg.found) {
+    if (!activeAg?.found) {
       const fallbackMsg = heuristicCommitMsg(currentFiles);
       const msgArea = $<HTMLTextAreaElement>('#scmMsg');
       if (msgArea) {
@@ -10353,7 +10413,7 @@ function closeModal(): void {
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
-  setTimeout(() => scrim.remove(), 160);
+  setTimeout(() => scrim.remove(), 320);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {
