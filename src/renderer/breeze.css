@@ -7967,3 +7967,38 @@ body.layout-animating #previewPane {
   color: var(--text-3);
   text-align: center;
 }
+
+/* ---------- title bar sync button ---------- */
+.sync-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin-right: 8px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background .15s, opacity .15s;
+}
+
+.sync-btn:hover { background: #1a6fff; }
+.sync-btn:disabled { opacity: .7; cursor: default; }
+.sync-btn.busy svg { animation: spin .9s linear infinite; }
+
+/* Another computer synced something newer. */
+.sync-btn.has-update::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-1);
+  background: var(--warn);
+}
