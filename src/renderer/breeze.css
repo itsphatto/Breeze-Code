@@ -2388,6 +2388,13 @@ body.resizing-h iframe {
   text-transform: none;
 }
 
+/* Only the tab strip gives up space; the title and toolbar keep their size */
+.term-head > .icon-btn,
+.term-head > #termTitle,
+.term-head > span:last-child {
+  flex-shrink: 0;
+}
+
 .term-head span:last-child {
   font-family: var(--font-ui);
   font-size: 11px;
@@ -2399,8 +2406,11 @@ body.resizing-h iframe {
   align-items: center;
   gap: 4px;
   margin-left: 4px;
+  /* Shrinks with the header so every tab narrows instead of pushing the toolbar away */
+  flex: 0 1 auto;
+  min-width: 0;
   overflow-x: auto;
-  max-width: 60%;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
 .term-tabs::-webkit-scrollbar { display: none; }
@@ -2409,7 +2419,7 @@ body.resizing-h iframe {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px;
+  padding: 0 3px 0 9px;
   height: 22px;
   border-radius: 5px;
   background: transparent;
@@ -2421,7 +2431,98 @@ body.resizing-h iframe {
   letter-spacing: normal;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background .15s ease, color .15s ease, border-color .15s ease;
+  /* Every tab gives up width evenly when space runs out. The minimum always leaves room for
+     padding + dot + a sliver of title + the X, so a squeezed tab can still be closed. */
+  flex: 0 1 auto;
+  min-width: 62px;
+  max-width: 150px;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: background .2s ease, color .2s ease, border-color .2s ease,
+              padding .22s cubic-bezier(.16, 1, .3, 1),
+              min-width .22s cubic-bezier(.16, 1, .3, 1),
+              font-weight .2s ease;
+}
+
+/* Single-terminal morph: the last tab sheds its chip, dot and close button until it matches the plain title */
+.term-tabs.solo {
+  pointer-events: none; /* clicks fall through to the header, which toggles the panel */
+}
+.term-tabs.solo .term-tab {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--text-3) !important;
+  font-weight: 500 !important;
+  padding-left: 0;
+  padding-right: 0;
+  min-width: 0;
+  pointer-events: none;
+}
+.term-tabs.solo .term-tab-dot,
+.term-tabs.tight .term-tab-dot {
+  width: 0;
+  margin-right: -6px;
+  opacity: 0 !important;
+  transform: scale(0);
+}
+.term-tabs.solo .term-tab-close {
+  width: 0;
+  margin-left: -6px;
+  opacity: 0 !important;
+  transform: scale(0.6) !important;
+}
+/* Squeezed: drop the dot and trim padding so more tabs fit before the strip has to scroll */
+.term-tabs.tight .term-tab {
+  min-width: 46px;
+  padding-left: 6px;
+}
+.term-tabs.no-morph .term-tab,
+.term-tabs.no-morph .term-tab-dot,
+.term-tabs.no-morph .term-tab-close {
+  transition: none !important;
+}
+
+.term-tab.enter {
+  animation: termTabEnter .22s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+@keyframes termTabEnter {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(2px);
+    min-width: 0;
+    max-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    max-width: 150px;
+  }
+}
+
+.term-tab.leaving {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-right: -4px !important;
+  border-width: 0 !important;
+  opacity: 0 !important;
+  filter: blur(3px);
+  transform: scale(0.82) translateY(2px);
+  pointer-events: none !important;
+  transition: width .2s cubic-bezier(.16, 1, .3, 1),
+              min-width .2s cubic-bezier(.16, 1, .3, 1),
+              max-width .2s cubic-bezier(.16, 1, .3, 1),
+              padding .2s cubic-bezier(.16, 1, .3, 1),
+              margin .2s cubic-bezier(.16, 1, .3, 1),
+              opacity .15s ease-out,
+              filter .15s ease-out,
+              transform .2s cubic-bezier(.16, 1, .3, 1) !important;
 }
 
 .term-tab:hover {
@@ -2439,10 +2540,14 @@ body.resizing-h iframe {
 .term-tab-dot {
   width: 5px;
   height: 5px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--text-3);
   opacity: 0.5;
-  transition: background .2s ease, opacity .2s ease;
+  transition: background .2s ease, opacity .2s ease,
+              width .22s cubic-bezier(.16, 1, .3, 1),
+              margin .22s cubic-bezier(.16, 1, .3, 1),
+              transform .22s cubic-bezier(.16, 1, .3, 1);
 }
 
 .term-tab.busy .term-tab-dot {
@@ -2454,33 +2559,56 @@ body.resizing-h iframe {
 
 .term-tab-title {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .term-tab-close {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 3px;
+  /* Mirrors the agent tab X */
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 4px;
   border: none;
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
   padding: 0;
   opacity: 0;
-  transition: opacity .15s ease, color .15s ease, background .15s ease;
+  transform: scale(0.85);
+  transition: opacity .15s cubic-bezier(.16, 1, .3, 1),
+              transform .15s cubic-bezier(.16, 1, .3, 1),
+              background .12s ease,
+              color .12s ease,
+              width .22s cubic-bezier(.16, 1, .3, 1),
+              margin .22s cubic-bezier(.16, 1, .3, 1);
+}
+
+.term-tab-close .tab-close-icon {
+  display: block;
+  pointer-events: none;
 }
 
 .term-tab:hover .term-tab-close,
 .term-tab.active .term-tab-close {
-  opacity: 0.75;
+  opacity: .7;
+  transform: scale(1);
 }
 
-.term-tab-close:hover {
+.term-tab .term-tab-close:hover {
   opacity: 1;
-  color: var(--err);
-  background: rgba(239, 68, 68, .15);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  transform: scale(1.05);
+}
+
+.term-tab .term-tab-close:active {
+  background: rgba(255, 255, 255, 0.12);
+  transform: scale(0.92);
 }
 
 .term-new-btn {
@@ -6618,7 +6746,17 @@ button.pill:active, .pill-btn:active {
   pointer-events: none;
   z-index: 50;
   opacity: 0;
-  transition: opacity .45s cubic-bezier(.22, 1, .36, 1);
+  /* Slow, soft fade-out when the drag leaves or drops */
+  transition: opacity 1.2s cubic-bezier(.4, 0, .2, 1);
+  /* Feather the glow to transparent at the panel edges so the clipped blur never forms a hard line on the border */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-composite: intersect;
 }
 
 #sidebar.drop-over-active .agent-fluid-canvas,
@@ -6628,6 +6766,7 @@ button.pill:active, .pill-btn:active {
 #agents.agent-drop-over .agent-fluid-canvas,
 #box.agent-drop-over .agent-fluid-canvas {
   opacity: 1;
+  transition: opacity .4s cubic-bezier(.22, 1, .36, 1);
 }
 
 #sidebar.drop-over,
