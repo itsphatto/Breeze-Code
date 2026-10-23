@@ -7481,6 +7481,42 @@ body.layout-animating #previewPane {
   cursor: wait;
 }
 
+/* Sound level: a thin track filled blue up to the knob (--fill is set from the value). */
+.set-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+}
+
+.set-volume input[type=range] {
+  width: 160px;
+  height: 4px;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--blue) var(--fill, 50%), var(--bg-3) var(--fill, 50%));
+  appearance: none;
+  cursor: pointer;
+}
+
+.set-volume input[type=range]::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  appearance: none;
+}
+
+.set-volume-val {
+  width: 34px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .set-agents {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

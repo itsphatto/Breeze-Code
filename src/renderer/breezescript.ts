@@ -185,6 +185,7 @@ const store = {
 // first click or key press, and the speaker button in the status bar (or Settings › Sound Effects) turns them off.
 const sfx = (() => {
   let on = store.get('breeze.sound', true);
+  let volume = store.get('breeze.volume', 50); // 0–100; the middle is the old fixed level
   let ctx: AudioContext | null = null;
   let master: GainNode | null = null;
   let lastAt = -Infinity; // when any sound last played, so a button that makes its own sound doesn't also click
@@ -195,7 +196,7 @@ const sfx = (() => {
     try {
       ctx = new AudioContext();
       master = ctx.createGain();
-      master.gain.value = 0.5;
+      master.gain.value = volume / 100;
       master.connect(ctx.destination);
     } catch { ctx = null; } // no audio available
   }
@@ -246,7 +247,7 @@ const sfx = (() => {
   const last: Partial<Record<Sound, number>> = {};
 
   function play(name: Sound): void {
-    if (!on || !ctx || document.hidden) return;
+    if (!on || !volume || !ctx || document.hidden) return;
     if (ctx.state === 'suspended') void ctx.resume();
     const now = performance.now();
     const gap = GAP[name];
@@ -258,12 +259,19 @@ const sfx = (() => {
     SOUNDS[name]();
   }
 
-  // The switch lives in Settings → Sound.
+  // The menu item mutes; the slider in Settings → General sets the level (0 is silent).
   function toggle(): void {
     unlock();
     on = !on;
     store.set('breeze.sound', on);
     play('tick');
+  }
+  function setVolume(v: number): void {
+    unlock();
+    volume = Math.max(0, Math.min(100, Math.round(v)));
+    store.set('breeze.volume', volume);
+    if (volume && !on) { on = true; store.set('breeze.sound', on); }
+    if (master) master.gain.value = volume / 100;
   }
 
   // Buttons click and hover like the website's; one that just made its own sound (send, a menu opening) stays quiet.
@@ -277,7 +285,7 @@ const sfx = (() => {
     if (el && !el.contains(e.relatedTarget as Node | null)) play('hover');
   });
 
-  return { play, toggle, get on() { return on; } };
+  return { play, toggle, setVolume, get on() { return on; }, get volume() { return on ? volume : 0; } };
 })();
 
 /* ================= Platform (desktop bridge or in-browser demo) ================= */
@@ -691,6 +699,8 @@ const LINE_ICONS: Record<string, IconNode> = {
   volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
   volumeOff: [['path', { d: SPEAKER }], ['path', { d: 'm22 9-6 6' }], ['path', { d: 'm16 9 6 6' }]],
   eye: [['path', { d: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
+  gear: [['path', { d: 'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
+  user: [['path', { d: 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2' }], ['circle', { cx: 12, cy: 7, r: 4 }]],
   pencil: [['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }], ['path', { d: 'm15 5 4 4' }]],
   terminal: [['path', { d: 'M4 17l6-6-6-6' }], ['path', { d: 'M12 19h8' }]],
   search: [['circle', { cx: 11, cy: 11, r: 8 }], ['path', { d: 'm21 21-4.3-4.3' }]],
@@ -7500,16 +7510,18 @@ document.addEventListener('keyup', e => {
 
 /* ================= Settings ================= */
 // One pop-up for everything: the gear opens it (in the IDE and in Breeze Box) and turns while it is open.
-type SettingsTab = 'general' | 'agents' | 'vibe' | 'discord' | 'sound' | 'account' | 'help';
+type SettingsTab = 'general' | 'account' | 'agents' | 'vibe' | 'discord' | 'help';
 const SETTINGS_TABS: [SettingsTab, string, string][] = [
-  ['general', 'General', 'eye'],
+  ['general', 'General', 'gear'],
+  ['account', 'Account', 'user'],
   ['agents', 'Agents', 'terminal'],
   ['vibe', 'Vibe Code Mode', 'circleDot'],
   ['discord', 'Discord', 'globe'],
-  ['sound', 'Sound', 'volume'],
-  ['account', 'Account', 'pencil'],
   ['help', 'Help & About', 'info'],
 ];
+// Agents the user has come first, then this order; anything else keeps its place after.
+const AGENT_ORDER = ['claude', 'codex', 'antigravity', 'ollama'];
+const agentRank = (a: DetectedAgent) => (a.found ? 0 : 100) + (AGENT_ORDER.indexOf(a.id) + 1 || AGENT_ORDER.length + 1);
 let settingsTab: SettingsTab = 'general';
 const settingsRoot = () => document.querySelector<HTMLElement>('#modalRoot .scrim:not(.closing) .settings-modal');
 const switchHtml = (id: string, on: boolean, label: string) =>
@@ -7523,6 +7535,7 @@ function settingsBody(tab: SettingsTab): string {
   switch (tab) {
     case 'general': return `<h4>General</h4>
       ${settingRow('Workspace', 'Full editor, or chat only.', segHtml('sMode', [['ide', 'Breeze Code'], ['box', 'Breeze Box']], appState.mode))}
+      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="5" value="${sfx.volume}" aria-label="Sound volume" style="--fill:${sfx.volume}%"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
       <h5>Layout</h5>
       ${settingRow('Side bar', 'Ctrl+B', switchHtml('sSide', layout.sideOpen, 'Side bar'))}
       ${settingRow('Agents panel', 'Ctrl+Alt+B', switchHtml('sAgents', layout.agentsOpen, 'Agents panel'))}
@@ -7530,7 +7543,7 @@ function settingsBody(tab: SettingsTab): string {
       ${settingRow('Preview', '', switchHtml('sPreview', layout.previewOpen, 'Preview'))}
       ${settingRow('Reset layout', 'Put every panel back where it started.', '<button class="btn btn-sm" id="sResetLayout">Reset</button>')}`;
     case 'agents': {
-      const agents = appState.detect?.agents ?? [];
+      const agents = [...appState.detect?.agents ?? []].sort((a, b) => agentRank(a) - agentRank(b));
       const list = agents.length
         ? agents.map(a => `<button class="set-agent ${a.id === appState.agent ? 'on' : ''}" data-agent-pick="${a.id}" ${a.found ? '' : 'disabled'}>
             ${brandMark('set-agent-mark', a.id, a.name[0])}<span class="nm">${esc(a.name)}</span><span class="set-sub">${a.found ? esc(a.version ?? a.vendor) : 'not set up'}</span></button>`).join('')
@@ -7555,8 +7568,6 @@ function settingsBody(tab: SettingsTab): string {
         <div class="setup-card"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
         <p class="set-sub">The Discord app must be running on this computer.</p>`;
     }
-    case 'sound': return `<h4>Sound</h4>
-      ${settingRow('Sound effects', 'Clicks, typing ticks and agent chimes.', switchHtml('sSound', sfx.on, 'Sound effects'))}`;
     case 'account': {
       const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
           <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
@@ -7620,8 +7631,16 @@ function bindSettings(m: HTMLElement): void {
     void discordOn(appState.discordDetails).then(refreshSettings);
   });
   on('sDiscordDetails', () => { appState.discordDetails = !appState.discordDetails; saveApp(); queueDiscord(); refreshSettings(); });
-  // Sound
-  on('sSound', () => { sfx.toggle(); refreshSettings(); });
+  // Sound: drag to set the level, one tick on release so you hear it.
+  const vol = $<HTMLInputElement>('#sVolume', pane);
+  if (vol) {
+    vol.oninput = () => {
+      sfx.setVolume(+vol.value);
+      vol.style.setProperty('--fill', `${vol.value}%`);
+      $('#sVolumeVal', pane).textContent = `${vol.value}%`;
+    };
+    vol.onchange = () => sfx.play('tick');
+  }
   // Account
   $$('[data-switch-acct]', pane).forEach(b => b.onclick = () => {
     const a = accounts.accounts.find(x => accountKey(x) === b.dataset.switchAcct);
