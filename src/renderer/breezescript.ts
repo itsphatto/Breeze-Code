@@ -2510,6 +2510,14 @@ function drawFluidDotGrid(
   const startRow = Math.floor(minY / stepY);
   const endRow = Math.ceil(maxY / stepY);
 
+  // Wave numbers snapped to whole harmonics of the perimeter so the pattern loops seamlessly around corners
+  const perim = 2 * (w + h);
+  const snapK = (k: number): number => (2 * Math.PI * Math.max(1, Math.round((k * perim) / (2 * Math.PI)))) / perim;
+  const k1 = snapK(0.028); // wavelength ~224px
+  const k2 = snapK(0.068); // wavelength ~92px
+  const k3 = snapK(0.135); // wavelength ~46px
+  const kc = snapK(0.018);
+
   ctx.save();
   ctx.filter = 'none';
 
@@ -2538,13 +2546,16 @@ function drawFluidDotGrid(
       // Stay at least 5px away from border to prevent any border edge lining
       if (distToBorder < 5) continue;
 
-      // Border perimeter coordinate: continuous across borders and corners
-      const u = dotX + dotY * 0.9;
+      // Border perimeter coordinate measured along the nearest edge (clockwise from top-left),
+      // so wave crests stand straight out from the border instead of slanting diagonally
+      const dTop = dotY, dRight = w - dotX, dBottom = h - dotY, dLeft = dotX;
+      const dMin = Math.min(dTop, dRight, dBottom, dLeft);
+      const u = dMin === dTop ? dotX
+        : dMin === dRight ? w + dotY
+        : dMin === dBottom ? w + h + (w - dotX)
+        : 2 * w + h + (h - dotY);
 
       // Multi-harmonic undulating wave terrain for organic mountain crests and valleys
-      const k1 = 0.028; // wavelength ~224px
-      const k2 = 0.068; // wavelength ~92px
-      const k3 = 0.135; // wavelength ~46px
 
       const wave1 = Math.sin(k1 * u + t * 1.6);
       const wave2 = Math.sin(k2 * u - t * 2.2 + 1.25);
@@ -2582,7 +2593,7 @@ function drawFluidDotGrid(
       if (dotAlpha <= 0.01) continue;
 
       // Multi-blue gradients with Google Gemini chromatic wave crest tips
-      const chromaticShift = 0.5 + 0.5 * Math.sin(0.018 * u + t * 0.9);
+      const chromaticShift = 0.5 + 0.5 * Math.sin(kc * u + t * 0.9);
 
       let r = 56, g = 189, b = 248;
       if (depthRatio < 0.38) {
@@ -2710,8 +2721,8 @@ function renderFluidFrame(state: FluidCanvasState): void {
         state.energies[i] += (targetEnergy - state.energies[i]) * 0.035;
       }
     } else {
-      // Rapid graceful decay upon drop
-      state.energies[i] *= 0.88;
+      // Slow, graceful decay upon drop / leave (~1.5s)
+      state.energies[i] *= 0.955;
     }
     if (state.energies[i] > maxEnergy) {
       maxEnergy = state.energies[i];
@@ -2856,7 +2867,7 @@ function stopAgentDragPointer(immediate = false): void {
     state.fadeStartTime = now;
     if (immediate && state.energies) {
       for (let i = 0; i < state.energies.length; i++) {
-        state.energies[i] *= 0.3;
+        state.energies[i] *= 0.85;
       }
     }
   }
@@ -2877,7 +2888,7 @@ function startFluidCanvasLoop(state: FluidCanvasState): void {
         }
       }
       const elapsed = performance.now() - (state.fadeStartTime ?? 0);
-      if (elapsed > 450 || maxEnergy < 0.005) {
+      if (elapsed > 1800 || maxEnergy < 0.005) {
         state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
         if (state.energies) state.energies.fill(0);
         state.animId = null;
@@ -5863,45 +5874,147 @@ function closeTermSession(id: number, e?: MouseEvent): void {
   }
 }
 
+const TERM_TAB_ANIM_MS = 220;
+// Same X as the agent tabs' close button
+const TAB_CLOSE_SVG = '<svg class="tab-close-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+function buildTermTab(s: TermSession): HTMLElement {
+  const tab = document.createElement('div');
+  tab.className = 'term-tab';
+  tab.dataset.tid = String(s.id);
+
+  const dot = document.createElement('span');
+  dot.className = 'term-tab-dot';
+  tab.appendChild(dot);
+
+  const title = document.createElement('span');
+  title.className = 'term-tab-title';
+  tab.appendChild(title);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'term-tab-close';
+  closeBtn.type = 'button';
+  closeBtn.title = 'Close terminal';
+  closeBtn.setAttribute('aria-label', 'Close terminal');
+  closeBtn.innerHTML = TAB_CLOSE_SVG;
+  closeBtn.onclick = (e) => closeTermSession(s.id, e);
+  tab.appendChild(closeBtn);
+
+  tab.onclick = (e) => {
+    if ((e.target as HTMLElement).closest('.term-tab-close') || tab.classList.contains('leaving')) return;
+    activateTermSession(s.id);
+  };
+  return tab;
+}
+
 function renderTermTabs(): void {
   const tabsContainer = $('#termTabs');
   if (!tabsContainer) return;
-  tabsContainer.innerHTML = '';
-  // With one terminal the panel's own "Terminal" title is enough; from two on, the tabs replace it.
+  // With one terminal the lone tab sheds its dot, chip and close button ("solo") and reads like a plain title;
+  // from two on it grows them back.
   const many = termSessions.length > 1;
-  tabsContainer.classList.toggle('hidden', !many);
-  $('#termTitleText')?.classList.toggle('hidden', many);
+  const firstRender = !tabsContainer.dataset.ready;
+  const wasHidden = firstRender;
 
+  const existing = new Map<number, HTMLElement>();
+  for (const el of $$<HTMLElement>('.term-tab', tabsContainer)) {
+    if (!el.classList.contains('leaving')) existing.set(Number(el.dataset.tid), el);
+  }
+  const liveIds = new Set(termSessions.map(s => s.id));
+
+  // Collapse out tabs whose session is gone
+  let anyLeaving = false;
+  for (const [tid, el] of existing) {
+    if (liveIds.has(tid)) continue;
+    existing.delete(tid);
+    if (wasHidden) { el.remove(); continue; }
+    anyLeaving = true;
+    el.classList.remove('enter');
+    el.style.width = `${el.getBoundingClientRect().width}px`;
+    void el.offsetWidth;
+    el.classList.add('leaving');
+    let done = false;
+    const finish = () => { if (done) return; done = true; el.remove(); };
+    el.addEventListener('transitionend', e => { if (e.target === el && e.propertyName === 'width') finish(); });
+    setTimeout(finish, TERM_TAB_ANIM_MS + 80);
+  }
+
+  // Add / update live tabs in session order (leaving tabs stay where they were while they collapse)
+  let prev: HTMLElement | null = null;
   for (const s of termSessions) {
-    const tab = document.createElement('div');
-    tab.className = `term-tab ${s.id === activeTermSession?.id ? 'active' : ''} ${s.proc != null ? 'busy' : ''}`;
-    tab.dataset.tid = String(s.id);
+    let tab = existing.get(s.id);
+    if (!tab) {
+      tab = buildTermTab(s);
+      if (many) {
+        tab.classList.add('enter');
+        tab.addEventListener('animationend', () => tab!.classList.remove('enter'), { once: true });
+      }
+      if (prev) prev.after(tab);
+      else tabsContainer.prepend(tab);
+    }
+    tab.classList.toggle('active', s.id === activeTermSession?.id);
+    tab.classList.toggle('busy', s.proc != null);
     tab.title = `${s.name}${s.proc != null ? ' (running)' : ''}`;
+    const title = $('.term-tab-title', tab);
+    if (title && title.textContent !== s.name) title.textContent = s.name;
+    prev = tab;
+  }
 
-    const dot = document.createElement('span');
-    dot.className = 'term-tab-dot';
-    tab.appendChild(dot);
+  if (firstRender) {
+    // Settle into the initial state without animating
+    tabsContainer.dataset.ready = '1';
+    tabsContainer.classList.add('no-morph');
+    tabsContainer.classList.remove('hidden');
+    $('#termTitleText')?.classList.add('hidden');
+    tabsContainer.classList.toggle('solo', !many);
+    void tabsContainer.offsetWidth;
+    tabsContainer.classList.remove('no-morph');
+    return;
+  }
 
-    const title = document.createElement('span');
-    title.className = 'term-tab-title';
-    title.textContent = s.name;
-    tab.appendChild(title);
+  // 2 → 1 sheds the dot / chip / X while the closed tab collapses; 1 → 2 grows them back
+  tabsContainer.classList.toggle('solo', !many);
 
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'term-tab-close';
-    closeBtn.title = 'Close terminal';
-    closeBtn.innerHTML = svgIcon('x', 11);
-    closeBtn.onclick = (e) => closeTermSession(s.id, e);
-    tab.appendChild(closeBtn);
-
-    tab.onclick = (e) => {
-      if ((e.target as HTMLElement).closest('.term-tab-close')) return;
-      activateTermSession(s.id);
-    };
-
-    tabsContainer.appendChild(tab);
+  // Keep the active tab in view when the strip is squeezed and scrolls
+  updateTermTabsTight();
+  const activeEl = tabsContainer.querySelector<HTMLElement>('.term-tab.active:not(.leaving)');
+  if (many && activeEl && tabsContainer.scrollWidth > tabsContainer.clientWidth) {
+    requestAnimationFrame(() => activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }));
   }
 }
+
+// Drops the dot and trims padding only when the tabs genuinely can't fit at their normal minimum
+function updateTermTabsTight(): void {
+  const el = $('#termTabs');
+  if (!el) return;
+  if (el.classList.contains('solo')) { el.classList.remove('tight'); return; }
+  const wasTight = el.classList.contains('tight');
+  el.classList.add('no-morph');
+  el.classList.remove('tight');
+  const overflow = el.scrollWidth > el.clientWidth + 1;
+  el.classList.toggle('tight', overflow);
+  void el.offsetWidth;
+  el.classList.remove('no-morph');
+  if (wasTight !== overflow) {
+    // Re-run once the class change has settled so the transition plays from the right state
+    el.classList.toggle('tight', wasTight);
+    void el.offsetWidth;
+    el.classList.toggle('tight', overflow);
+  }
+}
+{
+  const ro = new ResizeObserver(() => updateTermTabsTight());
+  const head = $('#termToggle');
+  if (head) ro.observe(head);
+}
+
+// Squeezed terminal tabs scroll sideways with the mouse wheel
+$('#termTabs')?.addEventListener('wheel', e => {
+  const el = e.currentTarget as HTMLElement;
+  if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  e.preventDefault();
+  el.scrollLeft += e.deltaY;
+}, { passive: false });
 
 // Initialise default session if none exists
 if (termSessions.length === 0) {
