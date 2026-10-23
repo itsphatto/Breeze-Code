@@ -148,11 +148,7 @@ test('triggerExternalAuth: safely handles missing or custom URLs without throwin
   // No URL and no captured auth event -> should gracefully return false without throwing
   const res1 = await service.triggerExternalAuth();
   assert.equal(res1, false);
-
-  // With a test URL, verify it attempts opener and does not throw
-  // (We use a mock or verify it returns a boolean)
-  const res2 = await service.triggerExternalAuth('https://antigravity.google/test-auth');
-  assert.equal(typeof res2, 'boolean');
+  // Calling it with a real URL opens the user's browser, so the test stops here.
 });
 
 test('Session Lifecycle: custom error classes behave correctly', () => {

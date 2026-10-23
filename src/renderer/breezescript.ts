@@ -258,21 +258,13 @@ const sfx = (() => {
     SOUNDS[name]();
   }
 
-  const btn = $('#sbSound');
-  function paint(): void {
-    $('use', btn).setAttribute('href', on ? '#i-sound' : '#i-mute');
-    btn.setAttribute('aria-pressed', String(on));
-    btn.title = on ? 'Sound effects on' : 'Sound effects off';
-  }
+  // The switch lives in Settings → Sound.
   function toggle(): void {
     unlock();
     on = !on;
     store.set('breeze.sound', on);
-    paint();
     play('tick');
   }
-  btn.addEventListener('click', toggle);
-  paint();
 
   // Buttons click and hover like the website's; one that just made its own sound (send, a menu opening) stays quiet.
   document.addEventListener('click', e => {
@@ -873,7 +865,7 @@ for (const id of ['#avatars', '#boxAvatar']) {
 // The onboarding step and the "Add account" dialog share this panel; signinRoot is the one in use.
 const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
     <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
-    <button class="btn" data-signin="Google"><img src="../../assets/icons/Google.png" width="18" height="18" alt="Google">Continue with Google</button>
+    <button class="btn" data-signin="Google"><img src="../../assets/icons/google.png" width="18" height="18" alt="Google">Continue with Google</button>
     <p class="signin-error hidden" data-si="error" role="alert"></p>
   </div>
   <div class="waiting hidden" data-si="wait">
@@ -4388,9 +4380,22 @@ function renderTabs(): void {
     tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn + splitBtn;
   }
   placeTabInk();
+  fitTabRunBtn();
   if (!running) renderPreviewEmpty();
   renderSplit();
 }
+// Run / Preview is sticky at the right edge, so on a narrow editor it would cover the file name. Hide it when the tabs and button don't both fit.
+function fitTabRunBtn(): void {
+  const tabs = $('#tabs');
+  const btn = tabs.querySelector<HTMLElement>('.tab-run');
+  if (!btn) return;
+  btn.style.display = '';
+  const split = tabs.querySelector<HTMLElement>('.tab-split');
+  let need = (split ? split.offsetWidth + 4 : 0) + btn.offsetWidth + 16;
+  tabs.querySelectorAll<HTMLElement>('.tab').forEach((t) => { need += t.offsetWidth + 4; });
+  if (need > tabs.clientWidth) btn.style.display = 'none';
+}
+new ResizeObserver(() => fitTabRunBtn()).observe($('#tabs'));
 // The blue line under the open tab is one element that glides from the last tab to the new one.
 // Tabs are re-rendered, so the line restarts from where it was drawn last and then moves.
 let inkAt: { x: number; y: number; w: number } | null = null;
@@ -7032,6 +7037,7 @@ const MENUS: Menu[] = [
   },
   {
     name: 'Help', items: [
+      { label: 'Settings', act: 'settings.open', key: 'Ctrl+,' },
       { label: 'Keyboard Shortcuts', act: 'help.keys' },
       { label: 'Run Setup Again', act: 'help.setup' },
       { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
@@ -7061,7 +7067,7 @@ const canonKey = (combo: string): string => {
 const keymap = new Map<string, string>();
 for (const { items } of MENUS) for (const it of items) if (it.key && it.act && !it.native) keymap.set(canonKey(it.key), it.act);
 for (const [k, act] of EXTRA_KEYS) keymap.set(canonKey(k), act);
-const KEY_BY_CODE: Record<string, string> = { Backquote: '`', Slash: '/', Backslash: '\\' };
+const KEY_BY_CODE: Record<string, string> = { Backquote: '`', Slash: '/', Backslash: '\\', Comma: ',' };
 function keyName(e: KeyboardEvent): string {
   if (KEY_BY_CODE[e.code]) return KEY_BY_CODE[e.code];
   if (e.key.startsWith('Arrow')) return e.key.slice(5);
@@ -7379,20 +7385,168 @@ document.addEventListener('keyup', e => {
   altAlone = false;
 }, true);
 
-// The gear turns while its menu is open and turns back when it closes (in the IDE and in Breeze Box).
-function settingsMenu(gear: HTMLElement, place: (r: DOMRect) => [number, number]): void {
-  if (gear.classList.contains('open') || (justClosedTrigger === gear && Date.now() - justClosedAt < 350)) { closeMenu(); return; }
-  closeMenu();
-  const [x, y] = place(gear.getBoundingClientRect());
-  gear.classList.add('open');
-  gear.setAttribute('aria-expanded', 'true');
-  popupMenu(x, y, MENUS.find(m => m.name === 'Help')?.items ?? [], () => {
-    gear.classList.remove('open');
-    gear.setAttribute('aria-expanded', 'false');
-  }, gear);
+/* ================= Settings ================= */
+// One pop-up for everything: the gear opens it (in the IDE and in Breeze Box) and turns while it is open.
+type SettingsTab = 'general' | 'agents' | 'vibe' | 'discord' | 'sound' | 'account' | 'help';
+const SETTINGS_TABS: [SettingsTab, string, string][] = [
+  ['general', 'General', 'eye'],
+  ['agents', 'Agents', 'terminal'],
+  ['vibe', 'Vibe Code Mode', 'circleDot'],
+  ['discord', 'Discord', 'globe'],
+  ['sound', 'Sound', 'volume'],
+  ['account', 'Account', 'pencil'],
+  ['help', 'Help & About', 'info'],
+];
+let settingsTab: SettingsTab = 'general';
+const settingsRoot = () => document.querySelector<HTMLElement>('#modalRoot .scrim:not(.closing) .settings-modal');
+const switchHtml = (id: string, on: boolean, label: string) =>
+  `<button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}" aria-label="${escAttr(label)}"><span></span></button>`;
+const settingRow = (title: string, sub: string, control: string) =>
+  `<div class="set-row"><div class="set-text"><div class="set-title">${title}</div>${sub ? `<div class="set-sub">${sub}</div>` : ''}</div><div class="set-ctl">${control}</div></div>`;
+const segHtml = (id: string, opts: [string, string][], cur: string) =>
+  `<div class="seg set-seg" id="${id}">${opts.map(([v, l]) => `<button data-v="${v}" class="${v === cur ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>`;
+
+function settingsBody(tab: SettingsTab): string {
+  switch (tab) {
+    case 'general': return `<h4>General</h4>
+      ${settingRow('Workspace', 'Full editor, or chat only.', segHtml('sMode', [['ide', 'Breeze Code'], ['box', 'Breeze Box']], appState.mode))}
+      <h5>Layout</h5>
+      ${settingRow('Side bar', 'Ctrl+B', switchHtml('sSide', layout.sideOpen, 'Side bar'))}
+      ${settingRow('Agents panel', 'Ctrl+Alt+B', switchHtml('sAgents', layout.agentsOpen, 'Agents panel'))}
+      ${settingRow('Terminal', 'Ctrl+`', switchHtml('sTerm', layout.termOpen, 'Terminal'))}
+      ${settingRow('Preview', '', switchHtml('sPreview', layout.previewOpen, 'Preview'))}
+      ${settingRow('Reset layout', 'Put every panel back where it started.', '<button class="btn btn-sm" id="sResetLayout">Reset</button>')}`;
+    case 'agents': {
+      const agents = appState.detect?.agents ?? [];
+      const list = agents.length
+        ? agents.map(a => `<button class="set-agent ${a.id === appState.agent ? 'on' : ''}" data-agent-pick="${a.id}" ${a.found ? '' : 'disabled'}>
+            ${brandMark('set-agent-mark', a.id, a.name[0])}<span class="nm">${esc(a.name)}</span><span class="set-sub">${a.found ? esc(a.version ?? a.vendor) : 'not set up'}</span></button>`).join('')
+        : '<p class="set-sub">No agents found yet. Scan again or run setup.</p>';
+      return `<h4>Agents</h4>
+        <h5>Active agent</h5><div class="set-agents">${list}</div>
+        ${settingRow('Effort', 'How hard the agent thinks.', segHtml('sEffort', EFFORTS.map(e => [e, e]), currentEffort()))}
+        ${settingRow('Manage agents', 'Install, sign in and pick models.', '<button class="btn btn-sm" id="sAgentPicker">Open…</button>')}
+        ${settingRow('Scan again', 'Look for newly installed tools.', '<button class="btn btn-sm" id="sRescan">Scan</button>')}`;
+    }
+    case 'vibe': return `<h4>Vibe Code Mode</h4>
+      ${settingRow('Vibe Code Mode', 'Play your feed while agents work.', switchHtml('sVibe', appState.vibeArmed, 'Vibe Code Mode'))}
+      <h5>Feeds</h5><p class="set-sub mb-12">Connect a site to sign in. Click a connected card to make it the one that plays.</p>
+      <div class="social-grid" id="sFeeds"></div>`;
+    case 'discord': {
+      const a = discordActivity();
+      const status = { on: 'Connected', off: 'Off', error: 'Not connected' }[discordState.state];
+      return `<h4>Discord</h4>
+        ${settingRow('Rich presence', `Status: ${status}${discordState.why ? ` · ${esc(discordState.why)}` : ''}`, switchHtml('sDiscord', appState.discord, 'Discord presence'))}
+        ${settingRow('Show project and file names', 'Names can include client or employer names.', switchHtml('sDiscordDetails', appState.discordDetails, 'Show project and file names'))}
+        <h5>Friends will see</h5>
+        <div class="setup-card"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
+        <p class="set-sub">The Discord app must be running on this computer.</p>`;
+    }
+    case 'sound': return `<h4>Sound</h4>
+      ${settingRow('Sound effects', 'Clicks, typing ticks and agent chimes.', switchHtml('sSound', sfx.on, 'Sound effects'))}`;
+    case 'account': {
+      const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
+          <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
+      return `<h4>Account</h4>
+        <div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div></div>
+        ${others ? `<h5>Accounts</h5>${others}` : ''}
+        <div class="row end mt-12"><button class="btn" id="sAddAcct">Add account…</button>${user ? '<button class="btn" id="sSignOut">Sign out</button>' : ''}</div>`;
+    }
+    case 'help': return `<h4>Help & About</h4>
+      ${settingRow('Keyboard shortcuts', '', '<button class="btn btn-sm" data-set-cmd="help.keys">Show</button>')}
+      ${settingRow('Run setup again', 'Pick your agent and workspace again.', '<button class="btn btn-sm" data-set-cmd="help.setup">Start</button>')}
+      ${settingRow('Developer tools', 'Ctrl+Shift+I', '<button class="btn btn-sm" data-set-cmd="win.devtools">Toggle</button>')}
+      ${settingRow('Reload window', 'Ctrl+R', '<button class="btn btn-sm" data-set-cmd="win.reload">Reload</button>')}
+      ${settingRow('About Breeze Code', '', '<button class="btn btn-sm" data-set-cmd="help.about">About</button>')}`;
+  }
 }
-$('#settingsBtn').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right + 6, r.top]);
-$('#boxSettings').onclick = e => settingsMenu(e.currentTarget as HTMLElement, r => [r.right - 260, r.bottom + 6]);
+
+function bindSettings(m: HTMLElement): void {
+  const pane = $('.set-pane', m);
+  pane.innerHTML = settingsBody(settingsTab);
+  $$('[data-set-tab]', m).forEach(b => b.classList.toggle('on', b.dataset.setTab === settingsTab));
+  const on = (id: string, fn: (el: HTMLElement) => void) => { const el = $(`#${id}`, pane); if (el) el.onclick = () => fn(el); };
+  const layoutSwitch = (id: string, act: string) => on(id, () => { run(act); refreshSettings(); });
+  const seg = (id: string, fn: (v: string) => void) => $$(`#${id} button`, pane).forEach(b => b.onclick = () => fn(b.dataset.v ?? ''));
+
+  // General
+  seg('sMode', v => { if (v !== appState.mode) { closeModal(); enterMode(v as WorkMode); } });
+  layoutSwitch('sSide', 'view.toggleSide');
+  layoutSwitch('sAgents', 'view.toggleAgents');
+  layoutSwitch('sTerm', 'term.toggle');
+  layoutSwitch('sPreview', 'view.togglePreview');
+  layoutSwitch('sResetLayout', 'view.resetLayout');
+  // Agents
+  $$('[data-agent-pick]', pane).forEach(b => b.onclick = () => {
+    const ag = appState.detect?.agents.find(a => a.id === b.dataset.agentPick);
+    if (!ag?.found) return;
+    appState.agent = ag.id;
+    const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
+    if (curTab) curTab.agentId = ag.id;
+    saveApp(); renderAgentPill(); updateScmGenBtn();
+    refreshSettings();
+  });
+  seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentPill(); refreshSettings(); });
+  on('sAgentPicker', () => openAgentPicker());
+  on('sRescan', el => {
+    el.textContent = 'Scanning…'; (el as HTMLButtonElement).disabled = true;
+    detectTools(true).catch(() => { /* the agent card shows the error */ }).finally(refreshSettings);
+  });
+  // Vibe
+  on('sVibe', () => {
+    if (appState.vibeArmed) { setVibeArmed(false); return; }
+    if (!connectedSites().length) { toast('Connect a feed first'); return; }
+    setVibeArmed(true);
+  });
+  const feeds = $('#sFeeds', pane);
+  if (feeds) void renderFeedChoices(feeds);
+  // Discord
+  on('sDiscord', el => {
+    if (appState.discord) { discordOff(); return; }
+    (el as HTMLButtonElement).disabled = true;
+    void discordOn(appState.discordDetails).then(refreshSettings);
+  });
+  on('sDiscordDetails', () => { appState.discordDetails = !appState.discordDetails; saveApp(); queueDiscord(); refreshSettings(); });
+  // Sound
+  on('sSound', () => { sfx.toggle(); refreshSettings(); });
+  // Account
+  $$('[data-switch-acct]', pane).forEach(b => b.onclick = () => {
+    const a = accounts.accounts.find(x => accountKey(x) === b.dataset.switchAcct);
+    if (a) background(switchAccount(a).then(refreshSettings));
+  });
+  on('sAddAcct', () => addAccount());
+  on('sSignOut', () => background(signOut().then(refreshSettings)));
+  // Help
+  $$('[data-set-cmd]', pane).forEach(b => b.onclick = () => { const c = b.dataset.setCmd ?? ''; closeModal(); run(c); });
+}
+// Redraws the open pane when something changes elsewhere (Discord connects, a feed signs in, …).
+function refreshSettings(): void {
+  const m = settingsRoot();
+  if (m) bindSettings(m);
+}
+
+function openSettings(gear: HTMLElement, tab?: SettingsTab): void {
+  if (settingsRoot()) { closeModal(); return; }
+  closeMenu();
+  if (tab) settingsTab = tab;
+  const gears = [$('#settingsBtn'), $('#boxSettings')];
+  gears.forEach(g => { g.classList.add('open'); g.setAttribute('aria-expanded', 'true'); });
+  const nav = SETTINGS_TABS.map(([id, label, icon]) => `<button data-set-tab="${id}">${svgIcon(icon, 15)}<span>${esc(label)}</span></button>`).join('');
+  openModal(`<div class="settings-modal" aria-label="Settings">
+      <nav class="set-nav"><h3>Settings</h3>${nav}</nav>
+      <div class="set-main"><button class="icon-btn set-close" data-close title="Close (Esc)" aria-label="Close">${svgIcon('circleX', 16)}</button><div class="set-pane"></div></div>
+    </div>`, m => {
+    m.classList.add('settings-shell');
+    const root = $('.settings-modal', m);
+    $$('[data-set-tab]', root).forEach(b => b.onclick = () => { settingsTab = b.dataset.setTab as SettingsTab; bindSettings(root); });
+    background(refreshAccounts().then(refreshSettings));
+    bindSettings(root);
+    gear.blur();
+  }, () => gears.forEach(g => { g.classList.remove('open'); g.setAttribute('aria-expanded', 'false'); }));
+}
+commands['settings.open'] = () => openSettings($('#settingsBtn'));
+$('#settingsBtn').onclick = e => openSettings(e.currentTarget as HTMLElement);
+$('#boxSettings').onclick = e => openSettings(e.currentTarget as HTMLElement);
 
 function showShortcuts(): void {
   interface ShortcutItem { label: string; key: string; }
@@ -9851,18 +10005,8 @@ const agentWorking = () => Object.values(agentsDef).some(a => a.status === 'work
 function setVibeArmed(on: boolean): void {
   appState.vibeArmed = on;
   saveApp();
-  const arm = $('#vibeArm');
-  if (!arm.querySelector('svg')) arm.innerHTML = `${svgIcon(on ? 'circleDot' : 'circle', 14)}<span></span>`;
-  void setIcon(arm, on ? 'circleDot' : 'circle');
-  $('span', arm).textContent = `Vibe Code Mode ${on ? 'on' : 'off'}`;
-  $('#vibeArm').classList.toggle('armed', on);
+  refreshSettings();
 }
-$('#vibeArm').onclick = () => {
-  if (appState.vibeArmed) { setVibeArmed(false); toast('Vibe Code Mode off'); return; }
-  if (!connectedSites().length) { openFeedPicker(); return; }
-  setVibeArmed(true);
-  toast(`Vibe Code Mode on — ${siteById(appState.vibeSite)?.name ?? 'your feed'} plays while agents work`);
-};
 function openFeedPicker(): void {
   openModal(`<h3>Vibe Mode feeds</h3><p class="sub">Pick what plays while your agents work. Connecting opens the site so you can sign in.</p>
     <div class="social-grid" id="feedPick"></div><div class="row end"><button class="btn btn-primary" data-close>Done</button></div>`,
@@ -10013,16 +10157,11 @@ function discordActivity(): DiscordActivity {
   const where = rootInfo ? `in ${rootInfo.name}` : 'Breeze Code';
   return { details, state: lang && !working ? `${lang} · ${where}` : where, start: discordSince };
 }
+// Settings → Discord shows this state; there is no status bar button any more.
+let discordState: { state: 'on' | 'off' | 'error'; why: string } = { state: 'off', why: '' };
 function renderDiscord(state: 'on' | 'off' | 'error', why = ''): void {
-  const b = $('#discord');
-  const stateLabels: Record<string, string> = {
-    on: 'Discord: on',
-    error: 'Discord: not connected',
-    off: 'Discord: off',
-  };
-  b.textContent = stateLabels[state] ?? 'Discord: off';
-  b.title = why || 'Discord presence';
-  b.classList.toggle('armed', state === 'on');
+  discordState = { state, why };
+  refreshSettings();
 }
 async function pushDiscord(): Promise<void> {
   if (!appState.discord) return;
@@ -10059,29 +10198,6 @@ function discordOff(): void {
   renderDiscord('off');
   background(api.discord.clear());
 }
-$('#discord').onclick = () => {
-  if (appState.discord) { discordOff(); toast('Discord presence off'); return; }
-  const preview = () => {
-    const a = discordActivity();
-    return `<b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div>`;
-  };
-  openModal(`<h3>Show what you're doing on Discord?</h3><p class="sub">Your friends will see:</p>
-    <div class="setup-card mb-12" id="dPreview">${preview()}</div>
-    <label class="check-row mb-12"><input type="checkbox" id="dDetails" ${appState.discordDetails ? 'checked' : ''}> Show project and file names</label>
-    <p class="sub fs-12">Project and file names can include client or employer names. The Discord app must be running on this computer.</p>
-    <div class="row end"><button class="btn" data-close>Not now</button><button class="btn btn-primary" id="dOn">Turn on</button></div>`,
-    m => {
-      const box = $<HTMLInputElement>('#dDetails', m);
-      box.onchange = () => { appState.discordDetails = box.checked; $('#dPreview', m).innerHTML = preview(); };
-      const on = $<HTMLButtonElement>('#dOn', m);
-      on.onclick = async () => {
-        on.disabled = true; on.textContent = 'Connecting…';
-        if (await discordOn(box.checked)) closeModal();
-        else { on.disabled = false; on.textContent = 'Turn on'; }
-      };
-    });
-};
-
 /* ================= Modal & misc ================= */
 let modalOnClose: (() => void) | null = null;
 const modalOpen = () => !!document.querySelector('#modalRoot .scrim:not(.closing)');

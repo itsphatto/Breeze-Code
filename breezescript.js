@@ -621,7 +621,7 @@ for (const id of ['#avatars', '#boxAvatar']) {
 // The onboarding step and the "Add account" dialog share this panel; signinRoot is the one in use.
 const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
     <button class="btn" data-signin="GitHub"><svg width="18" height="18"><use href="#i-gh"/></svg>Continue with GitHub</button>
-    <button class="btn" data-signin="Google"><img src="assets/icons/Google.png" width="18" height="18" alt="Google">Continue with Google</button>
+    <button class="btn" data-signin="Google"><img src="assets/icons/google.png" width="18" height="18" alt="Google">Continue with Google</button>
     <p class="signin-error hidden" data-si="error" role="alert"></p>
   </div>
   <div class="waiting hidden" data-si="wait">
