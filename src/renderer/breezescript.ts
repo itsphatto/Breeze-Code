@@ -7760,8 +7760,54 @@ const AGENT_ORDER = ['claude', 'codex', 'antigravity', 'ollama'];
 const agentRank = (a: DetectedAgent) => (a.found ? 0 : 100) + (AGENT_ORDER.indexOf(a.id) + 1 || AGENT_ORDER.length + 1);
 let settingsTab: SettingsTab = 'general';
 const settingsRoot = () => document.querySelector<HTMLElement>('#modalRoot .scrim:not(.closing) .settings-modal');
+// The liquid switch (styles under "liquid on/off switch" in breeze.css): a track with the knob's hole knocked out,
+// and the knob itself, which turns into a lens over a gooey copy of the track while pressed.
 const switchHtml = (id: string, on: boolean, label: string) =>
-  `<button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}" aria-label="${escAttr(label)}"><span></span></button>`;
+  `<button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}" aria-label="${escAttr(label)}">`
+  + '<span class="lt-knockout"><span class="lt-indicator"><span class="lt-mask"></span></span></span>'
+  + '<span class="lt-liquid"><span class="lt-shadow"></span><span class="lt-wrapper"><span class="lt-liquids">'
+  + '<span class="lt-liquid-shadow"></span><span class="lt-track"></span></span></span><span class="lt-cover"></span></span></button>';
+
+// Tap a switch to flip it, or drag the knob: it follows the pointer and lands on the nearer side.
+// A drag that ends on the side it started from swallows the click, so it changes nothing.
+(() => {
+  let drag: { el: HTMLButtonElement; x0: number; from: number; moved: boolean } | null = null;
+  let swallow: HTMLElement | null = null;
+  const end = (e: PointerEvent) => {
+    if (!drag) return;
+    const { el, from, moved } = drag;
+    drag = null;
+    delete el.dataset.active;
+    delete el.dataset.dragging;
+    if (!moved) return;
+    const at = Number.parseFloat(el.style.getPropertyValue('--complete')) || 0;
+    el.style.removeProperty('--complete');   // eases from where the knob was let go
+    if ((at >= 50) === (from === 100) || e.type === 'pointercancel') swallow = el;
+  };
+  document.addEventListener('pointerdown', e => {
+    const el = (e.target as HTMLElement).closest<HTMLButtonElement>('button.switch');
+    if (!el || el.disabled || e.button !== 0) return;
+    drag = { el, x0: e.clientX, from: el.classList.contains('on') ? 100 : 0, moved: false };
+    el.dataset.active = 'true';
+    el.setPointerCapture(e.pointerId);
+  });
+  document.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x0;
+    if (!drag.moved && Math.abs(dx) < 3) return;
+    drag.moved = true;
+    drag.el.dataset.dragging = 'true';
+    // The knob travels 40% of the switch's width.
+    drag.el.style.setProperty('--complete', String(clamp(drag.from + dx / (drag.el.clientWidth * .4) * 100, 0, 100)));
+  });
+  document.addEventListener('pointerup', end);
+  document.addEventListener('pointercancel', end);
+  document.addEventListener('click', e => {
+    if (!swallow) return;
+    if ((e.target as HTMLElement).closest('button.switch') === swallow) { e.stopPropagation(); e.preventDefault(); }
+    swallow = null;
+  }, true);
+})();
 const settingRow = (title: string, sub: string, control: string) =>
   `<div class="set-row"><div class="set-text"><div class="set-title">${title}</div>${sub ? `<div class="set-sub">${sub}</div>` : ''}</div><div class="set-ctl">${control}</div></div>`;
 const segHtml = (id: string, opts: [string, string][], cur: string) =>
@@ -7829,17 +7875,16 @@ function settingsBody(tab: SettingsTab): string {
 
 function bindSettings(m: HTMLElement): void {
   const pane = $('.set-pane', m);
-  // Switches are rebuilt with the pane, so remember where each one was and replay the move.
-  const prevSwitch = new Map<string, boolean>();
-  pane.querySelectorAll<HTMLElement>('.switch').forEach(s => prevSwitch.set(s.id, s.classList.contains('on')));
+  // Switches are rebuilt with the pane, so remember where each knob was (mid-drag or mid-slide too) and slide on from there.
+  const prevSwitch = new Map<string, string>();
+  pane.querySelectorAll<HTMLElement>('.switch').forEach(s => prevSwitch.set(s.id, getComputedStyle(s).getPropertyValue('--complete')));
   pane.innerHTML = settingsBody(settingsTab);
   pane.querySelectorAll<HTMLElement>('.switch').forEach(s => {
-    const was = prevSwitch.get(s.id), now = s.classList.contains('on');
-    if (was === undefined || was === now) return;
-    s.classList.toggle('on', was);
+    const was = prevSwitch.get(s.id);
+    if (!was) return;
+    s.style.setProperty('--complete', was);
     void s.offsetWidth;
-    s.classList.toggle('on', now);
-    s.classList.add(now ? 'bounce-on' : 'bounce-off');
+    s.style.removeProperty('--complete');
   });
   $$('[data-set-tab]', m).forEach(b => b.classList.toggle('on', b.dataset.setTab === settingsTab));
   const on = (id: string, fn: (el: HTMLElement) => void) => { const el = $(`#${id}`, pane); if (el) el.onclick = () => fn(el); };

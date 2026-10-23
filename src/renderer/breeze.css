@@ -7539,15 +7539,15 @@ body.layout-animating #previewPane {
 
 /* ================= Settings pop-up ================= */
 .modal.settings-shell {
-  width: min(780px, calc(100vw - 32px));
-  height: min(560px, calc(100vh - 48px));
+  width: min(1000px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 48px));
   padding: 0;
   overflow: hidden;
 }
 
 .settings-modal {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 230px 1fr;
   height: 100%;
 }
 
@@ -7750,43 +7750,224 @@ body.layout-animating #previewPane {
   cursor: pointer;
 }
 
-/* An on/off switch: the knob slides right and the track turns blue; the knob stretches and bounces as it lands. */
-.switch {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px; /* rounded rectangle like the other pills; the knob is a rounded square */
-  background: var(--bg-3);
-  cursor: pointer;
-  transition: background .18s, border-color .18s;
+/* ---------- liquid on/off switch (after Jhey Tompkins' liquid toggle) ----------
+   --complete runs 0 (off) → 100 (on) and drives the colour and every position, so dragging just sets it inline.
+   At rest the knob is white and the track shows through a hole cut by #lt-remove-black. Pressed, the knob grows
+   into a glass lens and the track melts into it through #lt-goo. */
+@property --complete {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
 }
 
-.switch span {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-  background: var(--text-2);
-  transition: transform .18s cubic-bezier(.2, .8, .2, 1), background .18s;
+.switch {
+  --complete: 0;
+  --transition: .2s;
+  --ease: ease-out;
+  --border: 2px;
+  --width: 52;
+  --height: 22;
+  /* grey → Breeze blue (#005EFF is hsl 218 100% 50%) */
+  --checked: hsl(218 calc(8% + var(--complete) * .92%) calc(81% - var(--complete) * .31%));
+  position: relative;
+  flex: none;
+  width: calc(var(--width) * 1px);
+  height: calc(var(--height) * 1px);
+  padding: 0;
+  border: 0;
+  border-radius: 100px;
+  background: transparent;
+  cursor: pointer;
+  overflow: visible;
+  container-type: inline-size;
+  outline-offset: 2px;
+  touch-action: none;
+  transition: --complete var(--transition) var(--ease), outline var(--transition) var(--ease);
 }
 
 .switch.on {
-  border-color: var(--blue);
-  background: var(--blue);
+  --complete: 100;
 }
 
-.switch.on span {
-  transform: translateX(16px);
-  background: #fff;
+.switch[data-dragging] {
+  transition: outline var(--transition) var(--ease);
+}
+
+.switch * {
+  pointer-events: none;
+}
+
+.switch span {
+  display: block;
+}
+
+.switch:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--checked), transparent 30%);
+}
+
+.switch:active,
+.switch[data-active] {
+  outline: none;
 }
 
 .switch:disabled {
   opacity: .5;
   cursor: wait;
+}
+
+.lt-knockout {
+  position: absolute;
+  inset: 0;
+  border-radius: 100px;
+  filter: url(#lt-remove-black);
+  will-change: filter;
+  transform: translate3d(0, 0, 0);
+}
+
+.lt-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  translate: -50% -50%;
+  border-radius: 100px;
+  background: var(--checked);
+  container-type: inline-size;
+}
+
+.lt-mask {
+  position: absolute;
+  top: 50%;
+  left: var(--border);
+  width: calc(60% - (2 * var(--border)));
+  height: calc(100% - (2 * var(--border)));
+  border-radius: 100px;
+  background: #000;
+  translate: calc((var(--complete) / 100) * (100cqi - 60cqi)) -50%;
+  transition-property: height, width, margin;
+  transition-duration: var(--transition);
+  transition-timing-function: var(--ease);
+}
+
+.lt-liquid {
+  position: absolute;
+  top: 50%;
+  left: var(--border);
+  width: calc(60% - (2 * var(--border)));
+  height: calc(100% - (2 * var(--border)));
+  border-radius: 100px;
+  container-type: inline-size;
+  translate: calc((var(--complete) / 100) * (100cqi - 100% - (2 * var(--border)))) -50%;
+  transition: scale var(--transition) var(--ease);
+}
+
+.lt-shadow {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: 100px;
+  opacity: 0;
+  box-shadow: 1px -1px 2px hsl(0 0% 100% / .5) inset,
+    0 -1px 2px hsl(0 0% 100% / .5) inset,
+    -1px -1px 2px hsl(0 0% 100% / .5) inset,
+    1px 1px 2px hsl(0 0% 30% / .5) inset,
+    -4px 2px 5px -3px hsl(0 0% 30% / .25) inset,
+    -1px 1px 3px hsl(0 0% 30% / .25) inset,
+    -1px -1px 4px hsl(0 0% 60% / .15),
+    1px 1px 2px hsl(0 0% 30% / .15),
+    1px 1px 3px hsl(0 0% 30% / .15),
+    -1px -1px 1px hsl(0 0% 100% / .25) inset,
+    2px 3px 8px -3px hsl(0 0% 30% / .5);
+  transition: opacity var(--transition) var(--ease);
+}
+
+.lt-cover {
+  position: absolute;
+  inset: 0;
+  border-radius: 100px;
+  background: #fff;
+  transition: opacity var(--transition) var(--ease);
+}
+
+.lt-wrapper {
+  position: absolute;
+  inset: 0;
+  border-radius: 100px;
+  clip-path: inset(0 0 0 0 round 100px);
+  filter: blur(2px);
+  transition: filter var(--transition) var(--ease);
+}
+
+.lt-liquids {
+  position: absolute;
+  inset: 0;
+  border-radius: 100px;
+  overflow: hidden;
+  filter: url(#lt-goo);
+  transform: translate3d(0, 0, 0);
+}
+
+.lt-liquid-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: 100px;
+  box-shadow: inset 0 0 1px 2px var(--checked),
+    inset calc(((var(--complete) / 100) * 4px) - 2px) 0 1px 2px var(--checked);
+}
+
+/* The whole track, slid inside the knob's lens so the lens shows the part of the track under it. */
+.lt-track {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: calc(var(--width) * 1px);
+  height: calc(var(--height) * 1px);
+  border-radius: 100px;
+  background: var(--checked);
+  translate: calc((var(--complete) / 100) * (100cqi - 100% - (6 * var(--border)))) -50%;
+  transition-property: height, width, left;
+  transition-duration: var(--transition);
+  transition-timing-function: var(--ease);
+}
+
+.switch.on:not(:active, [data-active]) .lt-track {
+  left: calc(var(--border) * 6);
+}
+
+/* Pressed: the knob swells into a lens. */
+.switch:is(:active, [data-active]):not(:disabled) .lt-mask {
+  width: calc((60% - (2 * var(--border))) * 1.65);
+  height: calc((100% - (2 * var(--border))) * 1.65);
+  margin-left: calc((60% - (2 * var(--border))) * -.325);
+}
+
+.switch:is(:active, [data-active]):not(:disabled) .lt-liquid {
+  scale: 1.65;
+}
+
+.switch:is(:active, [data-active]):not(:disabled) .lt-wrapper {
+  filter: blur(0);
+}
+
+.switch:is(:active, [data-active]):not(:disabled) .lt-shadow {
+  opacity: 1;
+}
+
+.switch:is(:active, [data-active]):not(:disabled) .lt-cover {
+  opacity: 0;
+}
+
+.switch:is(:active, [data-active]):not(:disabled) .lt-track {
+  left: calc(var(--border) * 3);
+  height: calc((var(--height) * 1px) - (6 * var(--border)));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch * {
+    transition-duration: 0s !important;
+  }
 }
 
 /* Sound level: a thin track filled blue up to the knob (--fill is set from the value). */
