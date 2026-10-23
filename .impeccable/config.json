@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-10-23T14:06:25.578Z",
+        "reason": "Breeze's chosen UI face: bundled in assets/fonts and set as --font-ui; the user asked for Inter on the Preview label and URL this session; the flagged sign-in page predates the session"
+      }
+    ]
+  }
+}

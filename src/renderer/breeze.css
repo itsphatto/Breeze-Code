@@ -794,11 +794,12 @@ button {
 .pill {
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--bg-3);
   color: var(--text-2);
   border: 1px solid var(--line);
   white-space: nowrap;
+  transition: background-color .22s ease, color .22s ease, border-color .22s ease, box-shadow .22s ease;
 }
 
 .pill.ok {
@@ -1757,6 +1758,7 @@ svg.ico-svg:active {
 }
 
 .tab .x {
+  position: relative;
   display: grid;
   place-items: center;
   width: 18px;
@@ -1764,31 +1766,45 @@ svg.ico-svg:active {
   border-radius: 4px;
   font-size: 11px;
   opacity: .5;
+  transition: opacity .15s ease, background-color .15s ease;
 }
 
 .tab .x:hover {
   opacity: 1;
-  background: var(--bg-3);
 }
 
+/* Unsaved tabs show a dot that morphs into the close cross on hover. */
 .tab.dirty .x {
   opacity: .8;
 }
 
 .tab.dirty .x::before {
-  content: "●";
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: currentColor;
+  transition: transform .2s cubic-bezier(.16, 1, .3, 1), opacity .15s ease;
 }
 
 .tab.dirty .x .ico-svg {
-  display: none;
+  opacity: 0;
+  transform: scale(.4) rotate(-90deg);
+  transition: transform .22s cubic-bezier(.16, 1, .3, 1), opacity .15s ease;
 }
 
 .tab.dirty .x:hover::before {
-  content: none;
+  opacity: 0;
+  transform: scale(0);
 }
 
 .tab.dirty .x:hover .ico-svg {
-  display: block;
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
 }
 
 .tab .dot {
@@ -2340,12 +2356,10 @@ svg.ico-svg:active {
   color: #fdba74;
 }
 
+/* Matches the side bar headings: sentence case in Inter. */
 .preview-label {
   color: var(--text-3);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  font-weight: 600;
+  font: 600 11.5px var(--font-ui);
 }
 
 .preview-bar {
@@ -2368,7 +2382,7 @@ svg.ico-svg:active {
   border-radius: 6px;
   padding: 3px 10px;
   color: var(--text-2);
-  font: 12px var(--font-code);
+  font: 12px var(--font-ui);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3169,7 +3183,7 @@ body.resizing-h .term-body {
 .chip {
   border: 1px solid var(--line);
   background: var(--bg);
-  border-radius: 999px;
+  border-radius: 6px;
   padding: 4px 12px;
   font-size: 12px;
 }
@@ -3717,7 +3731,7 @@ body.vibing .ide {
   gap: 6px;
   padding: 4px 10px 4px 6px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 8px;
   background: none;
   color: var(--text-2);
   font-size: 12px;
@@ -5936,11 +5950,34 @@ body.vibing .box {
   background: rgba(122, 169, 255, .12);
 }
 
-.tabs .tab-split {
+.tabs .tab-split,
+.tabs .tab-list,
+.tabs .tab-run {
   position: sticky;
   right: 0;
+  z-index: 2;
+  flex-shrink: 0;
   background: var(--bg-1);
+  box-shadow: -4px 0 0 var(--bg-1); /* covers the gap to its left, so tabs scrolling underneath don't show through */
 }
+
+/* Tabs shrink (long names ellipsize) before the strip has to scroll; icon and × never shrink. */
+.tabs .tab {
+  flex: 0 1 auto;
+  min-width: 120px;
+  max-width: 240px;
+}
+
+.tabs .tab .nm {
+  flex: 1 1 auto;
+}
+
+.tabs .tab .ico,
+.tabs .tab .x {
+  flex-shrink: 0;
+}
+
+
 
 /* ================= No scrollbars anywhere (wheel, trackpad and keyboard scrolling still work) ================= */
 * {
@@ -6026,7 +6063,7 @@ body.vibing .box {
   max-width: 100%;
   padding: 4px 10px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--bg-2);
   color: var(--text-2);
   font-size: 11.5px;
@@ -6048,7 +6085,7 @@ body.vibing .box {
   align-self: flex-start;
   max-width: 100%;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--bg-2);
   color: var(--text-2);
   font-size: 12px;
@@ -6642,10 +6679,31 @@ body.vibing .box {
 }
 
 .tree-item.dragging {
-  opacity: .38;
+  opacity: .6;
   cursor: grabbing;
   transform: scale(0.985);
   background: var(--bg-3);
+}
+
+/* The chip under the pointer while a file or folder is dragged; built in dragstart, removed a frame later. */
+.tree-drag-ghost {
+  position: fixed;
+  top: -1000px;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-3);
+  color: var(--text);
+  font: 500 12.5px var(--font-ui);
+  white-space: nowrap;
+}
+
+.tree-drag-ghost .ico {
+  display: inline-flex;
 }
 
 /* Hold-to-delete branch button */
@@ -6730,7 +6788,7 @@ button.pill, .pill-btn {
   font-size: 12px;
   line-height: inherit;
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: 8px;
   transition: all .15s ease;
   user-select: none;
 }
@@ -6752,6 +6810,11 @@ button.pill:active, .pill-btn:active {
   border-color: #fff !important;
   box-shadow: 0 0 14px rgba(255, 255, 255, .35) !important;
   transform: none !important;
+}
+
+/* The settings "Active" badge eases into the same white hover as the agent pill. */
+.set-ctl .pill.blue {
+  transition: all .15s ease;
 }
 
 #agentPill:active,
@@ -7008,6 +7071,48 @@ body.layout-animating #previewPane {
   height: 13px;
   object-fit: contain;
   pointer-events: none;
+}
+
+#agentPill.agent-swap {
+  overflow: hidden;
+}
+
+#agentPill.agent-swap .pill-logo {
+  animation: agentLogoIn .34s cubic-bezier(.34, 1.56, .64, 1) both;
+}
+
+#agentPill.agent-swap > span {
+  animation: agentNameIn .26s cubic-bezier(.16, 1, .3, 1) .03s both;
+}
+
+@keyframes agentLogoIn {
+  from { opacity: 0; transform: scale(.4) rotate(-120deg); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes agentNameIn {
+  from { opacity: 0; transform: translateY(6px); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+/* Logos beside agent names in the switch menus. */
+.mi-with-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mi-logo {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.menu-item:disabled .mi-logo {
+  opacity: .4;
+  filter: grayscale(1);
 }
 
 .agent-tabs-bar {
@@ -7531,6 +7636,43 @@ body.layout-animating #previewPane {
   transform: scale(1.05);
 }
 
+/* Hovering the selected section still uses the full hover size, so its animation ends where it rests. */
+.set-nav button.on:hover svg {
+  transform: scale(1.14);
+}
+
+/* Each settings section's icon has its own hover motion, played while the icon is enlarged.
+   The gear turns with a transition so it spins back when the pointer leaves; Help and Discord just grow. */
+.set-nav button[data-set-tab="general"] svg { transition: transform .45s cubic-bezier(.3, .7, .2, 1), color .22s ease; }
+.set-nav button[data-set-tab="general"]:hover svg { transform: rotate(180deg) scale(1.14); }
+.set-nav button[data-set-tab="agents"]:hover svg { animation: navPromptType .5s ease-out both; }
+.set-nav button[data-set-tab="vibe"]:hover svg { animation: navPhoneBuzz .5s ease-in-out both; }
+.set-nav button[data-set-tab="help"] svg,
+.set-nav button[data-set-tab="discord"] .set-nav-img { transition: transform .22s cubic-bezier(.34, 1.56, .64, 1), color .22s ease, opacity .22s ease; }
+.set-nav button[data-set-tab="help"]:hover svg,
+.set-nav button[data-set-tab="discord"]:hover .set-nav-img { transform: scale(1.22); }
+
+/* Both keyframes grow to the hover size first and keep it, so there is no jump when they end. */
+@keyframes navPromptType {
+  0% { transform: translateX(0) scale(1); }
+  30% { transform: translateX(3px) scale(1.14); }
+  60% { transform: translateX(-1px) scale(1.14); }
+  100% { transform: translateX(0) scale(1.14); }
+}
+
+@keyframes navPhoneBuzz {
+  0% { transform: rotate(0) scale(1); }
+  20% { transform: rotate(-12deg) scale(1.14); }
+  40% { transform: rotate(10deg) scale(1.14); }
+  60% { transform: rotate(-7deg) scale(1.14); }
+  80% { transform: rotate(4deg) scale(1.14); }
+  100% { transform: rotate(0) scale(1.14); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set-nav button:hover svg { animation: none !important; }
+}
+
 .set-main {
   position: relative;
   overflow-y: auto;
@@ -7615,7 +7757,7 @@ body.layout-animating #previewPane {
   height: 20px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 6px; /* rounded rectangle like the other pills; the knob is a rounded square */
   background: var(--bg-3);
   cursor: pointer;
   transition: background .18s, border-color .18s;
@@ -7627,7 +7769,7 @@ body.layout-animating #previewPane {
   left: 2px;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 4px;
   background: var(--text-2);
   transition: transform .18s cubic-bezier(.2, .8, .2, 1), background .18s;
 }
@@ -7640,30 +7782,6 @@ body.layout-animating #previewPane {
 .switch.on span {
   transform: translateX(16px);
   background: #fff;
-}
-
-.switch.bounce-on span {
-  animation: switchBounceOn .55s cubic-bezier(.3, 0, .3, 1);
-}
-
-.switch.bounce-off span {
-  animation: switchBounceOff .55s cubic-bezier(.3, 0, .3, 1);
-}
-
-@keyframes switchBounceOn {
-  0% { transform: translateX(0) scaleX(1); }
-  30% { transform: translateX(15px) scaleX(1.3); }
-  55% { transform: translateX(17px) scaleX(.9); }
-  78% { transform: translateX(15.4px) scaleX(1.04); }
-  100% { transform: translateX(16px) scaleX(1); }
-}
-
-@keyframes switchBounceOff {
-  0% { transform: translateX(16px) scaleX(1); }
-  30% { transform: translateX(1px) scaleX(1.3); }
-  55% { transform: translateX(-1px) scaleX(.9); }
-  78% { transform: translateX(.6px) scaleX(1.04); }
-  100% { transform: translateX(0) scaleX(1); }
 }
 
 .switch:disabled {
@@ -7683,7 +7801,7 @@ body.layout-animating #previewPane {
   width: 160px;
   height: 4px;
   margin: 0;
-  border-radius: 999px;
+  border-radius: 1.5px;
   background: linear-gradient(to right, var(--blue) var(--fill, 50%), var(--bg-3) var(--fill, 50%));
   appearance: none;
   cursor: pointer;
@@ -7693,7 +7811,7 @@ body.layout-animating #previewPane {
   width: 14px;
   height: 14px;
   border: 0;
-  border-radius: 50%;
+  border-radius: 4px;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
   appearance: none;
@@ -7712,6 +7830,7 @@ body.layout-animating #previewPane {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
+  margin-bottom: 18px;
 }
 
 .set-agent {
@@ -7727,11 +7846,18 @@ body.layout-animating #previewPane {
   text-align: left;
   cursor: pointer;
   min-width: 0;
-  transition: border-color .18s ease, background .18s ease, transform .15s ease;
+  position: relative;
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease, transform .15s cubic-bezier(.2, .8, .2, 1);
 }
 
 .set-agent:hover:not(:disabled) {
-  border-color: var(--blue-soft);
+  background: var(--bg-3);
+  border-color: rgba(255, 255, 255, .18);
+  transform: translateY(-1px);
+}
+
+.set-agent:active:not(:disabled) {
+  transform: translateY(0) scale(.98);
 }
 
 .set-agent .nm {
@@ -7769,9 +7895,40 @@ body.layout-animating #previewPane {
   object-fit: contain;
 }
 
+/* Selected: a soft tint and a check badge rather than a solid fill; hovering it brightens the ring. */
 .set-agent.on {
-  border-color: var(--blue);
-  background: var(--blue-soft);
+  border-color: rgba(122, 169, 255, .45);
+  background: rgba(0, 94, 255, .08);
+  box-shadow: inset 0 0 0 1px rgba(122, 169, 255, .08);
+}
+
+.set-agent.on .set-sub {
+  color: #9dbcff;
+}
+
+.set-agent.on::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--bg-1);
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--blue) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / 9px no-repeat;
+  animation: agentCheckIn .25s cubic-bezier(.34, 1.56, .64, 1);
+}
+
+.set-agent.on:hover:not(:disabled) {
+  background: rgba(0, 94, 255, .13);
+  border-color: rgba(122, 169, 255, .75);
+  box-shadow: 0 0 0 3px rgba(0, 94, 255, .14);
+}
+
+@keyframes agentCheckIn {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 .set-agent:disabled {
@@ -7986,7 +8143,13 @@ body.layout-animating #previewPane {
   transition: background .15s, opacity .15s;
 }
 
-.sync-btn:hover { background: #1a6fff; }
+/* Hovering turns the refresh arrows once instead of changing the button colour. */
+.sync-btn { transition: background .15s, opacity .15s, transform .2s cubic-bezier(.34, 1.56, .64, 1); }
+.sync-btn:not(:disabled):hover { transform: scale(1.06); }
+.sync-btn:not(:disabled):active { transform: scale(.97); }
+.sync-btn svg { transition: transform .32s cubic-bezier(.3, .7, .2, 1); }
+.sync-btn:not(:disabled):hover svg { transform: rotate(360deg); }
+.sync-btn:active svg { transform: rotate(360deg) scale(.9); }
 .sync-btn:disabled { opacity: .7; cursor: default; }
 .sync-btn.busy svg { animation: spin .9s linear infinite; }
 
@@ -8001,4 +8164,201 @@ body.layout-animating #previewPane {
   border-radius: 50%;
   border: 2px solid var(--bg-1);
   background: var(--warn);
+}
+
+/* ---------- close buttons ---------- */
+/* Every × close button gets a soft red tint on hover, matching the file tab's close. */
+.tab .x:hover,
+.tab-close:hover,
+.agent-tab.closable .tab-close:hover,
+.term-tab .term-tab-close:hover,
+#findClose:hover,
+#splitClose:hover,
+.preview-bar [data-act="view.togglePreview"]:hover,
+.attachment-del:hover {
+  background: rgba(229, 72, 77, .2) !important;
+  color: #ff8a8e !important;
+  opacity: 1;
+}
+
+.attachment-del {
+  border-radius: 4px;
+  transition: color .15s ease, background-color .15s ease, transform .12s ease;
+}
+
+/* ---------- removing a remembered account ---------- */
+/* The × morphs into a "Remove?" pill on the first click; the second click removes. */
+.acct-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.acct-remove,
+.mi-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font: 500 11.5px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color .18s ease, color .18s ease, opacity .15s ease, padding .22s cubic-bezier(.2, .8, .2, 1);
+}
+
+.rm-x {
+  display: inline-grid;
+  place-items: center;
+  width: 10px;
+  transition: opacity .14s ease, transform .22s cubic-bezier(.2, .8, .2, 1), width .22s cubic-bezier(.2, .8, .2, 1);
+}
+
+.rm-label {
+  display: inline-block;
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: max-width .24s cubic-bezier(.2, .8, .2, 1), opacity .18s ease .05s, transform .24s cubic-bezier(.2, .8, .2, 1);
+}
+
+.acct-remove.armed,
+.mi-remove.armed {
+  padding: 0 9px;
+}
+
+.armed .rm-x {
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: rotate(90deg) scale(.4);
+}
+
+.armed .rm-label {
+  max-width: 80px;
+  opacity: 1;
+  transform: none;
+}
+
+.acct-remove:hover,
+.mi-remove:hover,
+.acct-remove.armed,
+.mi-remove.armed {
+  background: rgba(229, 72, 77, .2);
+  color: #ff8a8e;
+}
+
+/* In the menu the × sits over the right end of the row, so arming it never widens the card:
+   "Remove?" grows leftwards over the provider name, which fades out. */
+.menu-item.has-remove {
+  position: relative;
+}
+
+.menu-item.has-remove .key {
+  min-width: 52px;
+  padding-right: 26px;
+  text-align: right;
+  transition: opacity .15s ease;
+}
+
+.menu-item.has-remove .mi-remove {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  translate: 0 -50%;
+  opacity: 0;
+}
+
+.menu-item.has-remove:hover .mi-remove,
+.menu-item.has-remove.kb .mi-remove,
+.menu-item.has-remove .mi-remove.armed {
+  opacity: 1;
+}
+
+.menu-item.has-remove:has(.mi-remove.armed) .key {
+  opacity: 0;
+}
+
+/* On a blue (highlighted) row the red tint turns white, with red text, so it stays readable. */
+.menu-item:hover:not(:disabled) .mi-remove,
+.menu-item.kb .mi-remove {
+  color: rgba(255, 255, 255, .8);
+}
+
+.menu-item:hover:not(:disabled) .mi-remove:hover,
+.menu-item.kb .mi-remove:hover,
+.menu-item:hover:not(:disabled) .mi-remove.armed,
+.menu-item.kb .mi-remove.armed {
+  background: #fff;
+  color: #e5484d;
+}
+
+/* The account card is as wide as the name and "email · provider" line, so neither wraps. */
+.menu.account-menu {
+  width: max-content;
+  max-width: min(460px, calc(100vw - 16px));
+}
+
+.menu.account-menu .menu-label .who b,
+.menu.account-menu .menu-label .who small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Settings → Discord: the "Friends will see" preview spaced like Discord's own card. */
+.discord-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  line-height: 1.35;
+}
+
+.discord-preview .fs-12 {
+  margin-top: 2px;
+}
+
+.set-sub + .discord-note,
+.discord-preview + .discord-note {
+  margin-top: 10px;
+}
+
+/* The tab list button grows in and shrinks away as the tabs stop or start fitting. */
+.tabs .tab-list {
+  display: none;
+  opacity: 0;
+  transform: scale(.5) rotate(-90deg);
+  transition: opacity .18s ease, transform .24s cubic-bezier(.34, 1.56, .64, 1), display .24s allow-discrete;
+}
+
+.tabs .tab-list.shown {
+  display: inline-grid;
+  opacity: 1;
+  transform: none;
+}
+
+@starting-style {
+  .tabs .tab-list.shown {
+    opacity: 0;
+    transform: scale(.5) rotate(-90deg);
+  }
+}
+
+.tabs .tab-list.instant {
+  transition: none;
+}
+
+.tabs .tab-list.open svg {
+  transform: rotate(180deg);
+}
+
+.tabs .tab-list svg {
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1);
 }

@@ -1887,7 +1887,9 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     return new Promise((resolve, reject) => {
       let resultText = '';
       service.on('output', ev => {
-        if (ev.type === 'text' && ev.text) resultText = ev.text;
+        if (ev.type !== 'text' || !ev.text) return;
+        // A finished JSON turn carries the whole reply; plain-text output arrives one line at a time.
+        resultText = ev.raw ? ev.text : (resultText ? `${resultText}\n${ev.text}` : ev.text);
       });
       service.on('error', reject);
       service.on('exit', code => {
@@ -1913,7 +1915,7 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
     const body = {
       model: targetModel,
       messages: [
-        { role: 'system', content: 'You are an expert git commit message generator. Analyze the changes compared to the previous commit and wrap up everything comprehensively into a conventional commit message (e.g. feat: ..., fix: ..., chore: ...). Output ONLY the commit message itself without quotes, code fences, or explanations.' },
+        { role: 'system', content: 'You write detailed Git commit messages: a Conventional Commits subject line (at most 72 characters) followed by a blank line and one specific bullet per distinct change, naming the files, components or behaviour affected. Follow the format and rules in the request exactly. Output ONLY the commit message without quotes, code fences or explanations.' },
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
@@ -2052,6 +2054,16 @@ handle('auth:signOut', () => {
   if (active) setSecret(`token:${active}`, null);
   const rest = accounts.filter(a => accountId(a) !== active);
   const user = rest[0] || null;
+  saveState({ accounts: rest, user });
+  return user;
+});
+// Forgets one remembered account (and its saved sign-in). Removing the active one switches to the next.
+handle('auth:remove', (_e, id) => {
+  const { accounts, active } = accountsState();
+  if (!accounts.some(a => accountId(a) === id)) throw new Error('That account is no longer signed in');
+  setSecret(`token:${id}`, null);
+  const rest = accounts.filter(a => accountId(a) !== id);
+  const user = id === active ? rest[0] || null : loadState().user || null;
   saveState({ accounts: rest, user });
   return user;
 });
@@ -2438,48 +2450,22 @@ handle('vibe:hide', () => {
 /* ================= Discord Rich Presence ================= */
 // Talks to the Discord app on this computer. It needs the id of a Discord application (made once at
 // https://discord.com/developers/applications); the id is public, not a secret.
-const { DiscordRpc } = require('./discord');
+const { DiscordRpc, DiscordPresence } = require('./discord');
 const DEFAULT_DISCORD_CLIENT_ID = '';
 function discordClientId() {
   let file = {};
   try { file = JSON.parse(fs.readFileSync(path.join(ROOT, 'breeze.config.json'), 'utf8')); } catch { /* not configured */ }
   return String(process.env.BREEZE_DISCORD_CLIENT_ID || file.discord?.clientId || DEFAULT_DISCORD_CLIENT_ID).trim();
 }
-let discordRpc = null;
-let discordWanted = null;   // the activity the renderer asked for last
-let discordSentAt = 0;
-let discordTimer = null;
-const DISCORD_GAP = 4000;   // Discord allows about 5 updates per 20 seconds
-
-async function discordConnect() {
-  const id = discordClientId();
-  if (!/^\d{15,22}$/.test(id)) throw new Error('Discord presence needs a Discord application id. Add "discord": { "clientId": "…" } to breeze.config.json or set BREEZE_DISCORD_CLIENT_ID.');
-  if (discordRpc?.connected) return discordRpc.user;
-  discordRpc = new DiscordRpc(id);
-  discordRpc.onClose = () => { discordRpc = null; };
-  return discordRpc.connect();
-}
-function discordFlush() {
-  clearTimeout(discordTimer);
-  const wait = discordSentAt + DISCORD_GAP - Date.now();
-  if (wait > 0) { discordTimer = setTimeout(discordFlush, wait); return; }
-  if (!discordRpc?.connected || !discordWanted) return;
-  discordSentAt = Date.now();
-  discordRpc.setActivity({ ...discordWanted, largeImageKey: 'breeze', largeImageText: 'Breeze Code' }).catch(logError('discord'));
-}
+const discord = new DiscordPresence(() => new DiscordRpc(discordClientId()), { onError: logError('discord') });
 const discordText = (s, max = 120) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, max) : undefined);
 handle('discord:set', async (_e, a) => {
-  const user = await discordConnect();
-  discordWanted = { details: discordText(a?.details), state: discordText(a?.state), startTimestamp: Number(a?.start) || undefined };
-  discordFlush();
+  if (!/^\d{15,22}$/.test(discordClientId())) throw new Error('Discord presence needs a Discord application id. Add "discord": { "clientId": "…" } to breeze.config.json or set BREEZE_DISCORD_CLIENT_ID.');
+  const user = await discord.set({
+    details: discordText(a?.details), state: discordText(a?.state), startTimestamp: Number(a?.start) || undefined,
+    largeImageKey: 'breeze', largeImageText: 'Breeze Code',
+  });
   return { user: user?.global_name || user?.username || null };
 });
-handle('discord:clear', async () => {
-  discordWanted = null;
-  clearTimeout(discordTimer);
-  if (!discordRpc) return;
-  await discordRpc.setActivity(null).catch(logError('discord'));
-  discordRpc.close();
-  discordRpc = null;
-});
-app.on('before-quit', () => discordRpc?.close());
+handle('discord:clear', async () => { discord.clear(); });
+app.on('before-quit', () => discord.close());
