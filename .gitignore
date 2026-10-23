@@ -1,6 +1,30 @@
+# Dependencies
 node_modules/
+
+# Secrets and local config
 .env
+.env.*
+!.env.example
 breeze.config.json
-dist
+
+# Build output
+dist/
 src/renderer/breezescript.js
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor and OS
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tool-local state
+.impeccable/config.local.json
+**/.impeccable/config.local.json
+.claude/settings.local.json
+DemoVideo/

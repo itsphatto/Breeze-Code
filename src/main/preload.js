@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('breeze', {
     start: provider => invoke('auth:start', provider),
     cancel: () => invoke('auth:cancel'),
     signOut: () => invoke('auth:signOut'),
+    remove: id => invoke('auth:remove', id),
     onEvent: cb => listen('auth:event', cb),
   },
   sync: {

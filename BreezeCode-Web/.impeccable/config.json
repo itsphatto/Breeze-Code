@@ -17,5 +17,6 @@
         "reason": "Breeze IDE app design system uses Inter"
       }
     ]
-  }
+  },
+  "buildPath": "comp"
 }

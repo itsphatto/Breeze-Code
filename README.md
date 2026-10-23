@@ -2,16 +2,30 @@
 
 <div align="center">
 
+<img src="assets/brand/Icon.png" height="96" alt="">
+<br>
 <img src="assets/brand/BreezeCode.png" height="44" alt="Breeze Code">
 
-**A lightweight desktop development environment where your AI agents plan, build and show their work, right next to your code.**
+<br>
 
-![Version](https://img.shields.io/badge/version-0.4.8-005EFF?style=flat-square)
-![Platform](https://img.shields.io/badge/platform-Windows-1c1c21?style=flat-square)
+**Your AI agents plan, build and show their work, right next to your code.**
+<br>
+A lightweight desktop IDE for Windows. Free and open source.
+
+<br>
+
+[**⬇ Download for Windows**](https://github.com/itsphatto/BreezeCode/releases/latest)  ·  [Website](https://usebreezecode.itsphatto.site)  ·  [Source](https://github.com/itsphatto/BreezeCode)  ·  [Report a bug](https://github.com/itsphatto/BreezeCode/issues)
+
+<br>
+
+![Version](https://img.shields.io/badge/version-0.5.0-005EFF?style=for-the-badge)
+![Platform](https://img.shields.io/badge/platform-Windows-1c1c21?style=for-the-badge)
+![License](https://img.shields.io/badge/license-MIT-1c1c21?style=for-the-badge)
+<br>
 ![Electron](https://img.shields.io/badge/Electron-44-1c1c21?style=flat-square&logo=electron&logoColor=9feaf9)
 ![TypeScript](https://img.shields.io/badge/TypeScript-7-1c1c21?style=flat-square&logo=typescript&logoColor=3178c6)
 
-[Features](#features) · [Getting started](#getting-started) · [Configuration](#configuration) · [Building the installer](#building-the-installer) · [Project layout](#project-layout)
+<sub>[Why](#why-breeze-code) · [Features](#features) · [Getting started](#getting-started) · [Configuration](#configuration) · [Installer](#building-the-installer) · [Layout](#project-layout)</sub>
 
 <br>
 

@@ -3,7 +3,7 @@
    Opened in a plain browser, a small in-memory demo project stands in for the disk.
    Agent conversations, checkpoints and collaboration are still simulated. */
 
-/* ================= Types ================= */
+/* ================= Types ================= *
 type TimeoutId = ReturnType<typeof setTimeout>;
 type IntervalId = ReturnType<typeof setInterval>;
 type AgentKey = 'assistant' | 'planner' | 'builder';
@@ -36,12 +36,6 @@ interface RootInfo { root: string; name: string; }
 interface SearchHit { path: string; line: number; col: number; text: string; }
 interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
 interface Accounts { accounts: User[]; active: string | null; }
-// Workspace sync (main.js + sync.js). A failure comes back as { error, code } instead of throwing.
-interface SyncFail { error: string; code: string | null; }
-interface CloudWorkspace { id: string; name: string; rev: number; device: string; deviceNo?: number; updatedAt: string; }
-interface SyncStatus { remote: CloudWorkspace | null; newer: boolean; workspaces: CloudWorkspace[]; linked: boolean; device: string; }
-interface SyncSummary { id: string; rev: number; uploaded: number; downloaded: number; removed: number; conflicts: string[]; backedUp: string[]; skipped: number; }
-interface SharedSettings { updatedAt: string; values: Record<string, unknown>; }
 interface Completion { text: string; dir: boolean; }
 interface DetectedTool { id: string; name: string; found: boolean; version: string | null; optional?: boolean; hint?: string | null; cmd?: string | null; url?: string | null; }
 interface Detection { agents: DetectedAgent[]; tools: DetectedTool[]; platform: string; demo?: boolean; }
@@ -120,12 +114,6 @@ interface BreezeApi {
     cancel(): Promise<void>;
     signOut(): Promise<User | null>;
     onEvent(cb: (ev: AuthEvent) => void): () => void;
-  };
-  sync: {
-    status(): Promise<SyncStatus | SyncFail>;
-    run(mode: 'sync' | 'pull'): Promise<SyncSummary | SyncFail>;
-    clone(id: string): Promise<{ info: RootInfo; summary: SyncSummary } | null | SyncFail>;
-    settings(local: SharedSettings | null): Promise<{ settings: SharedSettings | null; pulled: boolean } | SyncFail>;
   };
   // Social feeds for Vibe Mode. The desktop app signs in through its own browser window and lays the feed over #vibeFrame.
   vibe: {
@@ -231,8 +219,7 @@ const sfx = (() => {
     osc.stop(t0 + dur + 0.02);
   }
 
-  const secureRandom = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] / 4294967296; };
-  const jitter = (n: number) => 1 + (secureRandom() - 0.5) * n;
+  const jitter = (n: number) => 1 + (Math.random() - 0.5) * n;
   const SOUNDS = {
     click: () => tone(1500 * jitter(0.06), 0.05, { to: 900, vol: 0.09 }),
     hover: () => tone(2400, 0.025, { vol: 0.025 }),
@@ -428,7 +415,7 @@ function demoApi(): BreezeApi {
       },
 
 
-      openFolder() { store.set('breeze.demoOpen', true); return Promise.resolve(info); },
+      async openFolder() { store.set('breeze.demoOpen', true); return info; },
       // Browser preview: a new, empty in-memory project.
       async createFolder() {
         files.clear(); dirs.clear(); binary.clear();
@@ -439,10 +426,10 @@ function demoApi(): BreezeApi {
 
 
       },
-      restore() { return Promise.resolve(store.get('breeze.demoOpen', false) ? info : null); },
-      closeFolder() { store.del('breeze.demoOpen'); return Promise.resolve(); },
-      recent() { return Promise.resolve([{ path: info.root, name: info.name }]); },
-      openRecent() { store.set('breeze.demoOpen', true); return Promise.resolve(info); },
+      async restore() { return store.get('breeze.demoOpen', false) ? info : null; },
+      async closeFolder() { store.del('breeze.demoOpen'); },
+      async recent() { return [{ path: info.root, name: info.name }]; },
+      async openRecent() { store.set('breeze.demoOpen', true); return info; },
       async readDir(rel) {
         needOpen();
         const seen = new Map<string, boolean>();
@@ -456,7 +443,7 @@ function demoApi(): BreezeApi {
         if (binary.has(rel)) return IMAGE_FILE.test(rel) ? { image: true, size: 48213 } : { binary: true, size: 48213 };
         return { text: files.get(rel), size: (files.get(rel) ?? '').length };
       },
-      writeFile(rel, text) { files.set(rel, text); return Promise.resolve(); },
+      async writeFile(rel, text) { files.set(rel, text); },
       async createFile(rel) {
         if (exists(rel)) throw new Error('A file with that name already exists');
         files.set(rel, '');
@@ -480,7 +467,7 @@ function demoApi(): BreezeApi {
         const gone = [...files.keys(), ...dirs, ...binary].filter(k => inside(k, rel));
         for (const k of gone) { files.delete(k); dirs.delete(k); binary.delete(k); }
       },
-      listFiles() { return Promise.resolve([...files.keys()]); },
+      async listFiles() { return [...files.keys()]; },
       async search(query, matchCase) {
         const out: SearchHit[] = [];
         const needle = matchCase ? query : query.toLowerCase();
@@ -498,7 +485,7 @@ function demoApi(): BreezeApi {
       async previewUrl() { return ''; },
       onChange() { return () => { }; },
     },
-    lint: { check() { return Promise.resolve(null); } },
+    lint: { async check() { return null; } },
     term: {
       async cwd() { return 'coffee-shop-landing'; },
       async run() { return { error: 'The terminal runs commands only in the Breeze desktop app (npm start).' }; },
@@ -511,7 +498,7 @@ function demoApi(): BreezeApi {
       onData() { return () => { }; },
       onExit() { return () => { }; },
     },
-    run: { file() { return Promise.resolve({ error: 'Programs run only in the Breeze desktop app (npm start).' }); } },
+    run: { async file() { return { error: 'Programs run only in the Breeze desktop app (npm start).' }; } },
     sys: {
       async detect() {
         await wait(500);
@@ -654,13 +641,6 @@ function demoApi(): BreezeApi {
       async set() { return { user: null }; },
       async clear() { /* nothing to clear in the browser */ },
     },
-    // Sync needs an account's cloud, which only the desktop app reaches.
-    sync: {
-      async status() { return { error: 'Workspace sync works in the desktop app.', code: 'demo' }; },
-      async run() { return { error: 'Workspace sync works in the desktop app.', code: 'demo' }; },
-      async clone() { return { error: 'Workspace sync works in the desktop app.', code: 'demo' }; },
-      async settings() { return { error: 'Workspace sync works in the desktop app.', code: 'demo' }; },
-    },
     win: {
       async reload() { location.reload(); },
       async toggleDevTools() { toast('Developer tools are available in the desktop app'); },
@@ -736,7 +716,6 @@ const LINE_ICONS: Record<string, IconNode> = {
   copy: [['rect', { x: 8, y: 8, width: 14, height: 14, rx: 2 }], ['path', { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' }]],
   download: [['path', { d: 'M12 15V3' }], ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['path', { d: 'm7 10 5 5 5-5' }]],
   circleDot: [['circle', { cx: 12, cy: 12, r: 9 }], ['circle', { cx: 12, cy: 12, r: 3, fill: 'currentColor' }]],
-  phone: [['rect', { x: 5, y: 2, width: 14, height: 20, rx: 2 }], ['path', { d: 'M12 18h.01' }]],
   trash: [['path', { d: 'M3 6h18' }], ['path', { d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' }], ['path', { d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' }], ['path', { d: 'M10 11v6' }], ['path', { d: 'M14 11v6' }]],
   folder: [['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }]],
 };
@@ -872,7 +851,7 @@ function openAccountMenu(anchor: HTMLElement): void {
   anchor.classList.add('open');
   const r = anchor.getBoundingClientRect();
   const items: MenuItem[] = user
-    ? [{ header: user }, { label: 'Accounts', sub: accountItems }, { sep: true }, ...syncMenuItems(), { sep: true }, { label: 'Sign Out', run: () => background(signOut()) }]
+    ? [{ header: user }, { label: 'Accounts', sub: accountItems }, { sep: true }, { label: 'Sign Out', run: () => background(signOut()) }]
     : [{ label: 'Sign in', run: addAccount }, ...(accounts.accounts.length ? [{ label: 'Accounts', sub: accountItems }] : [])];
   popupMenu(r.right, r.bottom + 6, items, () => anchor.classList.remove('open'), anchor);
   const m = $('#menuRoot .menu');
@@ -954,166 +933,10 @@ api.auth.onEvent(ev => {
     signinView(false);
     background(refreshAccounts());
     toast(`Signed in as ${ev.user.name}`);
-    background(afterSignIn());
     if (signinRoot === onboardSignin) { if (!appState.onboarded && step === STEP.signIn) goStep(STEP.agent); }
     else closeModal();
   } else if (ev.t === 'error') signinError(ev.text ?? 'Sign-in failed');
 });
-
-/* ----- Workspace sync (one account, many computers) ----- */
-// GitHub accounts sync through a private breeze-sync repo, Google accounts through Drive's hidden app folder.
-const isSyncFail = (r: unknown): r is SyncFail => !!r && typeof r === 'object' && 'error' in r;
-// Unwraps a sync result. A failure becomes a toast, or a sign-in prompt when the account needs more access.
-function syncOk<T>(r: T | SyncFail, quiet = false): T | null {
-  if (!isSyncFail(r)) return r;
-  if (quiet) return null;
-  if (r.code === 'reauth') {
-    openModal(`<h3>Sign in again to sync</h3><p class="sub">${esc(r.error)} Breeze needs one more permission: a private breeze-sync repo on GitHub, or Breeze's own hidden folder in Google Drive.</p>
-      <div class="row end"><button class="btn" data-close>Not now</button><button class="btn btn-primary" id="syncReauth">Sign in</button></div>`, m => {
-      $('#syncReauth', m).onclick = () => { closeModal(); addAccount(); };
-    });
-  } else toast(r.code === 'signed-out' ? 'Sign in to sync your workspaces' : r.error);
-  return null;
-}
-function syncSummaryText(s: SyncSummary): string {
-  const parts = [
-    s.downloaded && `${s.downloaded} down`, s.uploaded && `${s.uploaded} up`, s.removed && `${s.removed} removed`,
-    s.conflicts.length && `${s.conflicts.length} conflict${s.conflicts.length > 1 ? 's' : ''} kept side by side`,
-  ].filter(Boolean);
-  return parts.length ? `Synced: ${parts.join(', ')}` : 'Already in sync';
-}
-
-// App settings that follow the account. A change is stamped when first seen, so the newer side wins.
-const SYNCED_KEYS = ['breeze.sound', 'breeze.volume', 'breeze.effort', 'breeze.layout'];
-const SYNCED_APP: (keyof AppState)[] = ['agent', 'mode', 'discord', 'discordDetails'];
-function settingValues(): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
-  for (const k of SYNCED_KEYS) { const v = store.get<unknown>(k, undefined); if (v !== undefined) values[k] = v; }
-  for (const k of SYNCED_APP) values[`app.${k}`] = appState[k];
-  return values;
-}
-function sharedSettings(): SharedSettings {
-  const values = settingValues();
-  const print = JSON.stringify(values);
-  const last = store.get<{ print: string; updatedAt: string }>('breeze.settingsSync', { print: '', updatedAt: '' });
-  const updatedAt = last.print === print && last.updatedAt ? last.updatedAt : new Date().toISOString();
-  store.set('breeze.settingsSync', { print, updatedAt });
-  return { updatedAt, values };
-}
-// Settings from another computer are applied and the window reloads so every part picks them up.
-async function syncSettings(): Promise<void> {
-  const mine = sharedSettings();
-  const r = syncOk(await api.sync.settings(mine), true);
-  if (!r?.pulled || !r.settings || JSON.stringify(r.settings.values) === JSON.stringify(mine.values)) return;
-  for (const [k, v] of Object.entries(r.settings.values)) {
-    const key = k.slice(4) as keyof AppState;
-    if (k.startsWith('app.') && SYNCED_APP.includes(key)) (appState as unknown as Record<string, unknown>)[key] = v;
-    else if (SYNCED_KEYS.includes(k)) store.set(k, v);
-  }
-  saveApp();
-  store.set('breeze.settingsSync', { print: JSON.stringify(settingValues()), updatedAt: r.settings.updatedAt });
-  await api.win.reload();
-}
-
-let syncing = false;
-async function runSync(mode: 'sync' | 'pull'): Promise<void> {
-  if (!rootInfo) { toast('Open a folder to sync it'); return; }
-  if (syncing) return;
-  syncing = true;
-  setSyncBusy(true);
-  toast(mode === 'pull' ? 'Getting the latest from the cloud…' : 'Syncing…');
-  try {
-    const s = syncOk(await api.sync.run(mode));
-    if (!s) return;
-    syncSeenRev = s.rev;
-    $('#syncBtn').classList.remove('has-update');
-    const backed = s.backedUp.length ? ` · ${s.backedUp.length} local edit${s.backedUp.length > 1 ? 's' : ''} backed up` : '';
-    toast(syncSummaryText(s) + backed);
-    if (s.downloaded || s.removed || s.conflicts.length) await refreshTree();
-    void refreshGit();
-  } finally { syncing = false; setSyncBusy(false); }
-  await syncSettings();
-}
-// The blue Sync button in the title bar: signs in, picks a cloud workspace, or syncs the open folder.
-function setSyncBusy(busy: boolean): void {
-  const b = $<HTMLButtonElement>('#syncBtn');
-  b.classList.toggle('busy', busy);
-  b.disabled = busy;
-  $('span', b).textContent = busy ? 'Syncing' : 'Sync';
-}
-$('#syncBtn').onclick = () => {
-  if (!user) addAccount();
-  else if (!rootInfo) background(openCloudWorkspaces());
-  else background(runSync('sync'));
-};
-function confirmPull(): void {
-  openModal(`<h3>Replace with the cloud version?</h3><p class="sub">${esc(rootInfo?.name ?? 'This folder')} will match the newest version synced from your other computer. Edits made here and not synced yet are backed up first, and files the cloud has never seen stay.</p>
-    <div class="row end"><button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pullOk">Get latest</button></div>`, m => {
-    $('#pullOk', m).onclick = () => { closeModal(); background(runSync('pull')); };
-  });
-}
-// The account's cloud workspaces; picking one downloads it to this computer and opens it.
-async function openCloudWorkspaces(auto = false): Promise<void> {
-  const st = syncOk(await api.sync.status(), auto);
-  if (!st || (auto && !st.workspaces.length)) return;
-  // Your picture on every row, badged with the number of the computer that synced it.
-  const face = user?.avatar ? `<img src="${escAttr(user.avatar)}" alt="">` : esc(initialsOf(user?.name ?? '?'));
-  const rows = st.workspaces.map(w => {
-    const here = w.device === st.device;
-    const pc = w.deviceNo ? `PC ${w.deviceNo}` : 'PC';
-    return `<button class="cloud-ws" data-ws="${escAttr(w.id)}" title="Download ${escAttr(w.name)} to this computer">
-      <span class="cloud-ws-face">${face}<span class="cloud-ws-pc" title="${escAttr(`${pc} · ${w.device}`)}">${w.deviceNo ?? '?'}</span></span>
-      <span class="cloud-ws-text"><span class="cloud-ws-name"><span class="cloud-ws-title">${esc(w.name)}</span>${here ? '<span class="cloud-ws-here">This PC</span>' : ''}</span>
-        <span class="cloud-ws-meta">${esc(pc)} · ${esc(w.device)} · ${esc(timeAgo(Date.parse(w.updatedAt)))}</span></span>
-      <span class="cloud-ws-go">${svgIcon('download', 15)}</span></button>`;
-  }).join('');
-  const empty = '<div class="cloud-ws-empty">Nothing synced yet. Open a folder and choose Sync Workspace from your picture to put it in the cloud.</div>';
-  openModal(`<h3>${auto ? 'Pick up where you left off' : 'Your cloud workspaces'}</h3>
-    ${st.workspaces.length ? '<p class="sub">Synced from your computers. Pick one to download it here.</p>' : ''}
-    <div class="cloud-ws-list">${rows || empty}</div>
-    <div class="row end spaced"><button class="btn" data-close>${auto ? 'Later' : 'Close'}</button></div>`, m => {
-    $$<HTMLElement>('[data-ws]', m).forEach(b => b.onclick = () => background((async () => {
-      closeModal();
-      toast('Downloading workspace…');
-      const r = syncOk(await api.sync.clone(b.dataset.ws ?? ''));
-      if (!r) return;
-      await loadWorkspace(r.info);
-      syncSeenRev = r.summary.rev;
-      toast(`${r.info.name}: ${r.summary.downloaded} files downloaded`);
-    })()));
-  });
-}
-// A fresh install that signs in gets the account's settings, then its workspaces if no folder is open.
-async function afterSignIn(): Promise<void> {
-  if (!isDesktop) return;
-  await syncSettings();
-  if (!rootInfo) await openCloudWorkspaces(true);
-  else { syncCheckedAt = 0; await checkCloudNewer(); }
-}
-// When another computer has synced a newer version of the open folder, offer to catch up, once per version.
-let syncSeenRev = 0, syncCheckedAt = 0;
-async function checkCloudNewer(): Promise<void> {
-  if (!user || !rootInfo || !isDesktop || syncing || Date.now() - syncCheckedAt < 60_000) return;
-  syncCheckedAt = Date.now();
-  const st = syncOk(await api.sync.status(), true);
-  $('#syncBtn').classList.toggle('has-update', !!st?.newer);
-  if (!st?.newer || !st.remote || st.remote.rev <= syncSeenRev || $('#modalRoot .scrim:not(.closing)')) return;
-  syncSeenRev = st.remote.rev;
-  const w = st.remote;
-  openModal(`<h3>Newer version from ${esc(w.device)}</h3><p class="sub">${esc(w.name)} was synced from ${esc(w.device)} ${esc(timeAgo(Date.parse(w.updatedAt)))}. Sync to bring this computer up to date; edits made here are kept.</p>
-    <div class="row end"><button class="btn" data-close>Later</button><button class="btn" id="cloudPull">Replace with theirs</button><button class="btn btn-primary" id="cloudSync">Sync now</button></div>`, m => {
-    $('#cloudSync', m).onclick = () => { closeModal(); background(runSync('sync')); };
-    $('#cloudPull', m).onclick = () => { closeModal(); confirmPull(); };
-  });
-}
-function syncMenuItems(): MenuItem[] {
-  return [
-    { label: 'Sync Workspace', act: 'sync.run', enabled: () => !!rootInfo },
-    { label: 'Get Latest from Cloud…', act: 'sync.pull', enabled: () => !!rootInfo },
-    { label: 'Open Cloud Workspace…', act: 'sync.open' },
-  ];
-}
-window.addEventListener('focus', () => background(checkCloudNewer()));
 
 /* ----- Vibe Mode feeds (the feed picker) ----- */
 // Sites the user connected live in appState.vibeSites; signedIn says which of them have a session cookie.
@@ -1521,8 +1344,7 @@ function agentPillMenuItems(): MenuItem[] {
 function renderAgentPill(): void {
   const a = selectedAgent();
   const pill = $('#agentPill');
-  const logo = a && BRAND_ICONS[a.id] ? `<img class="pill-logo" src="../../assets/icons/${BRAND_ICONS[a.id]}" alt="" draggable="false">` : '';
-  pill.innerHTML = `${logo}<span>${esc(a ? a.name : 'Choose an agent')}</span>`;
+  pill.textContent = a ? a.name : 'Choose an agent';
   pill.removeAttribute('title');
   delete pill.dataset.tooltip;
   const model = a?.api && a.version ? ' · ' + a.version : '';
@@ -1703,7 +1525,7 @@ const LEXERS: Record<string, RegExp> = {
   // Rust: strings may span lines, r#"raw"# strings, 'c' chars but 'lifetimes, #[attributes] and macro! calls.
   rs: lexer([
     ['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['kw', /#!?\[[^\]\n]*\]?/],
-    ['str', either(/b?r#"[\s\S]*?(?:"#|$)/, /b?r"[^"]*"?/, /b?"(?:\\[\s\S]|[^"\\])*"?/, /b?'(?:\\[\s\S]|[^\\'\n])'/)],
+    ['str', either(/b?r#"[\s\S]*?(?:"#|$)/, /b?r"[^"]*"?/, /b?"(?:\\[\s\S]|[^"\\])*"?/, /b?'(?:\\(?:x[\da-fA-F]{2}|u\{[\da-fA-F]{1,6}\}|.)|[^\\'\n])'/)],
     ['attr', /'[A-Za-z_]\w*/],
     ['num', either(/\b0[xob][\da-fA-F_]+(?:[iu](?:8|16|32|64|128|size))?\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?(?:[iu](?:8|16|32|64|128|size)|f32|f64)?\b/)],
     ['kw', keywords(RS_KW)], ['prop', either(/\b[A-Za-z_]\w*!/, CALL)],
@@ -1749,7 +1571,7 @@ function markSelectors(toks: Tok[]): Tok[] {
 }
 // HTML with its <style> and <script> blocks coloured as CSS and JavaScript (TS/JSX and JSON scripts too).
 // Comments come first in the pattern, so a commented-out <script> stays a comment.
-const EMBEDDED = /<!--[\s\S]*?(?:-->|$)|(<(style|script)\b[^>]*>)([\s\S]*?)(?=<\/\2\s*>|$)/gi;
+const EMBEDDED = /<!--[\s\S]*?(?:-->|$)|(<(style|script)\b(?:"[^"]*"|'[^']*'|[^>"'])*>)([\s\S]*?)(?=<\/\2\s*>|$)/gi;
 function htmlToks(text: string): Tok[] {
   const out: Tok[] = [];
   let last = 0;
@@ -2195,7 +2017,7 @@ function lintPy(text: string): RawDiag[] {
 }
 // Rust strings may span lines and hold raw text (r#"…"#), and a lone ' starts a lifetime rather than a string, so
 // strings and chars are blanked first (comments stay for the scanner).
-const RS_TEXT = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|b?r(#?)"[\s\S]*?(?:"\1|$)|b?"(?:\\[\s\S]|[^"\\])*(?:"|$)|b?'(?:\\[\s\S]|[^\\'\n])'/g;
+const RS_TEXT = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|b?r(#?)"[\s\S]*?(?:"\1|$)|b?"(?:\\[\s\S]|[^"\\])*(?:"|$)|b?'(?:\\(?:x[\da-fA-F]{2}|u\{[\da-fA-F]{1,6}\}|.)|[^\\'\n])'/g;
 function lintRust(text: string): RawDiag[] {
   const diags: RawDiag[] = [];
   const blanked = text.replace(RS_TEXT, (m: string, hash: string | undefined, at: number) => {
@@ -2477,7 +2299,7 @@ function sampleBorder(W: number, H: number, R: number, count: number): BorderSam
   const samples: BorderSample[] = [];
   for (let i = 0; i < count; i++) {
     const s = (i / count) * P;
-    let bx: number, by: number, nx: number, ny: number;
+    let bx = 0, by = 0, nx = 0, ny = 0;
 
     if (r <= 0.5) {
       if (s <= W) {
@@ -2561,24 +2383,22 @@ function sampleBorder(W: number, H: number, R: number, count: number): BorderSam
   return { P, samples };
 }
 
-interface BlurFadeParams {
-  ctx: CanvasRenderingContext2D;
-  samples: BorderSample[];
-  P: number;
-  energies: Float32Array;
-  gx: number;
-  gy: number;
-  cfg: WaveConfig;
-  W: number;
-  H: number;
-}
-function drawFluidBlurFade(p: BlurFadeParams): void {
-  const { ctx, samples, P, energies, gx, gy, cfg, W, H } = p;
+function drawFluidBlurFade(
+  ctx: CanvasRenderingContext2D,
+  samples: BorderSample[],
+  P: number,
+  energies: Float32Array,
+  gx: number,
+  gy: number,
+  cfg: WaveConfig,
+  W: number,
+  H: number
+): void {
   const N = samples.length;
   if (N < 4 || P <= 0) return;
 
   const t = cfg.t * cfg.speed;
-  const maxSafeDepth = Math.max(24, Math.min(150, Math.min(W, H) * 0.45));
+  const maxSafeDepth = Math.max(30, Math.min(220, Math.min(W, H) * 0.65));
 
   const [m1, m2, m3, m4] = cfg.harmonics;
   const k1 = (2 * Math.PI * m1) / P;
@@ -2673,25 +2493,22 @@ function getDistToRoundedBorder(x: number, y: number, w: number, h: number, r: n
   return Math.min(x, w - x, y, h - y);
 }
 
-interface DotGridParams {
-  ctx: CanvasRenderingContext2D;
-  w: number;
-  h: number;
-  rawR: number;
-  gx: number;
-  gy: number;
-  t: number;
-  maxEnergy: number;
-}
-function drawFluidDotGrid(params: DotGridParams): void {
-  const { ctx, w, h, rawR, gx, gy, t, maxEnergy } = params;
+function drawFluidDotGrid(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  rawR: number,
+  gx: number,
+  gy: number,
+  t: number,
+  maxEnergy: number
+): void {
   if (maxEnergy <= 0.015) return;
 
-  const influenceRadius = 580;
-  const influenceRadiusSq = influenceRadius * influenceRadius;
-  // High-performance stippled dot matrix field with silky smooth 60fps pacing
-  const stepX = 5.0;
-  const stepY = 4.2;
+  const influenceRadius = 680;
+  // High-density stippled dot matrix field with elevated dot count (~7.5x more dots)
+  const stepX = 4.2;
+  const stepY = 3.6;
 
   // Active bounding box around glow focal point (gx, gy)
   const minX = Math.max(0, Math.floor((gx - influenceRadius) / stepX) * stepX);
@@ -2725,11 +2542,9 @@ function drawFluidDotGrid(params: DotGridParams): void {
       const dotX = col * stepX + rowOffset;
       if (dotX < 0 || dotX > w) continue;
 
-      // Distance to glow center (fast squared distance check first)
-      const dx = dotX - gx, dy = dotY - gy;
-      const distSq = dx * dx + dy * dy;
-      if (distSq > influenceRadiusSq) continue;
-      const distToGlow = Math.sqrt(distSq);
+      // Distance to glow center
+      const distToGlow = Math.hypot(dotX - gx, dotY - gy);
+      if (distToGlow > influenceRadius) continue;
 
       const glowP = Math.max(0, 1 - distToGlow / influenceRadius);
       const energy = glowP * glowP * (3 - 2 * glowP) * maxEnergy;
@@ -2743,16 +2558,10 @@ function drawFluidDotGrid(params: DotGridParams): void {
       // so wave crests stand straight out from the border instead of slanting diagonally
       const dTop = dotY, dRight = w - dotX, dBottom = h - dotY, dLeft = dotX;
       const dMin = Math.min(dTop, dRight, dBottom, dLeft);
-      let u: number;
-      if (Math.abs(dMin - dTop) < 0.001) {
-        u = dotX;
-      } else if (Math.abs(dMin - dRight) < 0.001) {
-        u = w + dotY;
-      } else if (Math.abs(dMin - dBottom) < 0.001) {
-        u = w + h + (w - dotX);
-      } else {
-        u = 2 * w + h + (h - dotY);
-      }
+      const u = dMin === dTop ? dotX
+        : dMin === dRight ? w + dotY
+        : dMin === dBottom ? w + h + (w - dotX)
+        : 2 * w + h + (h - dotY);
 
       // Multi-harmonic undulating wave terrain for organic mountain crests and valleys
       const wave1 = Math.sin(k1 * u + t * 1.6);
@@ -2762,8 +2571,8 @@ function drawFluidDotGrid(params: DotGridParams): void {
       const crestFactor = Math.max(0.15, 0.52 + 0.28 * wave1 + 0.16 * wave2 + 0.10 * wave3);
 
       // Increased wave height and reach matching the expanded blur fade depth
-      const maxAllowedDepth = Math.max(24, Math.min(135, Math.min(w, h) * 0.4));
-      const targetReach = (18 + 78 * crestFactor) * energy;
+      const maxAllowedDepth = Math.max(30, Math.min(190, Math.min(w, h) * 0.55));
+      const targetReach = (24 + 110 * crestFactor) * energy;
       const maxWaveDepth = Math.min(maxAllowedDepth, targetReach);
 
       if (distToBorder > maxWaveDepth) continue;
@@ -2793,7 +2602,7 @@ function drawFluidDotGrid(params: DotGridParams): void {
       // Multi-blue gradients with Google Gemini chromatic wave crest tips
       const chromaticShift = 0.5 + 0.5 * Math.sin(kc * u + t * 0.9);
 
-      let r: number, g: number, b: number;
+      let r = 56, g = 189, b = 248;
       if (depthRatio < 0.38) {
         // Deep Royal Sapphire into Vivid Azure
         const f = depthRatio / 0.38;
@@ -2861,20 +2670,16 @@ function renderFluidFrame(state: FluidCanvasState): void {
   state.curY += (state.targetY - state.curY) * ease;
   state.time += 0.009;
 
-  // Read container border radius with frame-level caching to prevent forced reflows
-  const stateAny = state as any;
-  let rawR = stateAny.cachedR;
-  if (rawR === undefined || canvas.width !== pw || canvas.height !== ph) {
-    const compStyle = window.getComputedStyle(container);
-    rawR = stateAny.cachedR = Number.parseFloat(compStyle.borderRadius) || 0;
-  }
+  // Read actual container border radius
+  const compStyle = window.getComputedStyle(container);
+  const rawR = parseFloat(compStyle.borderRadius) || 0;
 
   const { P, samples } = sampleBorder(w, h, rawR, 180);
   const N = samples.length;
   if (N < 4 || P <= 0) return;
 
   // Initialize or resize energies Float32Array if needed
-  if (state.energies?.length !== N) {
+  if (!state.energies || state.energies.length !== N) {
     state.energies = new Float32Array(N);
   }
 
@@ -2908,7 +2713,7 @@ function renderFluidFrame(state: FluidCanvasState): void {
   // - Active Decay: graceful wave dissipation when moving between sides (~500ms)
   // - Inactive Decay: fast fade-out when dropped or pointer leaves
   // Increased influence radius for wider perimeter coverage
-  const influenceRadius = 580;
+  const influenceRadius = 680;
   let maxEnergy = 0;
   for (let i = 0; i < N; i++) {
     const s = samples[i];
@@ -2954,12 +2759,12 @@ function renderFluidFrame(state: FluidCanvasState): void {
   const t = state.time;
 
   // 1. Ambient Deep Blur Fade Layer (Wide atmospheric blue haze with increased height and length)
-  drawFluidBlurFade({ ctx, samples, P, energies: state.energies, gx, gy, W: w, H: h, cfg: {
+  drawFluidBlurFade(ctx, samples, P, state.energies, gx, gy, {
     t,
     speed: 0.65,
-    baseDepth: 30,
-    maxSurge: 66,
-    influenceRadius: 620,
+    baseDepth: 42,
+    maxSurge: 95,
+    influenceRadius: 720,
     harmonics: [2, 5, 8, 12],
     swellM: 1,
     blurRadius: 48,
@@ -2971,15 +2776,15 @@ function renderFluidFrame(state: FluidCanvasState): void {
       { stop: 0.88, color: 'rgba(30, 58, 138, 0.04)' },
       { stop: 1, color: 'rgba(15, 23, 42, 0)' }
     ]
-  } });
+  }, w, h);
 
   // 2. Dynamic Fluid Wave Blur Fade Layer (Oceanic Azure & Cobalt undulating wave with increased height and length)
-  drawFluidBlurFade({ ctx, samples, P, energies: state.energies, gx, gy, W: w, H: h, cfg: {
+  drawFluidBlurFade(ctx, samples, P, state.energies, gx, gy, {
     t,
     speed: 0.9,
-    baseDepth: 20,
-    maxSurge: 52,
-    influenceRadius: 540,
+    baseDepth: 28,
+    maxSurge: 75,
+    influenceRadius: 620,
     harmonics: [3, 6, 11, 16],
     swellM: 2,
     blurRadius: 28,
@@ -2990,10 +2795,10 @@ function renderFluidFrame(state: FluidCanvasState): void {
       { stop: 0.78, color: 'rgba(29, 78, 216, 0.08)' },
       { stop: 1, color: 'rgba(30, 27, 75, 0)' }
     ]
-  } });
+  }, w, h);
 
   // 3. Stippled Wave Dot Grid (Gemini-style undulating micro-dot matrix with chromatic crests and increased density)
-  drawFluidDotGrid({ ctx, w, h, rawR, gx, gy, t, maxEnergy });
+  drawFluidDotGrid(ctx, w, h, rawR, gx, gy, t, maxEnergy);
 
   ctx.restore();
 }
@@ -3064,7 +2869,7 @@ function setFluidContainer(container: HTMLElement | null, clientX: number, clien
     } else {
       c.classList.remove('agent-drop-over', 'drop-over-active');
       const state = fluidCanvases.get(c);
-      if (state?.active) {
+      if (state && state.active) {
         state.active = false;
         state.fadeStartTime = performance.now();
       }
@@ -3957,7 +3762,6 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   renderBoxFolder();
   void refreshLiveShare();
   void refreshGit();
-  syncCheckedAt = 0; background(checkCloudNewer());
   term.cwd = await api.term.cwd(); renderPs();
 }
 function resetWorkspace(): void {
@@ -4247,6 +4051,28 @@ $('#tree').addEventListener('dragstart', e => {
     e.dataTransfer.setData('text/plain', draggedTreePath);
     e.dataTransfer.setData('application/x-breeze-tree-path', draggedTreePath);
     e.dataTransfer.setData('application/x-breeze-is-dir', draggedTreeIsDir ? '1' : '0');
+
+    // Clean, crisp custom drag ghost preview pill
+    let ghost = document.getElementById('breezeDragGhost');
+    if (!ghost) {
+      ghost = document.createElement('div');
+      ghost.id = 'breezeDragGhost';
+      ghost.className = 'drag-file-ghost';
+      document.body.appendChild(ghost);
+    }
+    const name = draggedTreePath.split('/').pop() || draggedTreePath;
+    const iconHtml = draggedTreeIsDir ? folderIcon(name, false) : fileIcon(name);
+    ghost.innerHTML = `<span class="ico">${iconHtml}</span><span class="nm">${esc(name)}</span>`;
+    ghost.style.left = '0px';
+    ghost.style.top = '0px';
+    const rect = ghost.getBoundingClientRect();
+    e.dataTransfer.setDragImage(ghost, Math.min(28, rect.width / 2), Math.round(rect.height / 2));
+    setTimeout(() => {
+      if (ghost) {
+        ghost.style.left = '-9999px';
+        ghost.style.top = '-9999px';
+      }
+    }, 0);
   }
 });
 $('#tree').addEventListener('dragend', e => {
@@ -4598,14 +4424,9 @@ function renderTabs(): void {
   if (!hasTabs) {
     tabsEl.innerHTML = '';
   } else {
-    let runBtn = '';
-    if (runnable(active)) {
-      runBtn = `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>`;
-    } else if (isHtml(active)) {
-      runBtn = `<button class="tab-run tab-preview" data-preview-file="1" title="Preview this page (F5)">${svgIcon('play', 12)}<span>Preview</span></button>`;
-    }
-    const splitTitle = splitPath ? 'Close Split' : 'Split Editor Right';
-    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitTitle} (Ctrl+\\)">${svgIcon('columns', 14)}</button>`;
+    const runBtn = runnable(active) ? `<button class="tab-run" data-run-file="1" title="Run File (F5)">${svgIcon('play', 12)}<span>Run</span></button>`
+      : isHtml(active) ? `<button class="tab-run tab-preview" data-preview-file="1" title="Preview this page (F5)">${svgIcon('play', 12)}<span>Preview</span></button>` : '';
+    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitPath ? 'Close Split' : 'Split Editor Right'} (Ctrl+\\)">${svgIcon('columns', 14)}</button>`;
     tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn + splitBtn;
   }
   placeTabInk();
@@ -4649,7 +4470,7 @@ function placeTabInk(): void {
 $('#tabs').addEventListener('animationend', e => { if ((e.target as HTMLElement).classList.contains('tab')) placeTabInk(); });
 $('#tabs').addEventListener('click', e => {
   if ((e.target as HTMLElement).closest('[data-run-file]')) { run('run.file'); return; }
-  if ((e.target as HTMLElement).closest('[data-preview-file]')) { if (active) { void startPreview(active); } return; }
+  if ((e.target as HTMLElement).closest('[data-preview-file]')) { if (active) void startPreview(active); return; }
   if ((e.target as HTMLElement).closest('[data-split]')) { run('view.splitEditor'); return; }
   const tab = (e.target as HTMLElement).closest<HTMLElement>('[data-tab]');
   if (!tab || justDragged) return;
@@ -5057,7 +4878,7 @@ const VOID_HTML = new Set('area base br col embed hr img input link meta param s
 interface TagSpan { start: number; end: number; nameStart: number; nameEnd: number; }
 // Pairs every opening tag with its closing tag (void and self-closing tags have no partner; stray closers are ignored).
 function tagPairs(text: string, xml: boolean): [TagSpan, TagSpan][] {
-  const re = /<!--[\s\S]*?(?:-->|$)|<(\/?)([A-Za-z][\w:.-]*)([^>]*)>/g;
+  const re = /<!--[\s\S]*?(?:-->|$)|<(\/?)([A-Za-z][\w:.-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
   const stack: { name: string; span: TagSpan }[] = [];
   const pairs: [TagSpan, TagSpan][] = [];
   for (let m = re.exec(text); m; m = re.exec(text)) {
@@ -5955,7 +5776,7 @@ const term = {
 
 function createPromptHtml(cwd: string): string {
   let path = cwd || '~';
-  path = path.replaceAll('/', '\\');
+  path = path.replace(/\//g, '\\');
   path = path.replace(/^([a-zA-Z]):/, (_, d) => d.toUpperCase() + ':');
   return `<span class="ps-prefix">PS</span> <span class="ps-path" title="${escAttr(cwd || '~')}">${esc(path)}</span><span class="ps-arrow">&gt;</span>`;
 }
@@ -6152,7 +5973,7 @@ function renderTermTabs(): void {
     void el.offsetWidth;
     el.classList.add('leaving');
     let done = false;
-    const finish = () => { if (done) { return; } done = true; el.remove(); };
+    const finish = () => { if (done) return; done = true; el.remove(); };
     el.addEventListener('transitionend', e => { if (e.target === el && e.propertyName === 'width') finish(); });
     setTimeout(finish, TERM_TAB_ANIM_MS + 80);
   }
@@ -6243,8 +6064,8 @@ if (termSessions.length === 0) {
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 // Where compilers and Python say the trouble is: `file:line:col: error: msg` (GCC, clang), `File "file", line N`,
 // and `file(line,col): error CS1002: msg [project.csproj]` (C#).
-const GCC_REF = /^((?:[A-Za-z]:[\\/])?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
-const CS_REF = /^[ \t]*((?:[A-Za-z]:[\\/])?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
+const GCC_REF = /^((?:[A-Za-z]:(?=[\\/]))?[^:\n]+?):(\d+):(?:(\d+):)?[ \t]*(fatal error|error|warning|note):[ \t]*(.*)$/gm;
+const CS_REF = /^[ \t]*((?:[A-Za-z]:(?=[\\/]))?[^:(\n]+?\.csx?)\((\d+),(\d+)\):[ \t]*(error|warning)[ \t]+(\w+):[ \t]*([^\r\n]*?)(?:[ \t]+\[[^\]\n]+\])?\r?$/gm;
 const PY_REF = /^[ \t]*(File "([^"\n]+)", line (\d+))/gm;
 // rustc and cargo name the problem on one line and point at it on a later one: `error[E0308]: mismatched types`, then
 // ` --> src/main.rs:4:18`. The heading is kept between calls, since the output arrives in pieces. (javac's
@@ -6467,7 +6288,7 @@ function formatCommandSyntax(cmd: string): string {
   if (!cmd) return '';
   const trimmed = cmd.trimStart();
   const leading = cmd.slice(0, cmd.length - trimmed.length);
-  const tokenRegex = /--?[a-zA-Z0-9_-]+|"[^"]*"|'[^']*'|\S+/g;
+  const tokenRegex = /--?[a-zA-Z0-9_\-]+|"[^"]*"|'[^']*'|\S+/g;
   let match: RegExpExecArray | null;
   let lastIndex = 0;
   let isFirst = true;
@@ -6617,7 +6438,7 @@ async function runCommand(cmd: string): Promise<void> {
     store.set('breeze.termHistory', session.history);
   }
   session.hIdx = session.history.length;
-  if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { if (session.paneEl) { session.paneEl.innerHTML = ''; } return; }
+  if (/^\s*(?:cls|clear)\s*$/i.test(cmd)) { if (session.paneEl) session.paneEl.innerHTML = ''; return; }
   const r = await api.term.run(cmd).catch((err: unknown) => ({ error: errMsg(err) }) as { id?: number; cwd?: string; error?: string });
   if (r.error) termWrite(r.error + '\n', 'err', session);
   if (r.cwd) { session.cwd = r.cwd; renderPs(); }
@@ -6984,8 +6805,7 @@ function applyLayout(): void {
   main.classList.toggle('no-side', !layout.sideOpen);
   main.classList.toggle('no-agents', !layout.agentsOpen);
   const maxPreview = work.clientWidth ? work.clientWidth - 220 : layout.preview;
-  // The inline width beats the .no-preview rule, so a closed preview has to be zeroed here or its column stays as a blank gap.
-  work.style.setProperty('--preview-w', layout.previewOpen ? `${clamp(layout.preview, 220, Math.max(220, maxPreview))}px` : '0px');
+  work.style.setProperty('--preview-w', `${clamp(layout.preview, 220, Math.max(220, maxPreview))}px`);
   work.classList.toggle('no-preview', !layout.previewOpen);
   t.style.setProperty('--term-h', `${clamp(layout.term, 80, Math.max(80, innerHeight - 220))}px`);
   t.classList.toggle('open', layout.termOpen);
@@ -7103,7 +6923,7 @@ const commands: Record<string, () => unknown> = {
     pushAppAction({ type: 'layout', prev, next: { ...layout } });
     applyLayoutAnimated();
   },
-  'view.splitEditor': () => { if (splitPath) { closeSplit(); } else { openSplit(); } renderTabs(); },
+  'view.splitEditor': () => { if (splitPath) closeSplit(); else openSplit(); renderTabs(); },
   'view.resetLayout': () => {
     const prev = { ...layout };
     Object.assign(layout, DEFAULT_LAYOUT, { view: layout.view });
@@ -7167,9 +6987,6 @@ const commands: Record<string, () => unknown> = {
   'help.setup': () => backToOnboarding(STEP.agent),
   'account.signIn': addAccount,
   'account.signOut': signOut,
-  'sync.run': () => runSync('sync'),
-  'sync.pull': confirmPull,
-  'sync.open': () => openCloudWorkspaces(),
   'mode.ide': () => enterMode('ide'),
   'mode.box': () => enterMode('box'),
   'help.about': showAbout,
@@ -7380,9 +7197,6 @@ const MENUS: Menu[] = [
       { sep: true },
       { label: 'Breeze Code', act: 'mode.ide', checked: () => appState.mode === 'ide' },
       { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
-      { sep: true },
-      { label: 'Sync Workspace', act: 'sync.run', enabled: () => !!user && !!rootInfo },
-      { label: 'Open Cloud Workspace…', act: 'sync.open', enabled: () => !!user },
       { sep: true },
       { label: 'Add Account', act: 'account.signIn' },
       { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
@@ -7729,8 +7543,8 @@ type SettingsTab = 'general' | 'agents' | 'vibe' | 'discord' | 'help';
 const SETTINGS_TABS: [SettingsTab, string, string][] = [
   ['general', 'General', 'gear'],
   ['agents', 'Agents', 'terminal'],
-  ['vibe', 'Vibe Code Mode', 'phone'],
-  ['discord', 'Discord', 'img:discord.png'],
+  ['vibe', 'Vibe Code Mode', 'circleDot'],
+  ['discord', 'Discord', 'globe'],
   ['help', 'Help & About', 'info'],
 ];
 // Agents the user has come first, then this order; anything else keeps its place after.
@@ -7749,9 +7563,9 @@ const segHtml = (id: string, opts: [string, string][], cur: string) =>
 function accountHtml(): string {
   const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
       <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
-  return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div class="set-user-text"><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div>
-      <div class="set-user-actions"><button class="btn btn-sm" id="sAddAcct">Add account…</button>${user ? '<button class="btn btn-sm" id="sSignOut">Sign out</button>' : ''}</div></div>
-    ${others ? `<h5>Accounts</h5>${others}` : ''}`;
+  return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div></div>
+    ${others ? `<h5>Accounts</h5>${others}` : ''}
+    <div class="row end mt-12"><button class="btn" id="sAddAcct">Add account…</button>${user ? '<button class="btn" id="sSignOut">Sign out</button>' : ''}</div>`;
 }
 
 function settingsBody(tab: SettingsTab): string {
@@ -7780,7 +7594,7 @@ function settingsBody(tab: SettingsTab): string {
     }
     case 'vibe': return `<h4>Vibe Code Mode</h4>
       ${settingRow('Vibe Code Mode', 'Play your feed while agents work.', switchHtml('sVibe', appState.vibeArmed, 'Vibe Code Mode'))}
-      <h5>Feed</h5><p class="set-sub mb-12">Connect a site to sign in. Click a connected card to make it the one that plays.</p>
+      <h5>Feeds</h5><p class="set-sub mb-12">Connect a site to sign in. Click a connected card to make it the one that plays.</p>
       <div class="social-grid" id="sFeeds"></div>`;
     case 'discord': {
       const a = discordActivity();
@@ -7792,33 +7606,18 @@ function settingsBody(tab: SettingsTab): string {
         <div class="setup-card"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
         <p class="set-sub">The Discord app must be running on this computer.</p>`;
     }
-    case 'help': {
-      const where = isDesktop ? 'Desktop app' : 'Browser preview';
-      const engine = /Electron\/[\d.]+|Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0] ?? '';
-      return `<h4>Help & About</h4>
+    case 'help': return `<h4>Help & About</h4>
       ${settingRow('Keyboard shortcuts', '', '<button class="btn btn-sm" data-set-cmd="help.keys">Show</button>')}
       ${settingRow('Run setup again', 'Pick your agent and workspace again.', '<button class="btn btn-sm" data-set-cmd="help.setup">Start</button>')}
       ${settingRow('Developer tools', 'Ctrl+Shift+I', '<button class="btn btn-sm" data-set-cmd="win.devtools">Toggle</button>')}
       ${settingRow('Reload window', 'Ctrl+R', '<button class="btn btn-sm" data-set-cmd="win.reload">Reload</button>')}
-      ${settingRow('About Breeze Code', `Smooth as a breeze · ${where}${engine ? ` · ${esc(engine)}` : ''}`, '<span class="pill blue">v0.5.0</span>')}`;
-    }
+      ${settingRow('About Breeze Code', '', '<button class="btn btn-sm" data-set-cmd="help.about">About</button>')}`;
   }
 }
 
 function bindSettings(m: HTMLElement): void {
   const pane = $('.set-pane', m);
-  // Switches are rebuilt with the pane, so remember where each one was and replay the move.
-  const prevSwitch = new Map<string, boolean>();
-  pane.querySelectorAll<HTMLElement>('.switch').forEach(s => prevSwitch.set(s.id, s.classList.contains('on')));
   pane.innerHTML = settingsBody(settingsTab);
-  pane.querySelectorAll<HTMLElement>('.switch').forEach(s => {
-    const was = prevSwitch.get(s.id), now = s.classList.contains('on');
-    if (was === undefined || was === now) return;
-    s.classList.toggle('on', was);
-    void s.offsetWidth;
-    s.classList.toggle('on', now);
-    s.classList.add(now ? 'bounce-on' : 'bounce-off');
-  });
   $$('[data-set-tab]', m).forEach(b => b.classList.toggle('on', b.dataset.setTab === settingsTab));
   const on = (id: string, fn: (el: HTMLElement) => void) => { const el = $(`#${id}`, pane); if (el) el.onclick = () => fn(el); };
   const layoutSwitch = (id: string, act: string) => on(id, () => { run(act); refreshSettings(); });
@@ -7894,12 +7693,7 @@ function openSettings(gear: HTMLElement, tab?: SettingsTab): void {
   if (tab) settingsTab = tab;
   const gears = [$('#settingsBtn'), $('#boxSettings')];
   gears.forEach(g => { g.classList.add('open'); g.setAttribute('aria-expanded', 'true'); });
-  const nav = SETTINGS_TABS.map(([id, label, icon]) => {
-    const iconHtml = icon.startsWith('img:')
-      ? '<img class="set-nav-img" src="../../assets/icons/' + icon.slice(4) + '" width="15" height="15" alt="" draggable="false">'
-      : svgIcon(icon, 15);
-    return '<button data-set-tab="' + id + '">' + iconHtml + '<span>' + esc(label) + '</span></button>';
-  }).join('');
+  const nav = SETTINGS_TABS.map(([id, label, icon]) => `<button data-set-tab="${id}">${svgIcon(icon, 15)}<span>${esc(label)}</span></button>`).join('');
   openModal(`<div class="settings-modal" aria-label="Settings">
       <nav class="set-nav"><h3>Settings</h3>${nav}</nav>
       <div class="set-main"><button class="set-close tab-close" data-close title="Close (Esc)" aria-label="Close"><svg class="tab-close-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button><div class="set-pane"></div></div>
@@ -8129,7 +7923,7 @@ function getActiveTab(s: Surface = surface): AgentTabState {
 function createAgentTab(s: Surface, title?: string, initialHtml?: string, session?: string | null, markNew = false): AgentTabState {
   const count = surfaceTabs[s.name].length + 1;
   const tab: AgentTabState = {
-    id: 'atab_' + crypto.randomUUID().slice(0, 8),
+    id: 'atab_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     surfaceName: s.name,
     title: title || `Chat ${count}`,
     panel: document.createElement('div'),
@@ -8591,7 +8385,7 @@ interface ChatEntry { id: string; title: string; at: number; html: string; agent
 const historyKey = (s: Surface) => `breeze.history:${chatScope(s)}`;
 const chatIdKey = (s: Surface) => `breeze.chatId:${chatScope(s)}`;
 const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
-const newChatId = () => crypto.randomUUID();
+const newChatId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const chatHistory = (s: Surface) => store.get<ChatEntry[]>(historyKey(s), []);
 
 function archiveChatTab(s: Surface, tab: AgentTabState): void {
@@ -8810,7 +8604,7 @@ async function addPastedImage(file: File, s: Surface, tab?: AgentTabState): Prom
   } catch {
     // In browser demo or if import fails, keep dataUrl
   }
-  const att: AgentAttachment = { id: crypto.randomUUID().slice(0, 8), name, kind: 'image', dataUrl, fileUrl, fileRel, path: fileRel };
+  const att: AgentAttachment = { id: Math.random().toString(36).slice(2), name, kind: 'image', dataUrl, fileUrl, fileRel, path: fileRel };
   attachmentsMap[s.name].push(att);
   targetTab.attachments = [...attachmentsMap[s.name]];
   renderAttachments(s);
@@ -8843,7 +8637,7 @@ async function attachPathToAgent(rawPath: string, isDir: boolean, s: Surface, ta
   }
 
   const att: AgentAttachment = {
-    id: crypto.randomUUID().slice(0, 8),
+    id: Math.random().toString(36).slice(2),
     name,
     kind,
     path: cleanPath,
@@ -9613,7 +9407,7 @@ async function generateCommitMsg(): Promise<void> {
     genBtnEl.innerHTML = `<div class="spinner sm"></div>`;
   }
   try {
-    if (!activeAg?.found) {
+    if (!activeAg || !activeAg.found) {
       const fallbackMsg = heuristicCommitMsg(currentFiles);
       const msgArea = $<HTMLTextAreaElement>('#scmMsg');
       if (msgArea) {

@@ -135,4 +135,84 @@ class DiscordRpc {
   }
 }
 
-module.exports = { encode, FrameReader, ipcPaths, DiscordRpc, OP };
+// Rich Presence for the app: one connection to Discord, and the status it should show.
+// - Discord often ignores a new handshake soon after a disconnect, so turning presence off keeps the
+//   connection and turning it back on reuses it; it closes once presence has stayed off for `idleMs`.
+// - Discord allows about 5 status updates per 20 seconds, so showing and hiding share one throttle and only
+//   the latest wanted state is ever sent: a fast on/off burst can't have its final "off" rate-limited away.
+// - A set() still connecting when presence is turned off shows nothing; an old socket closing late never
+//   drops a newer one.
+class DiscordPresence {
+  constructor(makeRpc, { idleMs = 60000, gapMs = 4000, onError = () => {} } = {}) {
+    this.makeRpc = makeRpc;
+    this.idleMs = idleMs;
+    this.gapMs = gapMs;
+    this.onError = onError;
+    this.rpc = null;
+    this.connecting = null;
+    this.idleTimer = null;
+    this.epoch = 0;         // bumped by every clear()
+    this.wanted = null;     // the activity to show, or null for hidden
+    this.sent = undefined;  // what Discord was last told (JSON, or null), so repeats are skipped
+    this.sentAt = -Infinity;
+    this.flushTimer = null;
+  }
+  get connected() { return !!this.rpc?.connected; }
+  connect() {
+    clearTimeout(this.idleTimer);
+    if (this.connecting) return this.connecting;
+    if (this.rpc?.connected) return Promise.resolve(this.rpc.user);
+    const rpc = this.makeRpc();
+    rpc.onClose = () => { if (this.rpc === rpc) this.rpc = null; };
+    this.rpc = rpc;
+    this.sent = undefined; // a new connection starts with nothing shown
+    const pending = rpc.connect();
+    this.connecting = pending;
+    pending.finally(() => { if (this.connecting === pending) this.connecting = null; }).catch(() => {});
+    return pending;
+  }
+  // Shows `activity` (connecting first if needed). Resolves with the Discord user.
+  async set(activity) {
+    const epoch = this.epoch;
+    const user = await this.connect();
+    if (epoch === this.epoch) {
+      this.wanted = activity;
+      this.flush();
+    }
+    return user;
+  }
+  // Hides the status and keeps the connection for a quick "on" until it has idled.
+  clear() {
+    this.epoch++;
+    this.wanted = null;
+    this.flush();
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.close(), this.idleMs);
+    this.idleTimer.unref?.();
+  }
+  flush() {
+    clearTimeout(this.flushTimer);
+    if (!this.rpc?.connected) return;
+    const next = this.wanted ? JSON.stringify(this.wanted) : null;
+    if (next === this.sent) return;
+    const wait = this.sentAt + this.gapMs - Date.now();
+    if (wait > 0) {
+      this.flushTimer = setTimeout(() => this.flush(), wait);
+      this.flushTimer.unref?.();
+      return;
+    }
+    this.sentAt = Date.now();
+    this.sent = next;
+    this.rpc.setActivity(this.wanted).catch(err => { this.sent = undefined; this.onError(err); });
+  }
+  close() {
+    clearTimeout(this.idleTimer);
+    clearTimeout(this.flushTimer);
+    const rpc = this.rpc;
+    this.rpc = null;
+    this.connecting = null;
+    rpc?.close();
+  }
+}
+
+module.exports = { encode, FrameReader, ipcPaths, DiscordRpc, DiscordPresence, OP };
