@@ -1346,7 +1346,8 @@ function agentPillMenuItems(): MenuItem[] {
 function renderAgentPill(): void {
   const a = selectedAgent();
   const pill = $('#agentPill');
-  pill.textContent = a ? a.name : 'Choose an agent';
+  const logo = a && BRAND_ICONS[a.id] ? `<img class="pill-logo" src="../../assets/icons/${BRAND_ICONS[a.id]}" alt="" draggable="false">` : '';
+  pill.innerHTML = `${logo}<span>${esc(a ? a.name : 'Choose an agent')}</span>`;
   pill.removeAttribute('title');
   delete pill.dataset.tooltip;
   const model = a?.api && a.version ? ' · ' + a.version : '';
@@ -6807,7 +6808,8 @@ function applyLayout(): void {
   main.classList.toggle('no-side', !layout.sideOpen);
   main.classList.toggle('no-agents', !layout.agentsOpen);
   const maxPreview = work.clientWidth ? work.clientWidth - 220 : layout.preview;
-  work.style.setProperty('--preview-w', `${clamp(layout.preview, 220, Math.max(220, maxPreview))}px`);
+  // The inline width beats the .no-preview rule, so a closed preview has to be zeroed here or its column stays as a blank gap.
+  work.style.setProperty('--preview-w', layout.previewOpen ? `${clamp(layout.preview, 220, Math.max(220, maxPreview))}px` : '0px');
   work.classList.toggle('no-preview', !layout.previewOpen);
   t.style.setProperty('--term-h', `${clamp(layout.term, 80, Math.max(80, innerHeight - 220))}px`);
   t.classList.toggle('open', layout.termOpen);

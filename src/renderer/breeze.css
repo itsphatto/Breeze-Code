@@ -1593,8 +1593,14 @@ svg.ico-svg:active {
 }
 
 .tree-item.dirty .nm::after {
-  content: " ●";
-  color: var(--text-3);
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--text-3);
   flex-shrink: 0;
 }
 
@@ -6988,6 +6994,20 @@ body.layout-animating #previewPane {
 .agents .side-head {
   min-height: 32px;
   padding: 4px 10px 1px 12px;
+}
+
+#agentPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+}
+
+.pill-logo {
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 .agent-tabs-bar {
