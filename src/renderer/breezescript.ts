@@ -1510,7 +1510,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
   if (model) model.onchange = () => background(api.llm.setModel(model.value).then(() => {
     Object.assign(local() ?? {}, { version: model.value });
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`Ollama model · ${model.value}`);
   }));
   root.querySelector<HTMLElement>('[data-llm-off]')?.addEventListener('click', e => {
@@ -1545,13 +1545,13 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
         await api.agent.setModel('codex', modelVal);
         if (targetAgent) targetAgent.version = modelVal;
         saveApp();
-        renderAgentPill();
+        renderAgentBar();
         toast(`Codex model · ${modelVal}`);
       } else if (agId === 'antigravity' || agId === 'claude') {
         await api.agent.setModel(agId, modelVal);
         if (targetAgent) targetAgent.version = modelVal;
         saveApp();
-        renderAgentPill();
+        renderAgentBar();
         toast(`${targetAgent?.name ?? agId} model · ${modelVal}`);
       }
     };
@@ -1616,7 +1616,7 @@ function renderDetection(): void {
 
   const summary = d.tools.filter(t => t.found || !t.optional).map(t => `${t.name.replace('.js', '').replace('C/C++', 'C')} ${t.found ? 'ready' : 'missing'}`).join(' · ');
   $('#sbTools').innerHTML = `<span class="${missing.length ? 'dot-warn' : 'dot-ok'}"></span> ${summary}`;
-  renderAgentPill();
+  renderAgentBar();
 }
 $('#rescan').onclick = () => { detectTools(true).catch(() => { /* the agent card shows the error */ }); };
 
@@ -1646,19 +1646,19 @@ async function applyModelAndEffort(a: DetectedAgent, model: string, effort: Effo
     await api.agent.setModel('codex', model, effort.toLowerCase());
     a.version = model;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`Codex model set to ${model} (${effort} effort)`);
   } else if (a.id === 'antigravity' || a.id === 'claude') {
     await api.agent.setModel(a.id, model, effort.toLowerCase());
     a.version = model;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`${a.name} model set to ${model} (${effort} effort)`);
   } else if (a.api) {
     await api.llm.setModel(model);
     a.version = model;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`Ollama model set to ${model}`); // a local server has no effort setting
   }
 }
@@ -1718,38 +1718,101 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
     }
   };
 }
-function agentPillMenuItems(): MenuItem[] {
-  const items: MenuItem[] = [];
-  items.push({ label: 'Switch Agent:', enabled: () => false });
-  for (const ag of appState.detect?.agents ?? []) {
-    items.push({
-      label: ag.name,
-      icon: brandMark('menu-ico', ag.id, ag.name[0]),
-      checked: () => ag.id === appState.agent,
-      enabled: () => ag.found,
-      run: () => {
-        appState.agent = ag.id;
-        const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
-        if (curTab) curTab.agentId = ag.id;
-        saveApp();
-        renderAgentPill();
-        updateScmGenBtn();
-        toast(`Active agent: ${ag.name}`);
-      }
-    });
-  }
-  items.push({ sep: true }, { label: 'Manage agents', run: openAgentPicker });
-  return items;
+/* ----- Agent bar: one chip per installed agent; a chip inserts its @mention ----- */
+// Mention names must match src/main/mentions.js: the short name, the full name and the id, lowercased.
+const AGENT_SHORT_NAMES = new Map([['claude', 'Claude'], ['codex', 'Codex'], ['antigravity', 'Antigravity'], ['local', 'Local']]);
+function agentShortName(a: DetectedAgent): string {
+  return AGENT_SHORT_NAMES.get(a.id) || a.name;
+}
+function agentMentionNames(a: DetectedAgent): string[] {
+  return [...new Set([agentShortName(a), a.name, a.id].map(n => String(n).toLowerCase()))];
 }
 
+function makeDefaultAgent(ag: DetectedAgent): void {
+  appState.agent = ag.id;
+  const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
+  if (curTab) curTab.agentId = ag.id;
+  saveApp();
+  renderAgentBar();
+  updateScmGenBtn();
+  toast(`Active agent: ${ag.name}`);
+}
+function agentChipMenuItems(ag: DetectedAgent): MenuItem[] {
+  return [
+    { label: 'Make default', checked: () => ag.id === appState.agent, enabled: () => ag.id !== appState.agent, run: () => makeDefaultAgent(ag) },
+    { sep: true },
+    { label: 'Manage agents', run: openAgentPicker },
+  ];
+}
+// Opens (or, if it is already open, closes) a popup under a chip.
+function openChipMenu(chip: HTMLElement, items: MenuItem[]): void {
+  if (chip.classList.contains('open') || (justClosedTrigger === chip && Date.now() - justClosedAt < 350)) {
+    closeMenu();
+    return;
+  }
+  closeMenu();
+  chip.classList.add('open');
+  const r = chip.getBoundingClientRect();
+  popupMenu(r.left, r.bottom + 4, items, () => chip.classList.remove('open'), chip);
+}
 
-function renderAgentPill(): void {
+function agentChipHtml(a: DetectedAgent, on: boolean): string {
+  const short = agentShortName(a);
+  const logo = BRAND_ICONS[a.id] ? `<img class="pill-logo" src="../../assets/icons/${BRAND_ICONS[a.id]}" alt="" draggable="false">` : '';
+  return `<button type="button" class="agent-chip${on ? ' on' : ''}" data-agent="${escAttr(a.id)}" aria-label="Mention @${escAttr(short)}" aria-pressed="${on}">${logo}<span class="chip-name">${esc(short)}</span><span class="chip-more" role="button" aria-label="Options for ${escAttr(short)}" aria-haspopup="menu">${svgIcon('chevronDown', 10)}</span></button>`;
+}
+
+// Chips that do not fit the bar move into a trailing "+N" chip.
+function fitAgentBar(): void {
+  const bar = $('#agentBar');
+  bar.querySelector('.chip-rest')?.remove();
+  const chips = $$('.agent-chip[data-agent]', bar);
+  chips.forEach(c => c.classList.remove('hidden'));
+  const avail = bar.clientWidth;
+  if (chips.length < 2 || avail <= 0) return;
+  const gap = Number.parseFloat(getComputedStyle(bar).columnGap) || 0;
+  const widths = chips.map(c => c.offsetWidth);
+  if (widths.reduce((sum, w) => sum + w, 0) + gap * (chips.length - 1) <= avail) return;
+  const rest = document.createElement('button');
+  rest.type = 'button';
+  rest.className = 'agent-chip chip-rest';
+  rest.setAttribute('aria-haspopup', 'menu');
+  rest.textContent = `+${chips.length}`; // the widest label it can get
+  bar.append(rest);
+  let used = rest.offsetWidth;
+  let keep = 0;
+  for (const w of widths) {
+    if (used + gap + w > avail) break;
+    used += gap + w;
+    keep++;
+  }
+  keep = Math.max(keep, 1);
+  const hiddenChips = chips.slice(keep);
+  hiddenChips.forEach(c => c.classList.add('hidden'));
+  rest.textContent = `+${hiddenChips.length}`;
+  rest.dataset.hidden = hiddenChips.map(c => c.dataset.agent).join(',');
+  rest.setAttribute('aria-label', `${hiddenChips.length} more agents`);
+}
+
+function renderAgentBar(): void {
   const a = selectedAgent();
-  const pill = $('#agentPill');
-  const logo = a && BRAND_ICONS[a.id] ? `<img class="pill-logo" src="../../assets/icons/${BRAND_ICONS[a.id]}" alt="" draggable="false">` : '';
-  pill.innerHTML = `${logo}<span>${esc(a ? a.name : 'Choose an agent')}</span>`;
-  pill.removeAttribute('title');
-  delete pill.dataset.tooltip;
+  const bar = $('#agentBar');
+  const found = (appState.detect?.agents ?? []).filter(x => x.found);
+  // The default agent comes first, so it is the last chip to be folded into "+N".
+  found.sort((x, y) => Number(y.id === a?.id) - Number(x.id === a?.id));
+  if (found.length) {
+    bar.innerHTML = found.map(x => agentChipHtml(x, x.id === a?.id)).join('');
+  } else {
+    bar.innerHTML = '<button type="button" class="agent-chip on chip-choose">Choose an agent</button>';
+  }
+  const prev = bar.dataset.current;
+  bar.dataset.current = a?.id ?? '';
+  const on = bar.querySelector<HTMLElement>('.agent-chip.on');
+  if (on && prev && prev !== bar.dataset.current) {
+    on.classList.add('agent-swap');
+    on.addEventListener('animationend', () => on.classList.remove('agent-swap'), { once: true });
+  }
+  fitAgentBar();
   const model = a?.api && a.version ? ' · ' + a.version : '';
   const label = a ? a.name + model : 'Choose an agent';
   $('#boxModel').innerHTML = `${esc(label)}${svgIcon('chevronDown', 12)}`;
@@ -1759,17 +1822,41 @@ function renderAgentPill(): void {
   updateScmGenBtn();
 }
 
-$('#agentPill').onclick = e => {
-  const btn = e.currentTarget as HTMLElement;
-  if (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350)) {
-    closeMenu();
+$('#agentBar').addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  const chip = t.closest<HTMLElement>('.agent-chip');
+  if (!chip) return;
+  if (chip.classList.contains('chip-choose')) { closeMenu(); openAgentPicker(); return; }
+  if (chip.classList.contains('chip-rest')) {
+    const ids = (chip.dataset.hidden ?? '').split(',');
+    const hidden = (appState.detect?.agents ?? []).filter(x => ids.includes(x.id));
+    openChipMenu(chip, hidden.map(x => ({ label: agentShortName(x), icon: brandMark('menu-ico', x.id, x.name[0]), run: () => insertMention(x) })));
     return;
   }
+  const ag = appState.detect?.agents.find(x => x.id === chip.dataset.agent);
+  if (!ag) return;
+  if (t.closest('.chip-more')) { openChipMenu(chip, agentChipMenuItems(ag)); return; }
   closeMenu();
-  btn.classList.add('open');
-  const r = btn.getBoundingClientRect();
-  popupMenu(r.left, r.bottom + 4, agentPillMenuItems(), () => btn.classList.remove('open'), btn);
-};
+  insertMention(ag);
+});
+$('#agentBar').addEventListener('keydown', e => {
+  const chip = (e.target as HTMLElement).closest<HTMLElement>('.agent-chip[data-agent]');
+  const ag = chip && appState.detect?.agents.find(x => x.id === chip.dataset.agent);
+  if (chip && ag && e.key === 'ArrowDown') { e.preventDefault(); openChipMenu(chip, agentChipMenuItems(ag)); }
+});
+new ResizeObserver(fitAgentBar).observe($('#agentBar'));
+
+// Inserts "@<Short> " where the caret is in the agents panel's prompt (a space before it if the text there needs one).
+function insertMention(a: DetectedAgent): void {
+  const ta = SURFACES.ide.prompt;
+  const from = ta.selectionStart ?? ta.value.length;
+  const to = ta.selectionEnd ?? from;
+  const before = ta.value.slice(0, from);
+  const text = `${before && !/\s$/.test(before) ? ' ' : ''}@${agentShortName(a)} `;
+  ta.setRangeText(text, from, to, 'end');
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
 
 function openAgentPicker(): void {
   openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. A local LLM connects by its server address.</p>
@@ -8109,7 +8196,7 @@ document.addEventListener('mousedown', e => {
       closeMenu();
       return;
     }
-    if (!target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, #agentPill, [data-act="git.more"]')) {
+    if (!target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, [data-act="git.more"]')) {
       closeMenu();
     }
   }
@@ -8412,10 +8499,10 @@ function bindSettings(m: HTMLElement): void {
     appState.agent = ag.id;
     const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
     if (curTab) curTab.agentId = ag.id;
-    saveApp(); renderAgentPill(); updateScmGenBtn();
+    saveApp(); renderAgentBar(); updateScmGenBtn();
     refreshSettings();
   });
-  if ($('#sEffort', pane)) seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentPill(); refreshSettings(); });
+  if ($('#sEffort', pane)) seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentBar(); refreshSettings(); });
   $$('[data-agent-install]', pane).forEach(b => b.onclick = async () => {
     const ag = appState.detect?.agents.find(a => a.id === b.dataset.agentInstall);
     if (!ag) return;
@@ -8936,10 +9023,11 @@ function switchAgentTab(s: Surface, tid: string): void {
   if (s.name === 'ide' && next.agentId && appState.agent !== next.agentId) {
     appState.agent = next.agentId;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
   }
 
   s.prompt.value = next.promptDraft || '';
+  mentionWarning(s);
   s.mode.value = 'build';
   attachmentsMap[s.name] = next.attachments || [];
   renderAttachments(s);
@@ -8994,6 +9082,7 @@ function closeAgentTab(s: Surface, tid: string): void {
         tab.panel.classList.remove('active');
         nextTab.panel.classList.add('active');
         s.prompt.value = nextTab.promptDraft || '';
+        mentionWarning(s);
         s.mode.value = 'build';
         attachmentsMap[s.name] = nextTab.attachments || [];
         renderAttachments(s);
@@ -9596,6 +9685,85 @@ async function handleAgentDroppedFiles(dt: DataTransfer, s: Surface, tab?: Agent
   }
 }
 
+/* ----- "@" mentions in the agents panel's prompt: a menu of installed agents, and a warning for one that is not installed ----- */
+const MENTION_AT_CARET = /(^|\s)@([\w-]*)$/;
+let mentionList: { items: MenuItem[]; ids: string } | null = null;
+
+const mentionOpen = (): boolean => !!mentionList && openMenuIdx !== -1 && menuItems === mentionList.items;
+function closeMention(): void {
+  const open = mentionOpen();
+  mentionList = null;
+  if (open) closeMenu();
+}
+// Replaces the "@word" before the caret with "@<Short> ".
+function pickMention(a: DetectedAgent): void {
+  const ta = SURFACES.ide.prompt;
+  const caret = ta.selectionStart ?? ta.value.length;
+  const m = MENTION_AT_CARET.exec(ta.value.slice(0, caret));
+  const start = m ? caret - m[2].length - 1 : caret;
+  ta.setRangeText(`@${agentShortName(a)} `, start, caret, 'end');
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function updateMentionMenu(): void {
+  const ta = SURFACES.ide.prompt;
+  const m = MENTION_AT_CARET.exec(ta.value.slice(0, ta.selectionStart ?? 0));
+  const word = m ? m[2].toLowerCase() : '';
+  const matches = m ? (appState.detect?.agents ?? []).filter(a => a.found && agentMentionNames(a).some(n => n.startsWith(word))) : [];
+  if (!matches.length) { closeMention(); return; }
+  const ids = matches.map(a => a.id).join(',');
+  if (mentionOpen() && mentionList?.ids === ids) return; // the same agents are already listed
+  const items: MenuItem[] = matches.map(a => ({ label: agentShortName(a), icon: brandMark('menu-ico', a.id, a.name[0]), run: () => pickMention(a) }));
+  mentionList = { items, ids };
+  const r = ta.getBoundingClientRect();
+  popupMenu(r.left, r.top, items, () => { if (mentionList?.items === items) mentionList = null; }, ta);
+  const menu = document.querySelector<HTMLElement>('#menuRoot .menu');
+  if (menu) { // above the prompt, where the text being typed stays visible
+    menu.classList.add('up');
+    menu.style.top = `${Math.max(8, r.top - menu.offsetHeight - 6)}px`;
+  }
+  kbIdx = -1;
+  moveKbSelection(true);
+}
+// The menu is open: Up, Down, Enter, Tab and Escape belong to it. Registered before the send handler below, so Enter picks instead of sending.
+SURFACES.ide.prompt.addEventListener('keydown', e => {
+  if (!mentionOpen() || e.isComposing) return;
+  const own = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { own(); moveKbSelection(e.key === 'ArrowDown'); }
+  else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { own(); if (kbIdx >= 0) activateMenuItem(menuItems[kbIdx]); }
+  else if (e.key === 'Escape') { own(); closeMention(); }
+});
+SURFACES.ide.prompt.addEventListener('input', () => { mentionWarning(SURFACES.ide); updateMentionMenu(); });
+SURFACES.ide.prompt.addEventListener('keyup', e => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) updateMentionMenu(); });
+SURFACES.ide.prompt.addEventListener('click', updateMentionMenu);
+SURFACES.ide.prompt.addEventListener('blur', closeMention);
+
+// "@Codex" for an agent Breeze knows but that is not installed. Any other "@word" is plain text.
+function uninstalledMention(text: string): string | null {
+  const names = (appState.detect?.agents ?? []).flatMap(a => agentMentionNames(a).map(name => ({ name, a }))).sort((x, y) => y.name.length - x.name.length);
+  const re = /(^|\s)@/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const rest = text.slice(m.index + m[1].length + 1).toLowerCase();
+    const hit = names.find(n => rest.startsWith(n.name) && !/[\w-]/.test(rest[n.name.length] ?? ''));
+    if (hit && !hit.a.found) return `@${agentShortName(hit.a)} isn't installed`;
+  }
+  return null;
+}
+function mentionWarning(s: Surface): void {
+  const warn = s.name === 'ide' ? uninstalledMention(s.prompt.value) : null;
+  let el = s.prompt.parentElement?.querySelector<HTMLElement>(':scope > .mention-warn') ?? null;
+  if (!el) {
+    if (!warn) return;
+    el = document.createElement('div');
+    el.className = 'mention-warn';
+    el.setAttribute('role', 'status');
+    s.prompt.insertAdjacentElement('afterend', el);
+  }
+  el.textContent = warn ?? '';
+  el.classList.toggle('hidden', !warn);
+}
+
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => {
     const tab = getActiveTab(s);
@@ -9703,6 +9871,7 @@ async function sendPrompt(): Promise<void> {
   sfx.play('send');
   const uiMode = 'build'; // no mode picker any more: the agent works with full tools and decides how to answer
   s.prompt.value = '';
+  mentionWarning(s);
   tab.promptDraft = '';
   attachmentsMap[s.name] = [];
   tab.attachments = [];
@@ -10954,7 +11123,7 @@ function enterMode(mode: WorkMode): void {
   if (mode === 'ide') { showIde(); return; }
   swapScreen('#box');
   useSurface('box');
-  renderUser(); renderAgentPill(); renderBoxFolder();
+  renderUser(); renderAgentBar(); renderBoxFolder();
   // Box lists every agent Breeze found, so look for them if that hasn't happened yet.
   if (!appState.detect) detectTools().catch(() => toast('Could not look for agents on this computer'));
   if (!SURFACES.box.chat.children.length) restoreChat(SURFACES.box);
@@ -10987,7 +11156,7 @@ function boxAgentItems(): MenuItem[] {
       run: () => {
         appState.agent = ag.id;
         saveApp();
-        renderAgentPill();
+        renderAgentBar();
         if (SURFACES.box.chat.querySelector('.empty')) emptyChat(SURFACES.box);
         toast(`Breeze Box now uses ${ag.name}`);
       },
@@ -11355,7 +11524,7 @@ function initTooltip(): void {
     }
 
     // Never show tooltips on agents tab, agent pill, or agent tab items
-    if (target.closest('#agentTabsBar, #boxAgentTabsBar, #agentPill, #agentCount, #tglAgents, .agent-tab, .agent-tabs-list')) {
+    if (target.closest('#agentTabsBar, #boxAgentTabsBar, .agent-bar, #agentCount, #tglAgents, .agent-tab, .agent-tabs-list')) {
       if (target.hasAttribute('title')) target.removeAttribute('title');
       hideTooltip();
       return;
