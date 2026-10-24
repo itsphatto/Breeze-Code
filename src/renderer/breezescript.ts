@@ -104,7 +104,7 @@ interface BreezeApi {
   team: {
     parse(text: string): Promise<TeamParse>;
     claim(opts: { shared: string; members: { agentId: string; task: string; session: string | null }[] }): Promise<TeamClaimResult>;
-    start(opts: { teamId: string; owners: Record<string, string[]> }): Promise<Record<string, number>>;
+    start(opts: { teamId: string; owners: Record<string, string> }): Promise<Record<string, number>>;
     stop(teamId: string): Promise<void>;
     undo(opts: { teamId: string; path: string }): Promise<void>;
   };
@@ -1727,6 +1727,16 @@ function agentShortName(a: DetectedAgent): string {
 function agentMentionNames(a: DetectedAgent): string[] {
   return [...new Set([agentShortName(a), a.name, a.id].map(n => String(n).toLowerCase()))];
 }
+// An agent's short name by id, whether or not the last scan found it.
+function agentNameOf(id: string): string {
+  const a = appState.detect?.agents.find(x => x.id === id);
+  return a ? agentShortName(a) : AGENT_SHORT_NAMES.get(id) ?? id;
+}
+// The logo and short name that mark an agent's lines in a team chat.
+function agentBadge(agentId: string): string {
+  const name = agentNameOf(agentId);
+  return `<span class="agent-tag">${brandMark('agent-tag-logo', agentId, name[0] ?? '?')}<b>${esc(name)}</b></span>`;
+}
 
 function makeDefaultAgent(ag: DetectedAgent): void {
   appState.agent = ag.id;
@@ -2725,7 +2735,8 @@ const isDirty = (b?: EditorBuffer) => !!b && b.kind === 'text' && b.text !== b.s
 let sessionTimer: TimeoutId | undefined;
 let openTabs: string[] = [];
 let active: string | null = null;
-const locks: Record<string, AgentKey> = {};
+// The files agents are editing: the phase (for its colour) and the agent itself (a team has several).
+const locks: Record<string, { phase: AgentKey; agent: string }> = {};
 const added: Record<string, Set<number>> = {};
 let ctxPath: string | null = null;
 
@@ -4519,7 +4530,7 @@ function fileNameHtml(filename: string): string {
 function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof gitDecor>, enter: boolean): string {
   const open = e.dir && expanded.has(p);
   const lock = locks[p];
-  const lockTag = lock ? `<span class="lock tint-${lock}">${agentsDef[lock].name}</span>` : '';
+  const lockTag = lock ? `<span class="lock tint-${lock.phase}" title="${escAttr(`${agentNameOf(lock.agent)} is editing this`)}">${agentsDef[lock.phase].name}</span>` : '';
   const g = e.dir ? (decor.dirs.has(p) && 'has-changes') || '' : decor.files.get(p) ?? '';
   const isIgnored = isIgnoredPath(p, decor.ignored);
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
@@ -5001,7 +5012,7 @@ function tabHtml(n: string): string {
   const b = buffers.get(n);
   const cls = ['tab', n === active ? 'on' : '', isDirty(b) ? 'dirty' : '', b?.diags?.length ? 'has-err' : '', seenTabs.has(n) ? '' : 'enter'].filter(Boolean).join(' ');
   seenTabs.add(n);
-  const dot = lock ? `<span class="dot tint-${lock}"></span>` : '';
+  const dot = lock ? `<span class="dot tint-${lock.phase}" title="${escAttr(`${agentNameOf(lock.agent)} is editing this`)}"></span>` : '';
   const f = gitState.files?.find(x => x.path === n);
   const st = f && statusOf(f);
   const gitTag = st ? `<span class="gst ${st.cls}" title="${st.title}">${st.letter}</span>` : '';
@@ -8786,6 +8797,8 @@ interface Run {
   announce: boolean;
 }
 let agentRun: Run | null = null;
+// The team member whose event is being handled; addMsg gives its lines its logo and name. Null outside team tabs.
+let labelAgent: string | null = null;
 let lastRunFiles: string[] = [];
 
 interface AgentTabState {
@@ -8805,6 +8818,19 @@ interface AgentTabState {
   unreadDone?: boolean;
   lastTeamId?: string;
   agentTeam?: AgentTeamState;
+  // While a team is planning who does what (claim pass, then the split card); `runId` is -1 meanwhile.
+  teamClaim?: TeamClaimState;
+  // Send is waiting for the mention parse, so a second Enter does not send the prompt twice.
+  parsing?: boolean;
+}
+
+interface TeamClaimState {
+  members: { agentId: string; task: string }[];
+  line: HTMLElement;          // the "Planning who does what" line
+  cancelled: boolean;         // Stop was pressed: the team is stopped as soon as its id is known
+  teamId?: string;
+  removed?: Set<string>;      // members taken off on the split card
+  cancel?: () => void;        // set while the split card is open: Stop does what its Cancel does
 }
 
 // A team of agents building in parallel inside one chat tab (the UI is built on this in the next tasks).
@@ -8814,6 +8840,11 @@ interface AgentTeamState {
   pending: number;
   names: Record<string, string>;
   stripEl: HTMLElement;
+  finished?: Set<number>;     // runs whose done has arrived
+  failed?: Set<string>;       // members that did not finish (error or stopped)
+  hidden?: Set<number>;       // runs of members removed on the split card: stopped at once, never shown
+  crossings?: Set<string>;    // one key per agent and path that crossed (see crossingKey)
+  stopped?: boolean;          // the person stopped the team
 }
 
 // The tab (and run) a run id belongs to: a tab's own single run, or one member of its agent team.
@@ -8831,11 +8862,20 @@ const surfaceTabs: Record<WorkMode, AgentTabState[]> = { ide: [], box: [] };
 const activeTabId: Record<WorkMode, string> = { ide: '', box: '' };
 const createdTabIds = new Set<string>();
 
+// A tab is busy while a run, a team's claim pass (runId -1) or any member of its team is still going.
+function tabBusy(t: AgentTabState): boolean {
+  return t.runId != null || (t.agentTeam?.pending ?? 0) > 0;
+}
 function hasAnyActiveRun(): boolean {
   for (const list of Object.values(surfaceTabs)) {
-    if (list.some(t => t.runId != null)) return true;
+    if (list.some(tabBusy)) return true;
   }
   return false;
+}
+function refreshTabBusy(tab: AgentTabState): void {
+  const s = SURFACES[tab.surfaceName];
+  if (tab.id === activeTabId[tab.surfaceName]) updateTabBusyState(s, tab);
+  renderAgentTabs(s);
 }
 
 function getActiveTab(s: Surface = surface): AgentTabState {
@@ -8943,7 +8983,7 @@ function renderAgentTabs(s: Surface): void {
 
   list.forEach(t => {
     const isActive = t.id === curId;
-    const isRunning = t.runId != null;
+    const isRunning = tabBusy(t);
     let el = tabsList.querySelector<HTMLElement>(`[data-agent-tab="${t.id}"]`);
 
     if (!el) {
@@ -9044,9 +9084,8 @@ function closeAgentTab(s: Surface, tid: string): void {
   if (idx === -1) return;
   const tab = surfaceTabs[s.name][idx];
   archiveChatTab(s, tab);
-  if (tab.runId != null) {
-    background(api.agent.stop(tab.runId));
-  }
+  if (tabBusy(tab)) stopAgent(tab);
+  else if (tab.agentTeam || tab.lastTeamId) dropAgentTeam(tab); // its snapshots go with it
 
   const tabsList = s.name === 'box' ? $('#boxAgentTabsList') : $('#agentTabsList');
   const tabEl = tabsList?.querySelector<HTMLElement>(`[data-agent-tab="${tid}"]`);
@@ -9125,7 +9164,7 @@ function closeAgentTab(s: Surface, tid: string): void {
 
 function updateTabBusyState(s: Surface, tab?: AgentTabState): void {
   const t = tab || getActiveTab(s);
-  const on = t.runId != null;
+  const on = tabBusy(t);
   s.send.classList.toggle('stop', on);
   void setIcon(s.send, on ? 'stop' : 'send');
   const span = $('span', s.send);
@@ -9162,6 +9201,12 @@ function addMsg(html: string, tab?: AgentTabState): HTMLElement {
   const d = document.createElement('div');
   d.innerHTML = html;
   const el = d.firstElementChild as HTMLElement;
+  if (labelAgent) {
+    el.dataset.agent = labelAgent;
+    // A tool line's first child is its icon, so the badge goes in front of it instead.
+    const head = el.classList.contains('tool-line') ? el : el.firstElementChild ?? el;
+    head.insertAdjacentHTML('afterbegin', agentBadge(labelAgent));
+  }
   const thinking = t.panel.querySelector('.thinking');
   if (thinking) {
     t.panel.insertBefore(el, thinking);
@@ -9190,7 +9235,9 @@ function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
   const t = tab || getActiveTab(msgSurface);
   const { name, letter, tint } = speaker(k, SURFACES[t.surfaceName]);
   sfx.play('answer');
-  return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`, t);
+  // In a team the agent's badge (added by addMsg) names the speaker instead.
+  const who = labelAgent ? '' : `${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> `;
+  return addMsg(`<div class="msg"><div class="meta">${who}${clockTime()}</div><div class="body">${html}</div></div>`, t);
 }
 
 function userMsg(text: string, attachments?: AgentAttachment[], tab?: AgentTabState): void {
@@ -9332,7 +9379,7 @@ function toolLine(kind: string, label: string, tab?: AgentTabState): void {
 // The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
 const chatScope = (s: Surface) => (s.name === 'box' ? 'box' : rootInfo?.root ?? '');
 const chatKey = (s: Surface = msgSurface) => `breeze.chat:${chatScope(s)}`;
-const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${chatScope(s)}:${appState.agent ?? ''}`;
+const agentSessionKey = (s: Surface = msgSurface, agent: string | null = appState.agent) => `breeze.agentSession:${chatScope(s)}:${agent ?? ''}`;
 
 /* ----- Chat history: "New chat" files the current conversation away; the clock button brings one back ----- */
 // `sessions` is the current shape; an older entry has `session` (+ `agent`) instead, and openChat turns that into `sessions`.
@@ -9346,7 +9393,7 @@ const chatHistory = (s: Surface) => store.get<ChatEntry[]>(historyKey(s), []);
 function archiveChatTab(s: Surface, tab: AgentTabState): void {
   if (s.name === 'ide' && !rootInfo) return;
   if (tab.panel.querySelector('.empty') && !tab.panel.querySelector('.msg')) return;
-  const html = [...tab.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+  const html = [...tab.panel.children].filter(c => !c.classList.contains('thinking') && !c.classList.contains('team-strip')).map(c => c.outerHTML).join('');
   if (!html?.includes('class="msg')) return;
   if (!tab.historyId) tab.historyId = newChatId();
   const id = tab.historyId;
@@ -9367,7 +9414,7 @@ function archiveChat(s: Surface): void {
 function chatHtml(s: Surface): string {
   const t = getActiveTab(s);
   if (t.panel.querySelector('.empty')) return '';
-  return [...t.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+  return [...t.panel.children].filter(c => !c.classList.contains('thinking') && !c.classList.contains('team-strip')).map(c => c.outerHTML).join('');
 }
 let chatTimer: TimeoutId | undefined;
 function saveChat(tab?: AgentTabState): void {
@@ -9425,6 +9472,7 @@ function openChat(s: Surface, e: ChatEntry): void {
   tab.sessions = e.sessions ? { ...e.sessions } : (e.session && e.agent ? { [e.agent]: e.session } : {});
   setSavedHtml(tab.panel, e.html);
   $$('[data-live]', tab.panel).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
+  $$('.team-claiming', tab.panel).forEach(el => el.classList.add('settled')); // saved mid-claim: stop its spinners
   switchAgentTab(s, tab.id);
   resetTeam();
   s.prompt.focus();
@@ -9767,7 +9815,7 @@ function mentionWarning(s: Surface): void {
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => {
     const tab = getActiveTab(s);
-    if (tab.runId != null) stopAgent(tab);
+    if (tabBusy(tab)) stopAgent(tab);
     else void sendPrompt();
   };
   s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
@@ -9851,6 +9899,21 @@ commands['agent.stop'] = () => stopAgent();
 
 function stopAgent(targetTab?: AgentTabState): void {
   const tab = targetTab || getActiveTab(surface);
+  const team = tab.agentTeam;
+  if (team && team.pending > 0) {
+    team.stopped = true;
+    background(api.team.stop(team.id));
+    return;
+  }
+  const claim = tab.teamClaim;
+  if (claim) {
+    if (claim.cancel) { claim.cancel(); return; } // the split card is open: same as its Cancel
+    if (claim.cancelled) return;
+    claim.cancelled = true;
+    if (claim.teamId) background(api.team.stop(claim.teamId)); // the team is starting
+    else setClaimLabel(claim.line, 'Stopping…'); // the claim pass has no team id yet: it is stopped when it returns
+    return;
+  }
   if (tab.runId != null) background(api.agent.stop(tab.runId));
 }
 
@@ -9862,20 +9925,35 @@ async function sendPrompt(): Promise<void> {
   const text = s.prompt.value.trim();
   const attachments = [...(attachmentsMap[s.name] || [])];
   const tab = getActiveTab(s);
-  if ((!text && !attachments.length) || tab.runId != null) return;
+  if ((!text && !attachments.length) || tabBusy(tab) || tab.parsing) return;
   const agent = selectedAgent();
   if (!agent) { openAgentPicker(); return; }
   if (s.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
 
+  // @mentions split an IDE prompt between agents. Breeze Box sends "@Codex" as plain text to its agent.
+  let parsed: TeamParse | null = null;
+  if (s.name === 'ide' && text.includes('@')) {
+    tab.parsing = true;
+    try { parsed = await api.team.parse(text); } catch { parsed = null; } finally { tab.parsing = false; }
+    if (tabBusy(tab)) return;
+    // Only an agent Breeze knows but that isn't installed stops the send; "@types/node" and the like are plain text.
+    const missing = parsed && uninstalledAgent(parsed.unknown);
+    if (missing) { toast(`${agentShortName(missing)} isn't installed. Install it from Settings → Agents`); return; }
+  }
+  const onScreen = getActiveTab(s) === tab; // the parse is async: the person may have switched tabs meanwhile
+
   msgSurface = s;
   sfx.play('send');
   const uiMode = 'build'; // no mode picker any more: the agent works with full tools and decides how to answer
-  s.prompt.value = '';
-  mentionWarning(s);
+  if (onScreen) {
+    s.prompt.value = '';
+    mentionWarning(s);
+    attachmentsMap[s.name] = [];
+    renderAttachments(s);
+  }
   tab.promptDraft = '';
-  attachmentsMap[s.name] = [];
   tab.attachments = [];
-  renderAttachments(s);
+  dropAgentTeam(tab);
 
   if (tab.panel.querySelector('.empty')) tab.panel.innerHTML = '';
 
@@ -9893,17 +9971,395 @@ async function sendPrompt(): Promise<void> {
   renderAgents();
   userMsg(text, attachments, tab);
 
-  let agentPrompt = text;
-  if (attachments.length) {
-    const fileHeaders = attachments.map(a => {
-      const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
-      if (kind === 'folder') return `[Attached folder: ${a.path || a.fileRel || a.name}]`;
-      if (kind === 'file') return `[Attached file: ${a.path || a.fileRel || a.name}]`;
-      return `[Attached image: ${a.fileRel || a.name}]`;
-    }).join('\n');
-    agentPrompt = fileHeaders + (text ? `\n\n${text}` : '\nPlease inspect the attached files/folders.');
+  const headers = attachmentHeaders(attachments);
+  const tasks = parsed?.tasks ?? [];
+  if (parsed && tasks.length >= 2) {
+    await startAgentTeam(tab, { ...parsed, shared: [headers, parsed.shared].filter(Boolean).join('\n\n') });
+    return;
   }
-  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', agentPrompt, uiMode, tab, true);
+  if (parsed && tasks.length === 1) {
+    const body = [parsed.shared, tasks[0].text].filter(Boolean).join('\n\n') || text;
+    await startAgentRun(tasks[0].agentId, MODES[uiMode] ?? 'plan', withAttachments(headers, body), uiMode, tab, true);
+    return;
+  }
+  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', withAttachments(headers, text), uiMode, tab, true);
+}
+
+function attachmentHeaders(attachments: AgentAttachment[]): string {
+  return attachments.map(a => {
+    const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
+    if (kind === 'folder') return `[Attached folder: ${a.path || a.fileRel || a.name}]`;
+    if (kind === 'file') return `[Attached file: ${a.path || a.fileRel || a.name}]`;
+    return `[Attached image: ${a.fileRel || a.name}]`;
+  }).join('\n');
+}
+function withAttachments(headers: string, text: string): string {
+  if (!headers) return text;
+  return headers + (text ? `\n\n${text}` : '\nPlease inspect the attached files/folders.');
+}
+
+// The first word of a parse's `unknown` that names an agent Breeze knows but this computer doesn't have.
+function uninstalledAgent(words: string[]): DetectedAgent | null {
+  const agents = appState.detect?.agents ?? [];
+  for (const w of words) {
+    const a = agents.find(x => !x.found && agentMentionNames(x).includes(w.toLowerCase()));
+    if (a) return a;
+  }
+  return null;
+}
+
+// A new prompt ends the tab's last team: main drops it (and its snapshots), so the old summary's Undo says so.
+function dropAgentTeam(tab: AgentTabState): void {
+  const old = tab.agentTeam; // still here only when every member is done and its team-done has not come
+  const id = old?.id ?? tab.lastTeamId;
+  tab.agentTeam = undefined;
+  tab.lastTeamId = undefined;
+  tab.panel.querySelector(':scope > .team-strip')?.remove();
+  if (id) background(api.team.stop(id));
+}
+
+/* ----- Agent teams: two or more @mentioned agents split one prompt and build side by side ----- */
+function setClaimLabel(line: HTMLElement, text: string): void {
+  const lbl = line.querySelector<HTMLElement>('.lbl');
+  if (lbl) lbl.textContent = text;
+}
+function settleClaimLine(line: HTMLElement, text: string): void {
+  line.classList.add('settled');
+  setClaimLabel(line, text);
+}
+// The claim step is over (cancelled, failed, or handed to the build): the tab is free again unless a run took it.
+function endTeamClaim(tab: AgentTabState, claim: TeamClaimState): void {
+  if (tab.teamClaim !== claim) return;
+  tab.teamClaim = undefined;
+  if (tab.runId === -1) { tab.runId = null; tab.run = null; }
+  refreshTabBusy(tab);
+}
+
+async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<void> {
+  const members = parsed.tasks.map(t => ({ agentId: t.agentId, task: t.text }));
+  const line = addMsg(`<div class="team-claiming" role="status">${members.map(m => `<span class="team-claim-member">${agentBadge(m.agentId)}</span>`).join('')}<span class="lbl">Planning who does what</span></div>`, tab);
+  const claimState: TeamClaimState = { members, line, cancelled: false };
+  tab.teamClaim = claimState;
+  tab.runId = -1; // busy: Send turns into Stop
+  tab.run = null;
+  refreshTabBusy(tab);
+
+  let claim: TeamClaimResult;
+  try {
+    claim = await api.team.claim({ shared: parsed.shared, members: members.map(m => ({ ...m, session: tab.sessions[m.agentId] ?? null })) });
+  } catch (e) {
+    endTeamClaim(tab, claimState);
+    if (claimState.cancelled) { settleClaimLine(line, 'Cancelled'); return; }
+    settleClaimLine(line, 'Couldn’t plan who does what');
+    errorCard(errMsg(e), undefined, tab);
+    return;
+  }
+  const s = SURFACES[tab.surfaceName];
+  for (const [agentId, id] of Object.entries(claim.sessions ?? {})) {
+    tab.sessions[agentId] = id;
+    store.set(agentSessionKey(s, agentId), id);
+  }
+  if (claimState.cancelled) {
+    background(api.team.stop(claim.teamId));
+    settleClaimLine(line, 'Cancelled');
+    endTeamClaim(tab, claimState);
+    return;
+  }
+  claimState.teamId = claim.teamId;
+  settleClaimLine(line, 'Planned who does what');
+  saveChat(tab);
+
+  const owners = await splitCard(tab, claim);
+  if (!owners) return; // Cancel: the card stopped the team and freed the tab
+
+  const removed = claimState.removed ?? new Set<string>();
+  const keep = members.filter(m => !removed.has(m.agentId));
+  if (keep.length < 2) {
+    // One agent left: it runs on its own, as if it had been the only one mentioned.
+    background(api.team.stop(claim.teamId));
+    endTeamClaim(tab, claimState);
+    const m = keep[0];
+    if (m) await startAgentRun(m.agentId, 'build', [parsed.shared, m.task].filter(Boolean).join('\n\n'), 'build', tab, true);
+    return;
+  }
+
+  let ids: Record<string, number>;
+  try {
+    ids = await api.team.start({ teamId: claim.teamId, owners });
+  } catch (e) {
+    const cancelled = claimState.cancelled;
+    endTeamClaim(tab, claimState);
+    background(api.team.stop(claim.teamId));
+    if (cancelled) addMsg('<div class="handoff">Stopped by you</div>', tab);
+    else errorCard(errMsg(e), undefined, tab);
+    return;
+  }
+
+  const runs = new Map<number, Run>();
+  const names: Record<string, string> = {};
+  const hidden = new Set<number>();
+  for (const m of members) {
+    const id = ids[m.agentId];
+    if (typeof id !== 'number') continue;
+    runs.set(id, { id, tabId: tab.id, surfaceName: tab.surfaceName, agent: m.agentId, mode: 'build', uiMode: 'build', phase: 'builder', tools: 0, files: new Set(), plan: null, lastText: '', replied: false, announce: false });
+    names[m.agentId] = agentNameOf(m.agentId);
+    // Main starts every member it claimed with; one taken off the card is stopped before it does anything.
+    if (removed.has(m.agentId)) { hidden.add(id); background(api.agent.stop(id)); }
+  }
+  const shown = [...runs.values()].filter(r => !hidden.has(r.id));
+  tab.panel.querySelector(':scope > .team-strip')?.remove();
+  const stripEl = document.createElement('div');
+  stripEl.className = 'team-strip';
+  stripEl.setAttribute('role', 'status');
+  stripEl.innerHTML = shown.map(r => `<span class="team-chip working" data-team-chip="${escAttr(r.agent)}">${agentBadge(r.agent)}<span class="team-chip-state">working</span></span>`).join('');
+  tab.panel.prepend(stripEl);
+
+  const agentTeam: AgentTeamState = {
+    id: claim.teamId, runs, pending: runs.size, names, stripEl,
+    finished: new Set(), failed: new Set(), hidden, crossings: new Set(), stopped: claimState.cancelled,
+  };
+  tab.agentTeam = agentTeam;
+  tab.teamClaim = undefined;
+  const first = shown[0] ?? null;
+  tab.runId = first?.id ?? null;
+  tab.run = first;
+  agentRun = first;
+  refreshTabBusy(tab);
+  if (!runs.size) { errorCard('The team did not start.', undefined, tab); return; }
+
+  agentsDef.builder.used = 0;
+  setAgent('builder', 'working', 'Working as a team', 0);
+  const who = shown.map(r => names[r.agent]);
+  showThinking(`${who.slice(0, -1).join(', ')} and ${who[who.length - 1]} are working`, 'builder', tab);
+  // Events that came in before the run ids did; other runs' early events stay queued for their own runs.
+  for (let i = 0; i < earlyEvents.length;) {
+    const [runId, ev] = earlyEvents[i];
+    const run = runs.get(runId);
+    if (run && tab.agentTeam === agentTeam) { earlyEvents.splice(i, 1); handleAgentEvent(run, ev, tab); }
+    else i++;
+  }
+}
+
+// One column per member and a row per clash. Resolves with the owners on Start, null on Cancel.
+function splitCard(tab: AgentTabState, claim: TeamClaimResult): Promise<Record<string, string> | null> {
+  const c = tab.teamClaim;
+  const members = c?.members ?? Object.keys(claim.claims).map(agentId => ({ agentId, task: '' }));
+  const removed = new Set<string>();
+  if (c) c.removed = removed;
+  const oneLine = (t: string) => t.replaceAll(/\s+/g, ' ').trim();
+  const order = members.map(m => m.agentId);
+  const cols = members.map(m => {
+    const paths = claim.claims[m.agentId] ?? [];
+    let body: string;
+    if (claim.failed.includes(m.agentId)) {
+      body = `<p class="split-failed">Couldn't list its files. It will own files it touches first.</p><button type="button" class="link-btn" data-remove="${escAttr(m.agentId)}">Remove</button>`;
+    } else if (paths.length) {
+      body = `<ul class="split-paths">${paths.map(p => `<li><code>${esc(p)}</code></li>`).join('')}</ul>`;
+    } else {
+      body = '<p class="split-none">No files listed</p>';
+    }
+    const task = oneLine(m.task);
+    return `<div class="split-col" data-col="${escAttr(m.agentId)}">${agentBadge(m.agentId)}<div class="split-task" title="${escAttr(task)}">${esc(task || 'No task')}</div>${body}</div>`;
+  }).join('');
+  // The first-mentioned agent is picked by default.
+  const clashes = claim.clashes.map(k => ({ path: k.path, agents: order.filter(a => k.agents.includes(a)) })).filter(k => k.agents.length);
+  const rows = clashes.map((k, i) => `<div class="split-clash" data-clash="${i}"><code>${esc(k.path)}</code><div class="seg" role="radiogroup" aria-label="${escAttr(`Who owns ${k.path}`)}">${k.agents.map((a, j) => `<button type="button" role="radio" class="${j ? '' : 'on'}" aria-checked="${j ? 'false' : 'true'}" data-pick="${escAttr(a)}">${esc(agentNameOf(a))}</button>`).join('')}</div></div>`).join('');
+  const clashHtml = rows ? `<div class="split-clashes"><p>More than one agent wants these. Pick who owns each:</p>${rows}</div>` : '';
+  const el = addMsg(`<div class="card team-split"><h5>${svgIcon('columns', 14)} Who does what</h5><div class="split-cols">${cols}</div>${clashHtml}<div class="row" data-live><button class="btn btn-primary btn-sm" data-split="start">Start</button><button class="btn btn-sm" data-split="cancel">Cancel</button></div></div>`, tab);
+
+  $$<HTMLButtonElement>('.seg button', el).forEach(b => b.onclick = () => {
+    for (const o of $$<HTMLButtonElement>('button', b.parentElement!)) {
+      o.classList.toggle('on', o === b);
+      o.setAttribute('aria-checked', String(o === b));
+    }
+  });
+  const removeLinks = () => $$<HTMLButtonElement>('[data-remove]', el);
+  removeLinks().forEach(b => b.onclick = () => {
+    const id = b.dataset.remove ?? '';
+    removed.add(id);
+    el.querySelector(`[data-col="${CSS.escape(id)}"]`)?.classList.add('removed');
+    b.outerHTML = '<span class="split-removed">Removed</span>';
+    // Someone has to do the work: the last member left can't be removed.
+    if (members.length - removed.size <= 1) removeLinks().forEach(x => x.remove());
+    saveChat(tab);
+  });
+
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (owners: Record<string, string> | null, label: string) => {
+      if (settled) return;
+      settled = true;
+      if (c) c.cancel = undefined;
+      el.querySelector('[data-live]')?.replaceWith(Object.assign(document.createElement('div'), { className: 'resolved', textContent: label }));
+      $$<HTMLButtonElement>('button', el).forEach(b => { b.disabled = true; });
+      removeLinks().forEach(x => x.remove());
+      saveChat(tab);
+      resolve(owners);
+    };
+    const cancel = () => {
+      background(api.team.stop(claim.teamId));
+      if (c) endTeamClaim(tab, c);
+      else refreshTabBusy(tab);
+      finish(null, '✕ Cancelled');
+    };
+    if (c) c.cancel = cancel;
+    $<HTMLButtonElement>('[data-split="cancel"]', el).onclick = cancel;
+    $<HTMLButtonElement>('[data-split="start"]', el).onclick = () => {
+      // Every claimed path goes to its claimer (first claim wins), then each clash to the agent picked for it.
+      const owners = new Map<string, string>();
+      for (const m of members) {
+        if (removed.has(m.agentId)) continue;
+        for (const p of claim.claims[m.agentId] ?? []) if (!owners.has(p)) owners.set(p, m.agentId);
+      }
+      clashes.forEach((k, i) => {
+        const pick = el.querySelector<HTMLElement>(`[data-clash="${i}"] button.on`)?.dataset.pick;
+        if (pick && !removed.has(pick)) owners.set(k.path, pick);
+      });
+      sfx.play('approve');
+      finish(Object.fromEntries(owners), '✓ Started');
+    };
+  });
+}
+
+// The key for a crossing in AgentTeamState.crossings.
+function crossingKey(agent: string, path: string): string {
+  return `${agent}|${path}`;
+}
+
+function crossingCard(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  const team = tab.agentTeam;
+  if (!team) return;
+  const who = ev.agent ?? r.agent;
+  const name = team.names[who] ?? agentNameOf(who);
+  const owner = ev.owner ? team.names[ev.owner] ?? agentNameOf(ev.owner) : 'a teammate';
+  const path = ev.path ?? '';
+  team.crossings?.add(crossingKey(who, path));
+  const at = `<code>${esc(path)}</code> (${esc(owner)}'s)`;
+  let head: string;
+  if (ev.blocked) head = `${esc(name)} tried to edit ${at} and was stopped.`;
+  else if (ev.error) head = `${esc(name)} tried to edit ${at}.`; // it was not put back: the line below says why
+  else head = `${esc(name)} tried to edit ${at}. Breeze put it back.`;
+  const failed = ev.error ? `<p class="crossing-error">${esc(`Breeze couldn't put it back: ${ev.error}`)}</p><div class="row" data-live><button class="btn btn-sm" data-crossing-undo>Undo</button></div>` : '';
+  sfx.play('tool');
+  const el = addMsg(`<div class="card crossing"><h5>${svgIcon('alert', 14)} Crossing</h5><p>${head}</p>${failed}</div>`, tab);
+  const undo = el.querySelector<HTMLButtonElement>('[data-crossing-undo]');
+  if (undo) undo.onclick = () => undoTeamFile(team.id, path, undo, tab);
+}
+
+// Puts one file back from the team's snapshot. A finished (dropped) team rejects, and the toast says so.
+function undoTeamFile(teamId: string, path: string, btn: HTMLButtonElement, tab: AgentTabState): void {
+  const live = btn.closest<HTMLElement>('[data-live]');
+  btn.disabled = true;
+  api.team.undo({ teamId, path }).then(() => {
+    live?.replaceWith(Object.assign(document.createElement('div'), { className: 'resolved', textContent: '✓ Undone' }));
+    const b = buffers.get(path);
+    if (b?.kind === 'text' && !holdsUserEdits(b)) void reloadText(b);
+    renderTree(); queueGitRefresh();
+    saveChat(tab);
+  }, e => {
+    btn.disabled = false;
+    toast(errMsg(e));
+  });
+}
+
+function teamSummary(tab: AgentTabState, team: AgentTeamState, ev: AgentEvent): void {
+  const shown = [...team.runs.values()].filter(r => !team.hidden?.has(r.id));
+  const crossed = team.crossings ?? new Set<string>();
+  const memberRows = shown.map(r => {
+    const files = [...r.files].filter(p => !crossed.has(crossingKey(r.agent, p))); // a crossing was put back
+    let what: string;
+    if (team.failed?.has(r.agent)) what = '<span class="ts-unfinished">not finished</span>';
+    else if (files.length) what = files.map(p => `<code>${esc(p)}</code>`).join('');
+    else what = '<span class="ts-none">No files changed</span>';
+    return `<div class="ts-member">${agentBadge(r.agent)}<div class="ts-files">${what}</div></div>`;
+  }).join('');
+  const crossings = `<p class="ts-crossings">${crossed.size ? plural(crossed.size, 'crossing') : 'No crossings'}</p>`;
+  const notes = Object.entries(ev.notes ?? {}).flatMap(([from, to]) => Object.entries(to ?? {}).map(([toName, text]) =>
+    `<li>${esc(`${team.names[from] ?? agentNameOf(from)} → ${toName}: ${text}`).replaceAll('\n', '<br>')}</li>`));
+  const notesHtml = notes.length ? `<ul class="ts-notes">${notes.join('')}</ul>` : '';
+  const changed = (ev.changed ?? []).map(p => `<div class="ts-changed" data-path="${escAttr(p)}"><code>${esc(p)}</code><div class="row" data-live><button class="btn btn-sm" data-ts="undo">Undo</button><button class="btn btn-sm" data-ts="keep">Keep</button></div></div>`).join('');
+  const changedHtml = changed ? `<div class="ts-changes"><p>These files changed, but no agent said it edited them:</p>${changed}</div>` : '';
+  const skipped = ev.skipped?.length ? `<p class="ts-skipped">Not protected (too large): ${ev.skipped.map(p => `<code>${esc(p)}</code>`).join(', ')}</p>` : '';
+  const error = ev.error ? `<p class="ts-error">${esc(`Breeze couldn't check for other changes: ${ev.error}`)}</p>` : '';
+  const trouble = !!team.failed?.size || !!team.stopped;
+  let title = 'Team finished';
+  if (team.stopped) title = 'Team stopped';
+  else if (trouble) title = 'Team finished, with problems';
+  const el = addMsg(`<div class="card team-summary${trouble ? ' trouble' : ''}"><h5>${svgIcon(trouble ? 'alert' : 'check', 14)} ${title}</h5><div class="ts-members">${memberRows}</div>${crossings}${notesHtml}${changedHtml}${skipped}${error}</div>`, tab);
+  $$<HTMLElement>('.ts-changed', el).forEach(row => {
+    const path = row.dataset.path ?? '';
+    const undo = row.querySelector<HTMLButtonElement>('[data-ts="undo"]');
+    const keep = row.querySelector<HTMLButtonElement>('[data-ts="keep"]');
+    if (undo) undo.onclick = () => undoTeamFile(team.id, path, undo, tab);
+    if (keep) keep.onclick = () => {
+      row.querySelector('[data-live]')?.replaceWith(Object.assign(document.createElement('div'), { className: 'resolved', textContent: '✓ Kept' }));
+      saveChat(tab);
+    };
+  });
+}
+
+// One member's done. The tab stays busy (and its locks and thinking line stay) until every member is done.
+function finishTeamMember(r: Run, ev: AgentEvent, tab: AgentTabState, team: AgentTeamState): void {
+  const finished = team.finished ??= new Set();
+  if (finished.has(r.id)) return;
+  finished.add(r.id);
+  if (agentRun?.id === r.id) agentRun = null;
+  const ok = !!ev.ok && !ev.stopped;
+  if (!team.hidden?.has(r.id)) {
+    if (!ok) (team.failed ??= new Set()).add(r.agent);
+    const chip = team.stripEl.querySelector<HTMLElement>(`[data-team-chip="${CSS.escape(r.agent)}"]`);
+    if (chip) {
+      chip.classList.remove('working');
+      chip.classList.add(ok ? 'done' : 'failed');
+      const state = chip.querySelector('.team-chip-state');
+      if (state) state.textContent = ok ? 'done' : ev.stopped ? 'stopped' : 'failed';
+    }
+  }
+  for (const [p, l] of Object.entries(locks)) if (l.agent === r.agent) delete locks[p];
+  renderTree(); renderTabs();
+  queueGitRefresh();
+  team.pending = Math.max(0, team.pending - 1);
+  if (team.pending > 0) return;
+
+  // Every member is done. The summary comes with team-done; the tab is free now either way.
+  if (tab.agentTeam === team) { tab.runId = null; tab.run = null; }
+  hideThinking(tab);
+  for (const k of Object.keys(locks)) delete locks[k];
+  renderTree(); renderTabs();
+  refreshTabBusy(tab);
+  const all = [...team.runs.values()].filter(x => !team.hidden?.has(x.id));
+  lastRunFiles = [...new Set(all.flatMap(x => [...x.files]))];
+  const tools = all.reduce((n, x) => n + x.tools, 0);
+  const allOk = !team.failed?.size && !team.stopped;
+  const label = labelAgent;
+  labelAgent = null; // these lines are the team's, not the last member's
+  if (team.stopped) {
+    addMsg('<div class="handoff">Stopped by you</div>', tab);
+    setAgent('builder', 'idle', 'Stopped', tools);
+  } else if (!allOk) {
+    setAgent('builder', 'idle', 'Stopped with an error', tools);
+  } else {
+    setAgent('builder', 'done', lastRunFiles.length ? `Changed ${plural(lastRunFiles.length, 'file')}` : 'Answered', tools);
+    sfx.play('success');
+  }
+  labelAgent = label;
+  if (!hasAnyActiveRun()) vibeDone(allOk);
+  const s = SURFACES[tab.surfaceName];
+  s.prompt.placeholder = 'Describe what you want to build';
+  if (lastRunFiles.length && running) void reloadPreview();
+}
+
+// team-done comes once on every member's run: the first one shows the summary and ends the team.
+function onTeamDone(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  const team = tab.agentTeam;
+  if (!team || !team.runs.has(r.id) || (ev.teamId && ev.teamId !== team.id)) return;
+  // Main sends it after every member's done; should one be missing, that member did not finish.
+  for (const run of team.runs.values()) if (!team.finished?.has(run.id)) finishTeamMember(run, { t: 'done', ok: false }, tab, team);
+  teamSummary(tab, team, ev);
+  tab.lastTeamId = team.id;
+  tab.agentTeam = undefined;
+  if (tab.runId != null && team.runs.has(tab.runId)) { tab.runId = null; tab.run = null; }
+  refreshTabBusy(tab);
 }
 
 async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string, tab: AgentTabState, announce = false): Promise<void> {
@@ -9962,7 +10418,7 @@ function errorCard(text: string, hint?: string, tab?: AgentTabState): void {
 
 function onAgentFile(r: Run, path: string): void {
   r.files.add(path);
-  locks[path] = r.phase;
+  locks[path] = { phase: r.phase, agent: r.agent };
   renderTree(); renderTabs();
   queueGitRefresh();
   if (r.surfaceName === 'ide') background(openAgentFile(path));
@@ -9997,7 +10453,7 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
   session: (r, ev, tab) => {
     if (ev.id) {
       tab.sessions[r.agent] = ev.id;
-      store.set(agentSessionKey(SURFACES[tab.surfaceName]), ev.id);
+      store.set(agentSessionKey(SURFACES[tab.surfaceName], r.agent), ev.id);
     }
   },
   text: (r, ev, tab) => {
@@ -10047,11 +10503,22 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
   },
   error: (r, ev, tab) => onAgentError(r, ev, tab),
   done: (r, ev, tab) => finishRun(r, ev, tab),
+  crossing: (r, ev, tab) => crossingCard(r, ev, tab),
+  'team-done': (r, ev, tab) => onTeamDone(r, ev, tab),
 };
 
 function handleAgentEvent(r: Run, ev: AgentEvent, tab: AgentTabState): void {
-  if (!r.replied && ev.t !== 'session' && ev.t !== 'done') onFirstReply(r, tab);
-  AGENT_EVENTS[ev.t]?.(r, ev, tab);
+  const team = tab.agentTeam?.runs.has(r.id) ? tab.agentTeam : undefined;
+  // A member removed on the split card is stopped as it starts: only its end matters.
+  if (team?.hidden?.has(r.id) && ev.t !== 'done' && ev.t !== 'team-done') return;
+  if (!r.replied && ev.t !== 'session' && ev.t !== 'done' && ev.t !== 'team-done') onFirstReply(r, tab);
+  const prev = labelAgent;
+  labelAgent = team && ev.t !== 'team-done' ? r.agent : null;
+  try {
+    AGENT_EVENTS[ev.t]?.(r, ev, tab);
+  } finally {
+    labelAgent = prev;
+  }
 }
 
 const earlyEvents: [number, AgentEvent][] = [];
@@ -10059,7 +10526,7 @@ api.agent.onEvent((runId, ev) => {
   const found = findTabForRun(runId);
   if (found) {
     handleAgentEvent(found.run, ev, found.tab);
-  } else if (earlyEvents.length < 200) {
+  } else if (ev.t !== 'team-done' && earlyEvents.length < 200) { // a team-done nobody is waiting for: already handled, or the tab moved on
     earlyEvents.push([runId, ev]);
   }
 });
@@ -10098,6 +10565,7 @@ function showPlan(r: Run, tab: AgentTabState): void {
 }
 
 function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  if (tab.agentTeam?.runs.has(r.id)) { finishTeamMember(r, ev, tab, tab.agentTeam); return; }
   tab.runId = null;
   tab.run = null;
   if (agentRun?.id === r.id) agentRun = null;
