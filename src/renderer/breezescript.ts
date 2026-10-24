@@ -2514,12 +2514,48 @@ const ICONS: Record<string, string> = {
   lock: page('#8b8b95', '<rect x="5.6" y="8.6" width="4.8" height="3.6" rx=".8" fill="#8b8b95"/><path d="M6.6 8.6V7.6a1.4 1.4 0 0 1 2.8 0v1" fill="none" stroke="#8b8b95" stroke-width="1"/>'),
   license: page('#e5c07b', '<circle cx="8" cy="9" r="1.8" fill="none" stroke="#e5c07b" stroke-width="1"/>'),
   file: page('#8b8b95'),
+  xml: svg16('<path d="M5 4.5 1.8 8 5 11.5M11 4.5 14.2 8 11 11.5" fill="none" stroke="#e37933" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.4" cy="8" r=".9" fill="#e37933"/><circle cx="8" cy="8" r=".9" fill="#e37933"/><circle cx="9.6" cy="8" r=".9" fill="#e37933"/>'),
+  yaml: svg16('<path d="M2 3h2.6L6.5 6.4 8.4 3H11L7.8 8.3V13H5.2V8.3z" fill="#cb171e"/><path d="M10 9.5h4M10 12h3" stroke="#cb171e" stroke-width="1.4" stroke-linecap="round"/>'),
+  toml: badge('#9c4221', '#ffffff', 'TML', 4.4),
+  vue: svg16('<path d="M1 2.5h3L8 9.4l4-6.9h3L8 14.5z" fill="#41b883"/><path d="M4 2.5h2.4L8 5.3l1.6-2.8H12L8 9.4z" fill="#35495e"/>'),
+  svelte: svg16('<path d="M11.8 2.6c-1.4-1-3.4-.7-4.5.6L4.6 6c-.9 1-1 2.6-.2 3.7-.4.8-.4 1.7 0 2.5 1 1.8 3.5 2.3 5.1 1l2.7-2.8c.9-1 1-2.6.2-3.7.4-.8.4-1.7 0-2.5-.2-.6-.5-1.2-.6-1.6z" fill="#ff3e00"/><path d="M9.8 5.2 6.4 8.6M9.6 7.4 6.2 10.8" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/>'),
+  astro: svg16('<path d="M5.6 2h4.8l3.2 9.2c-1.4-.8-3.2-1.2-5.6-1.2s-4.2.4-5.6 1.2z" fill="#ff5d01"/><path d="M5.8 12c0 1.2 1 2.5 2.2 2.5s2.2-1.3 2.2-2.5c-1.4.6-3 .6-4.4 0z" fill="#ff5d01" fill-opacity=".7"/>'),
+  dart: svg16('<path d="M4 1.5 1.5 4v7l3.2 3.5h7l2.8-2.8V6.5L9 1.5z" fill="#0175c2" fill-opacity=".25"/><path d="M4 1.5h5l5.5 5v5.2L4.7 1.9zM1.5 4l9 9.5h-5.8L1.5 11z" fill="#0175c2"/>'),
+  lua: svg16('<circle cx="7.5" cy="8.5" r="6" fill="#000080"/><circle cx="7.5" cy="8.5" r="6" fill="none" stroke="#7a7aff" stroke-width=".8"/><circle cx="10" cy="6" r="1.6" fill="#fff"/><circle cx="13.5" cy="2.5" r="1.4" fill="#7a7aff"/>'),
+  r: badge('#276dc3', '#ffffff', 'R'),
+  scala: svg16('<path d="M4 2.5c3 .8 8 1 8 1v2.5s-5-.2-8-1zM4 6.8c3 .8 8 1 8 1v2.5s-5-.2-8-1zM4 11c3 .8 8 1 8 1v2.5s-5-.2-8-1z" fill="#dc322f"/>'),
+  zig: badge('#f7a41d', '#1e1e1e', 'ZIG', 4.4),
+  elixir: svg16('<path d="M8.2 1.5c-2.5 2.6-4.7 6-4.7 8.6 0 2.4 2 4.4 4.5 4.4s4.5-1.8 4.5-4.3c0-3-2.6-4.3-2.6-6.6-1 1.3-1.5 2.3-1.7 3.4-.6-1.6-.4-3.7 0-5.5z" fill="#6e4a7e"/><path d="M6.2 9.5c-.3 1.5.4 3 1.8 3.3" fill="none" stroke="#c3a0d6" stroke-width=".9" stroke-linecap="round"/>'),
+  haskell: svg16('<path d="M1.5 13.5 5 8 1.5 2.5h2.6L7.6 8l-3.5 5.5z" fill="#5e5086"/><path d="M5.1 13.5 8.6 8 5.1 2.5h2.6l7 11h-2.6l-2.2-3.4-2.2 3.4z" fill="#8f4e8b"/><path d="M11.4 6.2h3.1v1.5h-2.2zM12.3 8.5h2.2V10h-1.2z" fill="#5e5086"/>'),
+  perl: badge('#39457e', '#ffffff', 'PL', 5.4),
+  docker: svg16('<path d="M1.2 8.2h12.4c.5-.9 1.3-1.2 1.9-1.1-.2-.8-.8-1.2-1.4-1.2-.3-.9-1-1.3-1-1.3s-.7.9-.4 2H1.2c-.2 3.4 2 6 6.2 6 3.6 0 5.8-1.8 6.6-4.4" fill="#2496ed" fill-opacity=".25" stroke="#2496ed" stroke-width="1" stroke-linejoin="round"/><path d="M2.6 5.6h1.8v1.8H2.6zM4.8 5.6h1.8v1.8H4.8zM7 5.6h1.8v1.8H7zM9.2 5.6H11v1.8H9.2zM4.8 3.4h1.8v1.8H4.8zM7 3.4h1.8v1.8H7zM7 1.2h1.8V3H7z" fill="#2496ed"/>'),
+  make: svg16('<path d="M9.8 2.2a3.3 3.3 0 0 0-3.4 4.4L2 11a1.4 1.4 0 0 0 2 2l4.4-4.4a3.3 3.3 0 0 0 4.4-3.4l-2 2-1.9-.5-.5-1.9z" fill="#6d8086" fill-opacity=".3" stroke="#a9b6ba" stroke-width="1.1" stroke-linejoin="round"/>'),
+  graphql: svg16('<path d="M8 1.8 13.4 4.9v6.2L8 14.2l-5.4-3.1V4.9zM8 1.8 2.6 11.1h10.8z" fill="none" stroke="#e535ab" stroke-width="1" stroke-linejoin="round"/><circle cx="8" cy="1.8" r="1.1" fill="#e535ab"/><circle cx="13.4" cy="4.9" r="1.1" fill="#e535ab"/><circle cx="13.4" cy="11.1" r="1.1" fill="#e535ab"/><circle cx="8" cy="14.2" r="1.1" fill="#e535ab"/><circle cx="2.6" cy="11.1" r="1.1" fill="#e535ab"/><circle cx="2.6" cy="4.9" r="1.1" fill="#e535ab"/>'),
+  proto: badge('#4285f4', '#ffffff', 'PB', 5.4),
+  terraform: svg16('<path d="M6 2.3 9.6 4.4v4.2L6 6.5zM10.2 4.4l3.6-2.1v4.2l-3.6 2.1zM2.2 0.1 5.6 2.1v4.2L2.2 4.3zM6 7 9.6 9.1v4.2L6 11.2z" fill="#7b42bc"/>'),
+  notebook: svg16('<rect x="2.5" y="1.5" width="11" height="13" rx="1.5" fill="#f37626" fill-opacity=".16" stroke="#f37626" stroke-width="1.2"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="#f37626" stroke-width="1.1" stroke-linecap="round"/><path d="M2.5 4h-1M2.5 8h-1M2.5 12h-1" stroke="#f37626" stroke-width="1.2" stroke-linecap="round"/>'),
+  gradle: svg16('<path d="M13.6 4.2c-.8-.8-2.1-.8-2.9 0l.6.6c.4-.3 1-.3 1.3.1.5.5.2 1.4-.6 2.2C10 8.8 6.6 5.2 2 7.5c-.6.3-.3 1.6.5 2.4l.9-.6.8 1v2.2h1.5v-1.6c1 .3 2.2.3 3.2 0v1.6h1.5V10c1.5-.9 2.8-2.4 3.4-4 .3-.7.2-1.4-.2-1.8z" fill="#02303a" stroke="#5ecbd3" stroke-width=".9" stroke-linejoin="round"/>'),
+  cmake: svg16('<path d="M8 1.5 14.5 14H1.5z" fill="#064f8c" fill-opacity=".25"/><path d="M8 1.5 1.5 14l6.5-4z" fill="#064f8c"/><path d="M8 1.5V10l6.5 4z" fill="#3eae2b"/><path d="M8 10 1.5 14h13z" fill="#e72429"/>'),
+  vim: svg16('<path d="M8 1.3 14.7 8 8 14.7 1.3 8z" fill="#019833"/><path d="M4.5 5h3l-.4.5v4L10 5.5h-.6l.4-.5h2l-.4.5-4.6 6h-1V5.5H5z" fill="#fff"/>'),
+  tex: badge('#3d6117', '#ffffff', 'TeX', 4.6),
+  diff: svg16('<rect x="1.5" y="1.5" width="13" height="13" rx="2.5" fill="#56b6c2" fill-opacity=".14" stroke="#56b6c2" stroke-width="1.1"/><path d="M5.5 3.8v4.4M3.3 6h4.4M8.8 11h4" stroke="#56b6c2" stroke-width="1.4" stroke-linecap="round"/>'),
+  cert: page('#e5c07b', '<circle cx="8" cy="8.8" r="1.9" fill="none" stroke="#e5c07b" stroke-width="1"/><path d="m7 10.5-.6 2.4 1.6-.8 1.6.8-.6-2.4" fill="#e5c07b"/>'),
+  key: svg16('<circle cx="5" cy="10.5" r="3" fill="none" stroke="#f0b429" stroke-width="1.5"/><path d="m7.2 8.3 6-6M11 4.5l1.6 1.6M12.6 2.9l1.4 1.4" fill="none" stroke="#f0b429" stroke-width="1.5" stroke-linecap="round"/>'),
+  eslint: svg16('<path d="M5 1.8h6l4 6.2-4 6.2H5L1 8z" fill="#4b32c3" fill-opacity=".25" stroke="#8080f2" stroke-width="1.1" stroke-linejoin="round"/><path d="M6.4 5.1h3.2L11.2 8l-1.6 2.9H6.4L4.8 8z" fill="#8080f2"/>'),
+  prettier: svg16('<path d="M2 3h6M10 3h4M2 5.5h3M7 5.5h7M2 8h8M12 8h2M2 10.5h4M8 10.5h6M2 13h7" stroke-width="1.4" stroke-linecap="round" stroke="#56b3b4"/><path d="M8 3h2M5 5.5h2M10 8h2M6 10.5h2" stroke-width="1.4" stroke-linecap="round" stroke="#f7b93e"/>'),
+  vite: svg16('<path d="M14.5 2.5 8.3 14a.4.4 0 0 1-.7 0L1.5 2.5a.4.4 0 0 1 .4-.6L8 3l6.1-1.1a.4.4 0 0 1 .4.6z" fill="#646cff" fill-opacity=".85"/><path d="M10.8 1.6 6.4 2.5a.2.2 0 0 0-.1.2l-.3 4.8a.2.2 0 0 0 .2.2l1.2-.3a.2.2 0 0 1 .2.2l-.3 1.7a.2.2 0 0 0 .3.2l.8-.2a.2.2 0 0 1 .3.2l-.6 2.9c0 .2.2.3.3.1l.1-.1 2.5-5a.2.2 0 0 0-.2-.3l-1.2.2a.2.2 0 0 1-.2-.2l.8-2.8a.2.2 0 0 0-.3-.3z" fill="#ffc517"/>'),
+  tailwind: svg16('<path d="M8 3.5c-1.9 0-3 .9-3.5 2.8.7-.9 1.5-1.3 2.4-1 .5.1.9.5 1.3.9.7.7 1.4 1.5 3.1 1.5 1.9 0 3-.9 3.5-2.8-.7.9-1.5 1.3-2.4 1-.5-.1-.9-.5-1.3-.9-.7-.7-1.4-1.5-3.1-1.5zM4.5 7.7C2.6 7.7 1.4 8.6 1 10.5c.7-.9 1.5-1.3 2.4-1 .5.1.9.5 1.3.9.7.7 1.4 1.5 3.1 1.5 1.9 0 3-.9 3.5-2.8-.7.9-1.5 1.3-2.4 1-.5-.1-.9-.5-1.3-.9-.7-.7-1.4-1.5-3.1-1.5z" fill="#38bdf8"/>'),
+  readme: svg16('<circle cx="8" cy="8" r="6.5" fill="#42a5f5" fill-opacity=".18" stroke="#42a5f5" stroke-width="1.2"/><path d="M8 7.2v4" stroke="#42a5f5" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="1" fill="#42a5f5"/>'),
+  changelog: page('#7cb342', '<path d="M8 7v2.2l1.4 1" fill="none" stroke="#7cb342" stroke-width="1.1" stroke-linecap="round"/><circle cx="8" cy="9.2" r="2.6" fill="none" stroke="#7cb342" stroke-width="1"/>'),
+  sourcemap: page('#9aa5b1', '<path d="M5.5 8.5h2v3h3M8.5 7.5l2 1-2 1" fill="none" stroke="#9aa5b1" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>'),
+  robots: svg16('<rect x="3" y="5" width="10" height="8" rx="2" fill="#78909c" fill-opacity=".2" stroke="#90a4ae" stroke-width="1.2"/><path d="M8 5V2.6" stroke="#90a4ae" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="2.2" r=".9" fill="#90a4ae"/><circle cx="6" cy="8.5" r="1" fill="#90a4ae"/><circle cx="10" cy="8.5" r="1" fill="#90a4ae"/><path d="M6.3 11h3.4" stroke="#90a4ae" stroke-width="1" stroke-linecap="round"/>'),
+  test: svg16('<path d="M6 1.8h4M6.8 1.8v4L2.6 12.6a1.1 1.1 0 0 0 1 1.6h8.8a1.1 1.1 0 0 0 1-1.6L9.2 5.8v-4" fill="none" stroke="#22c55e" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/><path d="M4.2 10h7.6l1.1 2.6a.7.7 0 0 1-.6 1H3.7a.7.7 0 0 1-.6-1z" fill="#22c55e"/>'),
 };
 const EXT_ICON: Record<string, string> = {
-  html: 'html', htm: 'html', xml: 'html', vue: 'html', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
+  html: 'html', htm: 'html', xhtml: 'html', xml: 'xml', xsd: 'xml', xsl: 'xml', xslt: 'xml', plist: 'xml', rss: 'xml', atom: 'xml', resx: 'xml', vue: 'vue', svelte: 'svelte', astro: 'astro', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
   js: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx', tsx: 'jsx', ts: 'ts', mts: 'ts', cts: 'ts', json: 'json', jsonc: 'json', md: 'md', markdown: 'md',
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image', bmp: 'image', avif: 'image', svg: 'svg',
-  py: 'py', java: 'java', jar: 'java', rs: 'rust', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
+  py: 'py', java: 'java', jar: 'java', rs: 'rust', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'yaml', yaml: 'yaml', toml: 'toml', ini: 'config', cfg: 'config', conf: 'config', properties: 'config', editorconfig: 'config', dart: 'dart', lua: 'lua', r: 'r', rmd: 'r', scala: 'scala', sc: 'scala', zig: 'zig', ex: 'elixir', exs: 'elixir', hs: 'haskell', lhs: 'haskell', pl: 'perl', pm: 'perl', graphql: 'graphql', gql: 'graphql', proto: 'proto', tf: 'terraform', tfvars: 'terraform', hcl: 'terraform', ipynb: 'notebook', gradle: 'gradle', cmake: 'cmake', mk: 'make', vim: 'vim', tex: 'tex', bib: 'tex', diff: 'diff', patch: 'diff', pem: 'cert', crt: 'cert', cer: 'cert', p12: 'cert', pfx: 'cert', key: 'key', pub: 'key', map: 'sourcemap', fish: 'shell', zsh: 'shell', psm1: 'shell', m: 'c', mm: 'cpp', fs: 'cs', fsx: 'cs', vb: 'cs', csh: 'shell', jl: 'py', pyw: 'py', pyi: 'py', ejs: 'html', hbs: 'html', pug: 'html', njk: 'html', twig: 'html', liquid: 'html', styl: 'css', pcss: 'css', postcss: 'css',
   txt: 'text', log: 'text', csv: 'text', tsv: 'text', rtf: 'text', lock: 'lock', exe: 'exe', msi: 'exe', app: 'exe', apk: 'exe', com: 'exe', scr: 'exe', dll: 'bin', so: 'bin', dylib: 'bin', bin: 'bin', o: 'bin', obj: 'bin', a: 'bin', lib: 'bin', class: 'bin', pyc: 'bin', wasm: 'bin', iso: 'bin', img: 'bin', dat: 'bin', zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive', gz: 'archive', tgz: 'archive', bz2: 'archive', xz: 'archive', pdf: 'pdf', doc: 'doc', docx: 'doc', odt: 'doc', xls: 'xls', xlsx: 'xls', ods: 'xls', ppt: 'ppt', pptx: 'ppt', odp: 'ppt', c: 'c', h: 'h', go: 'go', php: 'php', rb: 'rb', kt: 'kt', kts: 'kt', swift: 'swift', sql: 'sql', db: 'sql', sqlite: 'sql', sqlite3: 'sql', mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio', m4a: 'audio', aac: 'audio', mp4: 'video', mkv: 'video', mov: 'video', avi: 'video', webm: 'video', ttf: 'font', otf: 'font', woff: 'font', woff2: 'font', tiff: 'image', heic: 'image', psd: 'image',
 };
 function fileIcon(name: string): string {
@@ -2530,6 +2566,20 @@ function fileIcon(name: string): string {
   if (n.startsWith('license')) return ICONS.license;
   if (/^(tsconfig|jsconfig)[\w.-]*\.json$/.test(n)) return ICONS.ts;
   if (n === 'cargo.toml' || n === 'cargo.lock') return ICONS.rust;
+  if (n === 'dockerfile' || n.startsWith('dockerfile.') || n.endsWith('.dockerfile') || n === '.dockerignore' || /^(docker-)?compose[\w.-]*\.ya?ml$/.test(n)) return ICONS.docker;
+  if (n === 'makefile' || n === 'gnumakefile') return ICONS.make;
+  if (n === 'cmakelists.txt') return ICONS.cmake;
+  if (n.startsWith('.eslint') || /^eslint\.config\./.test(n)) return ICONS.eslint;
+  if (n.startsWith('.prettier') || /^prettier\.config\./.test(n)) return ICONS.prettier;
+  if (/^vite(st)?\.config\./.test(n)) return ICONS.vite;
+  if (/^tailwind\.config\./.test(n)) return ICONS.tailwind;
+  if (n === '.editorconfig') return ICONS.config;
+  if (n === 'robots.txt') return ICONS.robots;
+  if (/^readme(\.|$)/.test(n)) return ICONS.readme;
+  if (/^(changelog|changes|history)(\.|$)/.test(n)) return ICONS.changelog;
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(n) || /^test_.*\.py$|_test\.(py|go)$/.test(n)) return ICONS.test;
+  if (n.endsWith('.d.ts')) return ICONS.ts;
+  if (n === '.vimrc' || n === '.gvimrc') return ICONS.vim;
   const ext = n.includes('.') ? n.slice(n.lastIndexOf('.') + 1) : '';
   return ICONS[EXT_ICON[ext] ?? 'file'];
 }
