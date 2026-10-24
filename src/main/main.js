@@ -1386,8 +1386,8 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
 const EFFORT_ARGS = { low: 'low', medium: 'medium', high: 'high', extra: 'xhigh' };
 const effortArg = effort => EFFORT_ARGS[String(effort || '').toLowerCase()] || null;
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
-function cliArgs(agent, mode, prompt, session, team) {
-  if (agent === 'claude') return claudeArgs(mode, prompt, session, team);
+function cliArgs(agent, mode, prompt, session, team, shell) {
+  if (agent === 'claude') return claudeArgs(mode, prompt, session, team, shell);
   const build = mode === 'build';
   const args = ['exec', '--json', '-s', build ? 'workspace-write' : 'read-only', '--skip-git-repo-check'];
   const st = loadState();
@@ -1406,22 +1406,36 @@ function cliArgs(agent, mode, prompt, session, team) {
 const NO_SESSION = /No conversation found with session ID/i;
 const CLAUDE_WRITE_TOOLS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'];
 // On a team, build mode also denies editing what a teammate owns (rule paths are relative to the project root).
-function claudeArgs(mode, prompt, session, team) {
+// Those rules can't pass through a shell (`shell`: an npm .cmd shim), so they come back as `deny` for a settings file.
+function claudeArgs(mode, prompt, session, team, shell) {
   const build = mode === 'build';
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', build ? 'acceptEdits' : 'default'];
   if (!build) args.push('--disallowedTools', ...CLAUDE_WRITE_TOOLS);
   const deny = build && team ? claudeDenyArgs(team.coordinator.owners, team.agentId) : [];
-  if (deny.length) args.push('--disallowedTools', ...deny);
+  if (deny.length && !shell) args.push('--disallowedTools', ...deny);
   const st = loadState();
   const model = st.claudeModel;
   if (model && model !== 'default' && CLAUDE_MODELS.includes(model)) args.push('--model', model);
   const effort = effortArg(st.claudeEffort);
   if (effort) args.push('--effort', effort);
   if (session) args.push('--resume', session);
-  if (build) return { args, prompt };
+  if (build) return deny.length && shell ? { args, prompt, deny } : { args, prompt };
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
+// A Claude Code settings file holding a team member's deny rules, for `--settings`. Null when its path can't
+// pass through the shell (a user name with a space, say) or it can't be written.
+function teamSettingsFile(runId, deny) {
+  const file = path.join(os.tmpdir(), `breeze-team-${runId}-${crypto.randomBytes(6).toString('hex')}.json`).replaceAll('\\', '/');
+  try { shellCommand('', [file]); } catch { return null; }
+  try { fs.writeFileSync(file, JSON.stringify({ permissions: { deny } }), { flag: 'wx', mode: 0o600 }); } catch { return null; }
+  return file;
+}
+function dropSettingsFile(run) {
+  if (run.settingsFile) fs.rm(run.settingsFile, { force: true }, () => { /* best effort */ });
+  run.settingsFile = null;
+}
+const NO_BLOCK_NOTE = 'Claude Code can\'t be blocked from teammates\' files on this computer, so Breeze will undo any edit it makes to them instead.';
 // What each Claude Code tool call looks like in the chat.
 const CLAUDE_TOOLS = {
   Read: i => ['read', `Read ${relOut(i.file_path)}`],
@@ -1494,18 +1508,36 @@ async function startRun(runId, { agent, mode, prompt, session, box, team }) {
   if (agent === 'antigravity') return runAntigravity(runId, run, { mode, prompt, session, base });
   const bin = agentBins.get(agent);
   if (!bin) throw new Error('That agent was not found on this computer. Rescan from Settings → Run Setup Again.');
+  const shell = /\.(?:cmd|bat)$/i.test(bin);
   const launch = () => {
-    const cli = cliArgs(agent, mode, prompt, session, run.team);
+    dropSettingsFile(run);
+    const cli = cliArgs(agent, mode, prompt, session, run.team, shell);
+    if (cli.deny) {
+      run.settingsFile = teamSettingsFile(runId, cli.deny);
+      if (run.settingsFile) cli.args.push('--settings', run.settingsFile);
+      else if (!run.noBlockNoted) { run.noBlockNoted = true; emit(runId, { t: 'note', text: NO_BLOCK_NOTE }); } // the coordinator still undoes it
+    }
     // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags,
     // a validated model name and a validated session id do (npm .cmd shims need a shell on Windows).
     const opts = { cwd: base, windowsHide: true, env: process.env };
-    const child = /\.(?:cmd|bat)$/i.test(bin)
-      ? spawn(shellCommand(bin, cli.args), { ...opts, shell: true })
-      : spawn(bin, cli.args, opts);
+    let child;
+    try {
+      child = shell ? spawn(shellCommand(bin, cli.args), { ...opts, shell: true }) : spawn(bin, cli.args, opts);
+    } catch (err) { dropSettingsFile(run); throw err; }
     run.child = child;
     child.stdin.on('error', () => { /* the agent exited before reading its prompt; its output says why */ });
     child.stdin.end(cli.prompt ?? undefined);
     streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode, retryModel);
+  };
+  // A retry starts from the close listener, so a failed launch there ends the run instead of throwing.
+  const relaunch = () => {
+    runs.set(runId, run);
+    try { launch(); } catch (err) {
+      runs.delete(runId);
+      emit(runId, { t: 'error', text: err.message });
+      emit(runId, { t: 'done', ok: false });
+    }
+    return true;
   };
   // Called once when Codex refuses its configured model, or Claude Code can't find the chat to resume.
   let retried = false;
@@ -1514,18 +1546,14 @@ async function startRun(runId, { agent, mode, prompt, session, box, team }) {
       retried = true;
       session = null;
       emit(runId, { t: 'note', text: 'Claude Code couldn’t find the earlier conversation, so this message starts a new one.' });
-      runs.set(runId, run);
-      launch();
-      return true;
+      return relaunch();
     }
     const model = !retried && agent === 'codex' ? codexFallback(errText) : null;
     if (!model) return false;
     retried = true;
     saveState({ codexModel: model });
     emit(runId, { t: 'note', text: `Codex can't use the model in its settings with your account, so Breeze switched it to ${model}.` });
-    runs.set(runId, run);
-    launch();
-    return true;
+    return relaunch();
   };
   launch();
 }
@@ -1550,6 +1578,7 @@ function streamCli(runId, run, child, parse, mode, retryModel) {
   child.on('error', err => { ctx.lastError = err.message; });
   child.on('close', code => {
     runs.delete(runId);
+    dropSettingsFile(run);
     if (!ctx.done && !ctx.retry && NO_SESSION.test(ctx.lastError + ctx.stderr)) ctx.retry = ctx.lastError + ctx.stderr;
     if (ctx.retry && !run.stopped && ctx.retryModel?.(ctx.retry)) return;
     if (ctx.done) return;
