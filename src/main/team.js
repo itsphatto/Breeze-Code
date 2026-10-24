@@ -17,7 +17,7 @@ function cleanRel(p, root) {
     s = path.relative(root, s);
     if (path.isAbsolute(s)) return null; // another drive
   }
-  s =path.posix.normalize(s.replace(/\\/g, '/')).replace(/\/+$/, '');
+  s = path.posix.normalize(s.replace(/\\/g, '/')).replace(/\/+$/, '');
   if (!s || s === '.' || s === '..' || s.startsWith('../')) return null;
   if (blockedRel(s)) return null;
   return folder ? `${s}/` : s;
@@ -154,8 +154,27 @@ function buildBrief(member, team, owners) {
 // `files` maps rel -> Buffer, or null for a file that did not exist yet.
 const MAX_FILE = 2 * 1024 * 1024;
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
-const absOf = (root, rel) => path.join(root, ...rel.split('/'));
+// `rel` as a path under `root`. An absolute path, or one that climbs out with "..", throws.
+function absOf(root, rel) {
+  const s = typeof rel === 'string' ? rel.replace(/\\/g, '/') : '';
+  const abs = s ? path.join(root, ...s.split('/')) : '';
+  const back = abs && path.relative(root, abs);
+  if (!s || path.isAbsolute(rel) || s.split('/').includes('..') || !back || back.startsWith('..') || path.isAbsolute(back)) {
+    throw new Error(`${rel} is outside the project`);
+  }
+  return abs;
+}
 const missing = err => err.code === 'ENOENT' || err.code === 'ENOTDIR';
+
+// True when the file or any folder between `root` and it is a symlink or junction, which a write could follow out of the project.
+async function throughLink(root, rel) {
+  let p = root;
+  for (const part of rel.replace(/\\/g, '/').split('/')) {
+    p = path.join(p, part);
+    try { if ((await fs.lstat(p)).isSymbolicLink()) return true; } catch (err) { if (missing(err)) return false; throw err; }
+  }
+  return false;
+}
 
 // What `abs` holds now: { data: Buffer | null } (null when absent), { big: true }, or {} for a folder or link.
 async function readEntry(abs) {
@@ -166,9 +185,12 @@ async function readEntry(abs) {
   try { return { data: await fs.readFile(abs) }; } catch (err) { if (missing(err)) return { data: null }; throw err; }
 }
 
+// Records `rel` unless it is already there, off limits to agents (.git, .env*), or reached through a link.
 async function record(snap, root, rel) {
-  if (snap.files.has(rel)) return;
-  const { data, big } = await readEntry(absOf(root, rel));
+  const abs = absOf(root, rel);
+  if (snap.files.has(rel) || blockedRel(rel) || await throughLink(root, rel)) return;
+  const { data, big } = await readEntry(abs);
+  if (snap.files.has(rel)) return; // another call recorded it while this one was reading
   if (big) { if (!snap.skipped.includes(rel)) snap.skipped.push(rel); }
   else if (data !== undefined) snap.files.set(rel, data);
 }
@@ -178,7 +200,8 @@ async function recordFolder(snap, root, rel) {
   try { entries = await fs.readdir(absOf(root, rel), { withFileTypes: true }); } catch (err) { if (missing(err)) return; throw err; }
   for (const e of entries) {
     const child = `${rel}/${e.name}`;
-    if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) await recordFolder(snap, root, child); }
+    if (SKIP_DIRS.has(e.name) || blockedRel(child)) continue;
+    if (e.isDirectory()) await recordFolder(snap, root, child);
     else if (e.isFile()) await record(snap, root, child);
   }
 }
@@ -189,7 +212,7 @@ async function snapshot(root, paths) {
   for (const p of paths) {
     const rel = p.replace(/\/+$/, '');
     let isDir = p.endsWith('/');
-    if (!isDir) { try { isDir = (await fs.lstat(absOf(root, rel))).isDirectory(); } catch { /* absent: recorded as null */ } }
+    if (!isDir) { try { isDir = (await fs.lstat(absOf(root, rel))).isDirectory(); } catch (err) { if (!missing(err)) throw err; /* absent: recorded as null */ } }
     if (isDir) await recordFolder(snap, root, rel);
     else await record(snap, root, rel);
   }
@@ -200,11 +223,18 @@ async function snapshot(root, paths) {
 const addToSnapshot = (snap, root, rel) => record(snap, root, rel);
 
 // Put `rel` back as the snapshot has it. Not in the snapshot: nothing to do.
+// Refuses a path that leaves the project or runs through a symlink or junction, so a restore can't write or delete elsewhere.
 async function restore(root, rel, snap) {
-  if (!snap.files.has(rel)) return;
-  const data = snap.files.get(rel);
   const abs = absOf(root, rel);
-  if (data === null) return fs.rm(abs, { force: true });
+  if (!snap.files.has(rel)) return;
+  if (await throughLink(root, rel)) throw new Error(`${rel} is reached through a link, so it was not restored`);
+  const data = snap.files.get(rel);
+  if (data === null) {
+    let st;
+    try { st = await fs.lstat(abs); } catch (err) { if (missing(err)) return; throw err; }
+    if (!st.isFile()) throw new Error(`${rel} is not a file, so it was not removed`);
+    return fs.rm(abs);
+  }
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, data);
 }
@@ -213,6 +243,7 @@ async function restore(root, rel, snap) {
 async function changedSince(root, snap) {
   const changed = [];
   for (const [rel, before] of snap.files) {
+    if (await throughLink(root, rel)) { changed.push(rel); continue; }
     const { data, big } = await readEntry(absOf(root, rel));
     const now = data ?? null; // a folder or link in its place counts as absent
     if (big || (before === null) !== (now === null) || (before && !before.equals(now))) changed.push(rel);

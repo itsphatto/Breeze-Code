@@ -131,6 +131,9 @@ test('snapshot expands folders and records absent files', async t => {
   put(root, 'web/a.js', 'a');
   put(root, 'web/sub/b.js', 'b');
   put(root, 'web/node_modules/dep/index.js', 'x');
+  put(root, 'web/.env', 'SECRET=1');
+  put(root, 'web/sub/.env.local', 'SECRET=2');
+  put(root, 'web/.git/config', 'x');
   const snap = await snapshot(root, ['web/', 'new.js']);
   assert.deepEqual([...snap.files.keys()].sort(), ['new.js', 'web/a.js', 'web/sub/b.js']);
   assert.equal(snap.files.get('new.js'), null);
@@ -175,4 +178,68 @@ test('snapshot skips large files', async t => {
   assert.deepEqual(snap.skipped, ['big.bin']);
   assert.equal(snap.files.has('big.bin'), false);
   assert.equal(snap.files.has('ok.txt'), true);
+});
+
+test('addToSnapshot keeps the first content when calls overlap', async t => {
+  const root = tempProject(t);
+  put(root, 'x.js', 'one');
+  const snap = await snapshot(root, []);
+  const first = addToSnapshot(snap, root, 'x.js');
+  const second = addToSnapshot(snap, root, 'x.js');
+  await Promise.all([first, second]);
+  assert.equal(snap.files.get('x.js').toString(), 'one');
+  assert.equal(snap.files.size, 1);
+});
+
+test('restore refuses a path outside the root', async t => {
+  const root = tempProject(t);
+  const outside = path.join(path.dirname(root), `${path.basename(root)}-outside.txt`);
+  fs.writeFileSync(outside, 'keep');
+  t.after(() => fs.rmSync(outside, { force: true }));
+  const snap = await snapshot(root, []);
+  const rel = `../${path.basename(outside)}`;
+  await addToSnapshot(snap, root, 'a.js'); // inside is fine
+  await assert.rejects(addToSnapshot(snap, root, rel), /outside the project/);
+  await assert.rejects(addToSnapshot(snap, root, outside), /outside the project/);
+  snap.files.set(rel, Buffer.from('overwrite')); // even a hand-made entry can't escape
+  await assert.rejects(restore(root, rel, snap), /outside the project/);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
+});
+
+test('restore refuses to write through a symlinked file', async t => {
+  const root = tempProject(t);
+  const outside = path.join(path.dirname(root), `${path.basename(root)}-target.txt`);
+  fs.writeFileSync(outside, 'keep');
+  t.after(() => fs.rmSync(outside, { force: true }));
+  put(root, 'a.js', 'orig');
+  const snap = await snapshot(root, ['a.js']);
+  fs.rmSync(path.join(root, 'a.js'));
+  try { fs.symlinkSync(outside, path.join(root, 'a.js'), 'file'); } catch (err) { return t.skip(`can't create symlinks here: ${err.code}`); }
+  assert.deepEqual(await changedSince(root, snap), ['a.js']);
+  await assert.rejects(restore(root, 'a.js', snap), /link/);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'keep');
+});
+
+test('restore refuses to write through a symlinked folder', async t => {
+  const root = tempProject(t);
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'breeze-team-out-'));
+  t.after(() => fs.rmSync(outsideDir, { recursive: true, force: true }));
+  put(outsideDir, 'a.js', 'keep');
+  put(root, 'web/a.js', 'orig');
+  const snap = await snapshot(root, ['web/']);
+  fs.rmSync(path.join(root, 'web'), { recursive: true });
+  try { fs.symlinkSync(outsideDir, path.join(root, 'web'), process.platform === 'win32' ? 'junction' : 'dir'); } catch (err) { return t.skip(`can't create symlinks here: ${err.code}`); }
+  await assert.rejects(restore(root, 'web/a.js', snap), /link/);
+  assert.equal(fs.readFileSync(path.join(outsideDir, 'a.js'), 'utf8'), 'keep');
+  // a path reached through the link is not recorded at all
+  const snap2 = await snapshot(root, ['web/new.js']);
+  assert.equal(snap2.files.size, 0);
+});
+
+test('restore will not remove a folder that took the place of an absent file', async t => {
+  const root = tempProject(t);
+  const snap = await snapshot(root, ['new.js']);
+  put(root, 'new.js/inner.txt', 'x');
+  await assert.rejects(restore(root, 'new.js', snap), /not a file/);
+  assert.equal(fs.existsSync(path.join(root, 'new.js', 'inner.txt')), true);
 });
