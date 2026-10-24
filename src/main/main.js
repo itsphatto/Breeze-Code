@@ -2058,7 +2058,35 @@ function addAccount(user) {
   saveState({ user, accounts: [...accounts.filter(a => accountId(a) !== accountId(user)), user] });
 }
 handle('auth:user', () => loadState().user || null);
-handle('auth:accounts', () => accountsState());
+// /user only shows a public email; /user/emails (the user:email scope) has the primary one even when it's private.
+async function githubEmail(token, signal) {
+  try {
+    const r = await fetch('https://api.github.com/user/emails', {
+      signal, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'Breeze-IDE' },
+    });
+    if (!r.ok) return null;
+    const list = await r.json();
+    return (list.find(e => e.primary) || list.find(e => e.verified) || list[0])?.email || null;
+  } catch { return null; }
+}
+// GitHub accounts signed in before Breeze asked /user/emails: look their email up once per run.
+const emailLookedUp = new Set();
+async function fillAccountEmails() {
+  const missing = accountsState().accounts.filter(a => a.provider === 'GitHub' && !a.email && !emailLookedUp.has(accountId(a)));
+  if (!missing.length) return;
+  const found = new Map();
+  await Promise.all(missing.map(async a => {
+    emailLookedUp.add(accountId(a));
+    const token = getSecret(`token:${accountId(a)}`);
+    const email = token && await githubEmail(token);
+    if (email) found.set(accountId(a), email);
+  }));
+  if (!found.size) return;
+  const s = loadState(), { accounts } = accountsState();
+  const withEmail = a => (found.has(accountId(a)) ? { ...a, email: found.get(accountId(a)) } : a);
+  saveState({ accounts: accounts.map(withEmail), user: s.user ? withEmail(s.user) : s.user });
+}
+handle('auth:accounts', async () => { await fillAccountEmails(); return accountsState(); });
 handle('auth:switch', (_e, id) => {
   const user = accountsState().accounts.find(a => accountId(a) === id);
   if (!user) throw new Error('That account is no longer signed in');
@@ -2129,7 +2157,7 @@ async function githubSignIn({ clientId }, signal) {
   });
   if (!ur.ok) throw new Error('GitHub signed you in but did not share your profile. Try again.');
   const u = await ur.json();
-  const user = { provider: 'GitHub', name: u.name || u.login, login: u.login, email: u.email || null, avatar: u.avatar_url || null };
+  const user = { provider: 'GitHub', name: u.name || u.login, login: u.login, email: u.email || await githubEmail(token, signal), avatar: u.avatar_url || null };
   setSecret(`token:${accountId(user)}`, token);
   return user;
 }

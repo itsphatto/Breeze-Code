@@ -7878,7 +7878,7 @@ const segHtml = (id: string, opts: [string, string][], cur: string) =>
 
 // The account card sits at the top of General.
 function accountHtml(): string {
-  const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.provider)}</div></div>
+  const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.email ?? a.provider)}</div></div>
       <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
   return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div class="set-user-text"><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div>
       <div class="set-user-actions"><button class="btn btn-sm" id="sAddAcct">Add account…</button>${user ? '<button class="btn btn-sm" id="sSignOut">Sign out</button>' : ''}</div></div>
