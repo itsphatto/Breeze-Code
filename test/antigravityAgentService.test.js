@@ -264,12 +264,22 @@ test('buildSpawnArgs: configures agy with requested model, effort, and headless 
   assert.ok(args.includes('--dangerously-skip-permissions'), 'Headless runner needs permissions bypass');
   assert.ok(args.includes('--model'), 'Must have --model');
   assert.ok(args.includes('claude-opus-4-6-thinking'), 'Must specify chosen model');
-  assert.ok(args.includes('--effort'), 'Must have --effort');
-  assert.ok(args.includes('high'), 'Must specify effort');
+  assert.ok(!args.includes('--effort'), 'agy rejects --effort for Claude models');
   assert.ok(args.includes('--output-format'), 'Must specify output format');
   assert.ok(args.includes('stream-json'), 'Must be stream-json');
   assert.ok(args.includes('--print'), 'Must specify print flag');
   assert.ok(args.includes('Implement feature'), 'Must specify prompt');
+});
+
+test('effortFlag: only passes --effort where agy accepts it', () => {
+  const f = AntigravityAgentService.effortFlag;
+  assert.equal(f('gemini-3.8-flash-low', 'medium'), null, 'level is baked into the id');
+  assert.equal(f('gpt-oss-120b-medium', 'high'), null, 'level is baked into the id');
+  assert.equal(f('claude-sonnet-4-6', 'low'), null, 'Claude models take no --effort');
+  assert.equal(f('some-future-model', 'extra'), 'xhigh', 'Breeze "extra" is agy "xhigh"');
+  assert.equal(f('some-future-model', 'Medium'), 'medium');
+  assert.equal(f('some-future-model', 'bogus'), null);
+  assert.equal(f('some-future-model', undefined), null);
 });
 
 test('Message Deduping: ignores user_input echo, suppresses intermediate deltas, and avoids raw JSON notes', () => {

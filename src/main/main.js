@@ -1,5 +1,5 @@
 // Electron main process for Breeze IDE: window, file system, search, terminal, git, agents, sign-in and Vibe Mode.
-const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, net, protocol, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, WebContentsView, dialog, ipcMain, nativeImage, net, protocol, safeStorage, session, shell } = require('electron');
 const { spawn, execFile, exec } = require('node:child_process');
 const crypto = require('node:crypto');
 const http = require('node:http');
@@ -174,11 +174,15 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Breeze's own clicks and chimes: without this Chromium can hold the audio back until a gesture, and
+      // suspends it again when idle, so some sounds were silently dropped.
+      autoplayPolicy: 'no-user-gesture-required',
       preload: path.join(__dirname, 'preload.js'),
       additionalArguments: [`--breeze-version=${app.getVersion()}`],
     },
   });
 
+  showTaskbarIcon(win);
   win.loadFile(APP_PAGE).catch(logError('loadFile'));
 
   // Open external links in the system browser, never inside the app.
@@ -193,6 +197,29 @@ function createWindow() {
   win.webContents.on('did-start-navigation', (_e, _url, _inPlace, isMainFrame) => { if (isMainFrame) killAllTerms(); });
   win.webContents.on('render-process-gone', killAllTerms);
   win.on('closed', () => { win = null; vibeView = null; stopWatching(); stopLiveServer(); killAllTerms(); });
+}
+
+// Windows draws the taskbar button from the app's user model id, which in development is electron.exe, so the
+// button showed Electron's atom instead of Breeze. setAppDetails points that id at our icon; it wants an .ico,
+// so one is written once (a PNG inside an ICO wrapper) into the user data folder.
+function showTaskbarIcon(w) {
+  if (!isWin) return;
+  try {
+    const png = nativeImage.createFromPath(APP_ICON).resize({ width: 256, height: 256, quality: 'best' }).toPNG();
+    const ico = path.join(app.getPath('userData'), 'Icon.ico');
+    if (!fs.existsSync(ico) || fs.statSync(ico).mtimeMs < fs.statSync(APP_ICON).mtimeMs) {
+      const head = Buffer.alloc(22);
+      head.writeUInt16LE(0, 0); head.writeUInt16LE(1, 2); head.writeUInt16LE(1, 4); // ICO, one image
+      head.writeUInt8(0, 6); head.writeUInt8(0, 7); // 0 = 256 px
+      head.writeUInt16LE(1, 10); head.writeUInt16LE(32, 12); // planes, bits per pixel
+      head.writeUInt32LE(png.length, 14); head.writeUInt32LE(22, 18);
+      fs.writeFileSync(ico, Buffer.concat([head, png]));
+    }
+    w.setIcon(nativeImage.createFromBuffer(png));
+    // The window gets its own id: with the process id (electron.exe's path in development) Windows looks the
+    // icon up from that exe. A separate id plus the relaunch icon makes the taskbar button use ours.
+    w.setAppDetails({ appId: app.isPackaged ? 'com.breeze.ide' : 'com.breeze.ide.dev', appIconPath: ico, appIconIndex: 0, relaunchDisplayName: 'Breeze Code' });
+  } catch (e) { logError('taskbar icon')(e); }
 }
 
 // The preview iframe is sandboxed (an opaque origin), and Chromium won't let an opaque origin load file://
@@ -2363,6 +2390,8 @@ function vibeSession() {
   }
   return ses;
 }
+// The same Chrome, presenting as Chrome on an Android phone (keeps the real version number).
+const mobileUserAgent = ua => ua.replace(/\([^)]*\)/, '(Linux; Android 14; Pixel 8)').replace(/ Safari\//, ' Mobile Safari/');
 const feedPrefs = () => ({ session: vibeSession(), sandbox: true, contextIsolation: true, nodeIntegration: false });
 // Feed pages may only load https; links that open new windows load in place.
 function guardFeed(wc) {
@@ -2486,6 +2515,9 @@ handle('vibe:show', (_e, id, bounds) => {
     win.contentView.addChildView(vibeView);
   }
   vibeView.setBounds(toBounds(bounds));
+  // In a phone-shaped frame the desktop Reels pages shrink the video into a small card with empty space around it;
+  // as a phone browser they get their full-bleed mobile layout. Only the feed view does this, not the sign-in window.
+  vibeView.webContents.setUserAgent(mobileUserAgent(vibeSession().getUserAgent()));
   if (id === 'instagram') keepInstagramReelsFullscreen(vibeView.webContents);
   vibeView.webContents.loadURL(site.url).catch(logError('feed'));
 });

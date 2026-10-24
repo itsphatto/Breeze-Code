@@ -476,12 +476,7 @@
               </svg></button></span></div>
         <div class="agent-tabs-bar" id="agentTabsBar">
           <div class="agent-tabs-list" id="agentTabsList"></div>
-          <button class="agent-tab-new" id="agentNewTab" type="button" title="New chat" aria-label="New chat"><svg width="12" height="12"
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
-              stroke-linejoin="round" aria-hidden="true">
-              <path d="M5 12h14" />
-              <path d="M12 5v14" />
-            </svg></button>
+          <button class="icon-btn term-new-btn agent-tab-new" id="agentNewTab" type="button" title="New chat" aria-label="New chat"><svg data-i="plus" data-size="13"></svg></button>
         </div>
         <div class="agent-cards hidden" id="agentCards"></div>
         <div class="chat" id="chat"></div>
@@ -491,11 +486,8 @@
             <textarea id="prompt" rows="2" aria-label="Message to the agent"
               placeholder="Describe what you want to build"></textarea>
             <div class="row">
-              <select class="select" id="agentMode" aria-label="How the agent should work">
-                <option value="plan">Plan, then build</option>
-                <option value="build">Build directly</option>
-                <option value="ask">Ask (read-only)</option>
-              </select>
+              <!-- No mode picker: the agent decides for itself whether to answer, plan or change files. -->
+              <select class="select hidden" id="agentMode" aria-hidden="true" tabindex="-1"><option value="build">Auto</option></select>
               <select class="select" id="agentModelSelect" aria-label="Select Model" title="Select model"></select>
               <span class="flex-1"></span>
               <button class="btn btn-primary btn-sm" id="send" title="Send (Enter)" aria-label="Send"><svg data-i="send"
@@ -543,12 +535,7 @@
     </header>
     <div class="agent-tabs-bar box-tabs-bar" id="boxAgentTabsBar">
       <div class="agent-tabs-list" id="boxAgentTabsList"></div>
-      <button class="agent-tab-new" id="boxNewTab" type="button" title="New chat" aria-label="New chat"><svg width="12" height="12"
-          viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
-          stroke-linejoin="round" aria-hidden="true">
-          <path d="M5 12h14" />
-          <path d="M12 5v14" />
-        </svg></button>
+      <button class="icon-btn term-new-btn agent-tab-new" id="boxNewTab" type="button" title="New chat" aria-label="New chat"><svg data-i="plus" data-size="13"></svg></button>
     </div>
     <main class="box-main">
       <div class="box-chat" id="boxChat" aria-live="polite"></div>
@@ -561,11 +548,7 @@
         <div class="row">
           <button class="pill blue pill-btn" id="boxModel" aria-haspopup="menu" title="Choose the agent">No
             agent</button>
-          <select class="select" id="boxMode" aria-label="How the agent should work">
-            <option value="ask">Ask (read-only)</option>
-            <option value="plan">Plan, then build</option>
-            <option value="build">Build directly</option>
-          </select>
+          <select class="select hidden" id="boxMode" aria-hidden="true" tabindex="-1"><option value="build">Auto</option></select>
           <button class="pill pill-btn box-folder" id="boxFolder" title="The folder the agent works in">No
             folder</button>
           <span class="flex-1"></span>
@@ -590,7 +573,7 @@
       </div>
       <div class="vibe-status" id="vibeStatus"><span class="status working" id="vibeTask">Agent is working</span><span
           class="vibe-clock" id="vibeClock">0:00</span></div>
-      <div class="vibe-ready hidden" id="vibeReady"><span id="vibeReadyText">✓ Your code is ready</span><button
+      <div class="vibe-ready hidden" id="vibeReady"><span id="vibeReadyText">Your code is ready</span><button
           class="btn btn-primary btn-sm" id="vibeBack">Show me</button></div>
     </dialog>
   </div>

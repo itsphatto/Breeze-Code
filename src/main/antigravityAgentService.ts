@@ -1172,9 +1172,10 @@ export class AntigravityAgentService extends EventEmitter {
     const model = this.options.model || 'claude-sonnet-4-6';
     args.push('--model', model);
 
-    // Set reasoning effort if specified
-    if (this.options.effort) {
-      args.push('--effort', this.options.effort.toLowerCase());
+    // Set reasoning effort only where agy accepts it (see effortFlag)
+    const effort = AntigravityAgentService.effortFlag(model, this.options.effort);
+    if (effort) {
+      args.push('--effort', effort);
     }
 
     // Output format: stream-json
@@ -1191,6 +1192,20 @@ export class AntigravityAgentService extends EventEmitter {
     }
 
     return args;
+  }
+
+  /**
+   * The --effort value agy takes for this model, or null to leave the flag off.
+   * agy rejects the flag for Claude models ("--effort is not supported") and for ids that already
+   * carry their level (gemini-3.8-flash-low, gpt-oss-120b-medium: "conflicts with --effort=…"),
+   * and only knows low|medium|high|xhigh|max, so Breeze's "extra" becomes "xhigh".
+   */
+  public static effortFlag(model: string, effort?: string | null): string | null {
+    const e = String(effort || '').toLowerCase();
+    const flag = e === 'extra' ? 'xhigh' : e;
+    if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(flag)) return null;
+    if (/^claude-/i.test(model) || /-(low|medium|high|xhigh|max)$/i.test(model)) return null;
+    return flag;
   }
 
   // =========================================================================
