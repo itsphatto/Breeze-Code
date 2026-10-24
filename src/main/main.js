@@ -268,7 +268,7 @@ async function setRoot(dir) {
 }
 
 /* ================= Watching ================= */
-function startWatching() {
+function startWatching(retried = false) {
   stopWatching();
   let pending = new Set();
   let timer = null;
@@ -276,7 +276,8 @@ function startWatching() {
     watcher = fs.watch(root, { recursive: true }, (_type, file) => {
       if (!file) return;
       const rel = String(file).split(path.sep).join('/');
-      if (rel.split('/').some(part => part === '.git' || part === 'node_modules')) return;
+      // Build output and dependencies change in bursts nobody is looking at (the file list skips them too).
+      if (rel.split('/').some(part => IGNORED_DIRS.has(part))) return;
       pending.add(rel);
       clearTimeout(timer);
       timer = setTimeout(() => {
@@ -286,8 +287,17 @@ function startWatching() {
         pending = new Set();
       }, 250);
     });
-    watcher.on('error', () => stopWatching());
-  } catch { watcher = null; } // some file systems can't be watched; Refresh still works
+    watcher.on('error', err => {
+      stopWatching();
+      // Try once more (a busy disk or a renamed folder can end a watch), then tell the user.
+      if (!retried && root) setTimeout(() => { if (root && !watcher) startWatching(true); }, 1000);
+      else watchLost(err);
+    });
+  } catch (err) { watcher = null; watchLost(err); } // some file systems can't be watched; Refresh still works
+}
+function watchLost(err) {
+  logError('watch')(err);
+  win?.webContents.send('fs:watchLost', err?.message ?? String(err));
 }
 function stopWatching() { watcher?.close(); watcher = null; }
 
@@ -442,7 +452,7 @@ handle('fs:restore', async () => {
 });
 
 handle('fs:closeFolder', () => {
-  root = null; stopWatching(); stopLiveServer(); saveState({ lastRoot: null });
+  root = null; termCwd = os.homedir(); stopWatching(); stopLiveServer(); saveState({ lastRoot: null });
 });
 
 handle('fs:recent', () => (loadState().recent || []).map(p => ({ path: p, name: path.basename(p) })));
@@ -483,10 +493,17 @@ handle('fs:createDir', async (_e, rel) => {
 });
 
 handle('fs:rename', async (_e, from, to) => {
-  const dest = resolveIn(to);
-  if (fs.existsSync(dest)) throw new Error('Something with that name already exists');
-  await fsp.rename(resolveIn(from), dest);
+  const src = resolveIn(from), dest = resolveIn(to);
+  // A case-only rename (foo.js → Foo.js) finds the file itself at the new name on Windows and macOS.
+  if (fs.existsSync(dest) && !(await sameFile(src, dest))) throw new Error('Something with that name already exists');
+  await fsp.rename(src, dest);
 });
+async function sameFile(a, b) {
+  try {
+    const [x, y] = await Promise.all([fsp.stat(a, { bigint: true }), fsp.stat(b, { bigint: true })]);
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch { return false; }
+}
 
 // Deleting moves to the Recycle Bin / Trash so it can be undone.
 handle('fs:trash', async (_e, rel) => {

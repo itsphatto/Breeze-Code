@@ -69,6 +69,7 @@ interface BreezeApi {
     fileUrl(rel: string): Promise<string>;
     previewUrl(rel: string): Promise<string>;
     onChange(cb: (paths: string[]) => void): () => void;
+    onWatchLost(cb: (reason: string) => void): () => void;
     importFile(dir: string, name: string, data: Uint8Array): Promise<string>;
   };
   lint: { check(code: string, ext: string): Promise<SyntaxResult>; };
@@ -497,6 +498,7 @@ function demoApi(): BreezeApi {
       async fileUrl(rel) { return binary.has(rel) && IMAGE_FILE.test(rel) ? DEMO_IMAGE : ''; },
       async previewUrl() { return ''; },
       onChange() { return () => { }; },
+      onWatchLost() { return () => { }; },
     },
     lint: { check() { return Promise.resolve(null); } },
     term: {
@@ -1653,6 +1655,8 @@ const LANGS: Record<string, [lexer: string, name: string]> = {
   md: ['md', 'Markdown'], markdown: ['md', 'Markdown'],
   py: ['py', 'Python'],
   java: ['java', 'Java'], rs: ['rs', 'Rust'],
+  c: ['cpp', 'C'], h: ['cpp', 'C/C++ Header'],
+  cpp: ['cpp', 'C++'], cc: ['cpp', 'C++'], cxx: ['cpp', 'C++'], hpp: ['cpp', 'C++ Header'], hh: ['cpp', 'C++ Header'], hxx: ['cpp', 'C++ Header'],
   cs: ['cs', 'C#'], csx: ['cs', 'C# Script'], csproj: ['html', 'C# Project'],
   png: ['', 'PNG Image'], jpg: ['', 'JPEG Image'], jpeg: ['', 'JPEG Image'], gif: ['', 'GIF Image'], webp: ['', 'WebP Image'],
   avif: ['', 'AVIF Image'], bmp: ['', 'Bitmap Image'], ico: ['', 'Icon'],
@@ -1672,6 +1676,7 @@ const JS_KW = 'break case catch class const continue debugger default delete do 
 const CS_KW = 'abstract as async await base bool break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extern false finally fixed float for foreach get goto if implicit in init int interface internal is lock long namespace new null object operator out override params private protected public readonly record ref required return sbyte sealed set short sizeof stackalloc static string struct switch this throw true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile when where while with yield';
 const JAVA_KW = 'abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for goto if implements import instanceof int interface long native new package private protected public return short static strictfp super switch synchronized this throw throws transient try void volatile while var record sealed permits yield true false null';
 const RS_KW = 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String Vec Option Some None Result Ok Err Box';
+const CPP_KW = 'alignas alignof auto bool break case catch char char8_t char16_t char32_t class const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline int long mutable namespace new noexcept nullptr operator private protected public register reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while concept override final NULL size_t std string vector';
 const PY_KW = 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield self';
 const LINE_COMMENT = /\/\/[^\n]*/;
 const BLOCK_COMMENT = /\/\*[\s\S]*?(?:\*\/|$)/;
@@ -1707,6 +1712,12 @@ const LEXERS: Record<string, RegExp> = {
     ['attr', /'[A-Za-z_]\w*/],
     ['num', either(/\b0[xob][\da-fA-F_]+(?:[iu](?:8|16|32|64|128|size))?\b/, /\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?(?:[iu](?:8|16|32|64|128|size)|f32|f64)?\b/)],
     ['kw', keywords(RS_KW)], ['prop', either(/\b[A-Za-z_]\w*!/, CALL)],
+  ]),
+  // C/C++: #include/#define directives (with their <header>), R"(raw)" strings, prefixed u8"…" L'…' literals, and digit separators.
+  cpp: lexer([
+    ['com', either(LINE_COMMENT, BLOCK_COMMENT)], ['kw', /(?<=^|\n)[ \t]*#[ \t]*[a-z]+/],
+    ['str', either(/(?<=#[ \t]*(?:include|import)[ \t]*)<[^>\n]*>?/,/(?:u8|[uUL])?R"[^(\s]*\([\s\S]*?(?:\)[^"\s]*"|$)/,/(?:u8|[uUL])?"(?:\\.|[^"\\\n])*"?/, /(?:u8|[uUL])?'(?:\\.|[^'\\\n])*'?/)],
+    ['num', either(/\b0[xXbB][\da-fA-F']+[uUlL]*\b/, /\b\d[\d']*(?:\.\d+)?(?:[eE][+-]?\d+)?[fFuUlL]*\b/)], ['kw', keywords(CPP_KW)], ['prop', CALL],
   ]),
   md: lexer([
     ['kw', /(?<=^|\n)#{1,6}[^\n]*/], ['str', either(/```[^`]*(?:```|$)/, /`[^`\n]*`/)], ['com', /(?<=^|\n)>[^\n]*/],
@@ -1780,7 +1791,7 @@ function highlightLines(text: string, lexerName: string): string[] {
   }
   return lines;
 }
-const COMMENT: Record<string, [string, string]> = { js: ['// ', ''], java: ['// ', ''], rs: ['// ', ''], py: ['# ', ''], css: ['/* ', ' */'], html: ['<!-- ', ' -->'], md: ['<!-- ', ' -->'] };
+const COMMENT: Record<string, [string, string]> = { js: ['// ', ''], java: ['// ', ''], rs: ['// ', ''], cpp: ['// ', ''], cs: ['// ', ''], py: ['# ', ''], css: ['/* ', ' */'], html: ['<!-- ', ' -->'], md: ['<!-- ', ' -->'] };
 
 /* ================= Syntax checks (red error lines) ================= */
 // Quick structural checks that work everywhere: brackets, strings, comments, tags, JSON, Python blocks.
@@ -2333,6 +2344,7 @@ interface EditorBuffer {
   undo: Snapshot[];      // the editor keeps its own history (see "Undo & redo")
   redo: Snapshot[];
   lastEdit: { kind: string; at: number } | null;
+  disk?: string;         // the file's newer text on disk, changed by something else while this buffer had unsaved edits
 }
 interface Session { tabs: string[]; active: string | null; expanded: string[]; pos: Record<string, [number, number]>; }
 
@@ -2604,8 +2616,8 @@ function drawFluidBlurFade(p: BlurFadeParams): void {
     const w4 = Math.sin(k4 * S - t * 2.1 + 3.7);
     const swell = 0.5 + 0.5 * Math.sin(kSwell * S + t * 0.5);
 
-    // Variation factor creating organic, gentle differing wave heights along the border
-    const variation = Math.max(0.12, 0.48 + 0.32 * swell + 0.28 * w1 + 0.2 * w2 + 0.12 * w3 + 0.08 * w4);
+    // Variation factor: a minimal, near-even band with only a gentle ripple along the border
+    const variation = Math.max(0.3, 0.6 + 0.14 * swell + 0.12 * w1 + 0.08 * w2 + 0.05 * w3 + 0.03 * w4);
 
     // Local energy from state.energies[i] (smooth attack on entry, graceful decay on leave)
     const energy = energies ? (energies[i] || 0) : 0;
@@ -2759,11 +2771,11 @@ function drawFluidDotGrid(params: DotGridParams): void {
       const wave2 = Math.sin(k2 * u - t * 2.2 + 1.25);
       const wave3 = Math.cos(k3 * u + t * 3.0 + 2.6);
 
-      const crestFactor = Math.max(0.15, 0.52 + 0.28 * wave1 + 0.16 * wave2 + 0.10 * wave3);
+      const crestFactor = Math.max(0.3, 0.55 + 0.14 * wave1 + 0.09 * wave2 + 0.06 * wave3);
 
-      // Increased wave height and reach matching the expanded blur fade depth
-      const maxAllowedDepth = Math.max(24, Math.min(135, Math.min(w, h) * 0.4));
-      const targetReach = (18 + 78 * crestFactor) * energy;
+      // A minimal band: low crests that only ripple a little, matching the blur fade depth
+      const maxAllowedDepth = Math.max(20, Math.min(60, Math.min(w, h) * 0.25));
+      const targetReach = (16 + 30 * crestFactor) * energy;
       const maxWaveDepth = Math.min(maxAllowedDepth, targetReach);
 
       if (distToBorder > maxWaveDepth) continue;
@@ -2957,8 +2969,8 @@ function renderFluidFrame(state: FluidCanvasState): void {
   drawFluidBlurFade({ ctx, samples, P, energies: state.energies, gx, gy, W: w, H: h, cfg: {
     t,
     speed: 0.65,
-    baseDepth: 30,
-    maxSurge: 66,
+    baseDepth: 22,
+    maxSurge: 22,
     influenceRadius: 620,
     harmonics: [2, 5, 8, 12],
     swellM: 1,
@@ -2977,8 +2989,8 @@ function renderFluidFrame(state: FluidCanvasState): void {
   drawFluidBlurFade({ ctx, samples, P, energies: state.energies, gx, gy, W: w, H: h, cfg: {
     t,
     speed: 0.9,
-    baseDepth: 20,
-    maxSurge: 52,
+    baseDepth: 16,
+    maxSurge: 16,
     influenceRadius: 540,
     harmonics: [3, 6, 11, 16],
     swellM: 2,
@@ -4447,7 +4459,15 @@ async function reloadText(b: EditorBuffer): Promise<void> {
   if (r?.text == null) return;
   const text = r.text.replaceAll('\r\n', '\n');
   if (typingTo.has(b.path)) { typingTo.set(b.path, text); return; } // the running animation heads for the newest text
-  if (text === b.saved || isDirty(b)) return;
+  if (text === b.saved) { b.disk = undefined; return; }
+  if (isDirty(b)) {
+    // Keep the unsaved edits, but remember the disk changed so saving asks before overwriting it.
+    if (text === b.text) { b.saved = text; b.disk = undefined; renderTabs(); renderTree(); return; }
+    if (b.disk !== text) toast(`${baseName(b.path)} changed on disk. Your unsaved edits are kept.`);
+    b.disk = text;
+    return;
+  }
+  b.disk = undefined;
   // While an agent works, its edits are typed out instead of swapped in.
   if (hasAnyActiveRun()) { void typeAgentEdit(b, text); return; }
   remember(b, 'reload');
@@ -4555,6 +4575,9 @@ api.fs.onChange(paths => background((async () => {
   }));
   if (paths.some(path => path === 'index.html' || path.endsWith('/index.html'))) await refreshLiveShare();
 })()));
+
+// The main process stopped watching the folder: changes made outside Breeze won't show until a refresh.
+api.fs.onWatchLost(() => toast('Breeze stopped noticing outside file changes. Reopen the folder to watch it again.'));
 
 /* ================= Opening, tabs & saving ================= */
 type Spot = { line: number; col: number; len?: number };
@@ -4728,7 +4751,7 @@ function closeTabs(paths: string[]): void {
     $('#tabsDontSave', m).onclick = () => { closeModal(); finish(); };
     $('#tabsSave', m).onclick = () => {
       closeModal();
-      background(Promise.all(dirty.map(b => saveFile(b.path))).then(saved => { if (saved.every(Boolean)) finish(); }));
+      background(saveBuffers(dirty).then(ok => { if (ok) finish(); }));
     };
   });
 }
@@ -4874,18 +4897,56 @@ function closeTab(path: string): void {
 async function saveFile(path: string | null = active): Promise<boolean> {
   const b = path ? buffers.get(path) : undefined;
   if (b?.kind !== 'text') return false;
+  if (b.disk != null) {
+    const choice = await askDiskConflict(b);
+    if (choice === 'reload') { loadDiskVersion(b); return false; }
+    if (choice !== 'overwrite') return false;
+  }
   const text = b.text;
   try { await api.fs.writeFile(b.path, b.eol === '\r\n' ? text.replaceAll('\n', '\r\n') : text); }
   catch (e) { toast(`Couldn't save ${baseName(b.path)}: ${errMsg(e)}`); return false; }
   b.saved = text;
+  b.disk = undefined;
   renderTabs(); renderTree(); flushSession();
   if (running) void reloadPreview();
   return true;
 }
-async function saveAll(): Promise<void> {
+// The file changed on disk while it had unsaved edits: keep this version, or take the one on disk.
+function askDiskConflict(b: EditorBuffer): Promise<'overwrite' | 'reload' | null> {
+  return new Promise(resolve => {
+    let picked: 'overwrite' | 'reload' | null = null;
+    openModal(`<h3>${esc(baseName(b.path))} changed on disk</h3><p class="sub">Something else changed this file after you started editing it. Saving now replaces that change with yours.</p><div class="row end"><button class="btn" data-close>Cancel</button><button class="btn" id="diskReload">Use disk version</button><button class="btn btn-primary" id="diskOverwrite">Overwrite</button></div>`,
+      m => {
+        $('#diskReload', m).onclick = () => { picked = 'reload'; closeModal(); };
+        $('#diskOverwrite', m).onclick = () => { picked = 'overwrite'; closeModal(); };
+      },
+      () => resolve(picked));
+  });
+}
+// Drops the unsaved edits for the text on disk (undo brings them back).
+function loadDiskVersion(b: EditorBuffer): void {
+  if (b.disk == null) return;
+  remember(b, 'reload');
+  b.text = b.saved = b.disk;
+  b.disk = undefined;
+  if (b.ta) { const s = Math.min(b.ta.selectionStart, b.text.length); b.ta.value = b.text; b.ta.setSelectionRange(s, s); }
+  if (b.path === active) renderCode();
+  renderTabs(); renderTree(); flushSession();
+  scheduleLint(b, 0);
+}
+// Saves several buffers; true when every one was saved. Files changed on disk ask in turn, so their questions
+// don't replace one another.
+async function saveBuffers(list: EditorBuffer[]): Promise<boolean> {
+  const saved = await Promise.all(list.filter(b => b.disk == null).map(b => saveFile(b.path)));
+  for (const b of list.filter(b => b.disk != null)) saved.push(await saveFile(b.path));
+  return saved.every(Boolean);
+}
+async function saveAll(): Promise<boolean> {
   const dirty = [...buffers.values()].filter(isDirty);
-  await Promise.all(dirty.map(b => saveFile(b.path)));
-  if (dirty.length) toast(`Saved ${plural(dirty.length, 'file')}`);
+  const ok = await saveBuffers(dirty);
+  const n = dirty.filter(b => !isDirty(b)).length;
+  if (n) toast(`Saved ${plural(n, 'file')}`);
+  return ok;
 }
 
 /* ================= Code editor ================= */
@@ -6815,6 +6876,7 @@ const EDITOR_WORDS: Record<string, string[]> = {
   py: `${PY_KW} ${PY_EXTRA}`.split(' '),
   java: `${JAVA_KW} ${JAVA_EXTRA}`.split(' '),
   rs: `${RS_KW} ${RS_EXTRA}`.split(' '),
+  cpp: `${CPP_KW} include define ifdef ifndef endif pragma cout cin cerr endl printf scanf main`.split(' '),
   css: CSS_PROPS.split(' '),
   html: HTML_TAGS.split(' '),
   json: ['true', 'false', 'null'],
@@ -7297,7 +7359,8 @@ function confirmDiscard(): Promise<boolean> {
         for (const b of dirty) { b.text = b.saved; if (b.ta) b.ta.value = b.saved; }
         finish(true); closeModal();
       };
-      $('#dSave', m).onclick = () => background(saveAll().then(() => { finish(true); closeModal(); }));
+      // Closed first without cancelling: a file changed on disk may ask its own question while saving.
+      $('#dSave', m).onclick = () => { modalOnClose = null; closeModal(); background(saveAll().then(finish, err => { finish(false); throw err; })); };
     }, () => finish(false));
   });
 }
