@@ -503,6 +503,11 @@ button {
   color: #fff;
 }
 
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--err), #fff 12%);
+  border-color: color-mix(in srgb, var(--err), #fff 12%);
+}
+
 .icon-btn {
   display: inline-grid;
   place-items: center;
@@ -3617,7 +3622,7 @@ body.resizing-h .term-body {
 }
 
 .scrim.closing .modal {
-  animation: sink .32s cubic-bezier(.16, 1, .3, 1) forwards;
+  animation: modalRollUp .3s cubic-bezier(.4, 0, .6, 1) 40ms forwards;
 }
 
 .scrim.top {
@@ -3633,7 +3638,34 @@ body.resizing-h .term-body {
   padding: 20px;
   box-shadow: 0 30px 80px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .05);
   backdrop-filter: var(--glass-blur);
-  animation: modalIn .38s cubic-bezier(.16, 1, .3, 1);
+  animation: modalGrow .5s cubic-bezier(.32, .72, 0, 1);
+}
+
+/* Modals open by unrolling downward as their parts arrive (a strip at the top first, the full panel last),
+   and close by rolling back up as the parts leave, instead of popping in or out at full size. */
+@keyframes modalGrow {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.97);
+    clip-path: inset(0 0 calc(100% - 56px) 0 round 16px);
+  }
+  30% {
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 16px);
+  }
+}
+
+@keyframes modalRollUp {
+  from {
+    clip-path: inset(0 0 0 0 round 16px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(.98);
+    clip-path: inset(0 0 calc(100% - 48px) 0 round 16px);
+  }
 }
 
 .modal.wide {
@@ -4203,9 +4235,19 @@ body.vibing .ide {
 .agent-opt:not(.missing):active,
 .tree-item:active,
 .qo-item:active,
-.commit:active,
 .result-line:active {
   transform: scale(.985);
+}
+
+/* A pressed checkpoint keeps its graph line and dot still; only the text dips. */
+.commit .msgline {
+  transform-origin: left center;
+  transition: transform .12s cubic-bezier(.16, 1, .3, 1), opacity .12s ease;
+}
+
+.commit:active .msgline {
+  transform: scale(.97);
+  opacity: .8;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -6309,6 +6351,147 @@ body.vibing .box {
   }
 }
 
+/* Staggered menus (the agent switcher): the panel settles in with a soft spring and its rows follow one after another,
+   Apple-style; leaving, the rows go first, bottom up, and the panel fades a beat later. */
+.menu.stagger {
+  animation: staggerPanelIn .42s cubic-bezier(.32, .72, 0, 1) backwards;
+}
+
+.menu.stagger > * {
+  animation: staggerRowIn .3s cubic-bezier(.32, .72, 0, 1) backwards;
+  animation-delay: calc(40ms + min(var(--i, 0), 8) * 22ms);
+}
+
+.menu.stagger.up {
+  animation-name: staggerPanelInUp;
+}
+
+.menu.stagger.from-gear {
+  animation-name: gearIn;
+}
+
+@keyframes staggerPanelInUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(.97);
+    clip-path: inset(calc(100% - 34px) 0 0 0 round 10px);
+  }
+  25% {
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 10px);
+  }
+}
+
+.menu.stagger.up.closing {
+  animation-name: staggerPanelOutUp;
+}
+
+@keyframes staggerPanelOutUp {
+  from {
+    clip-path: inset(0 0 0 0 round 10px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(2px) scale(.98);
+    clip-path: inset(calc(100% - 30px) 0 0 0 round 10px);
+  }
+}
+
+/* Modals: the same rhythm for the parts inside the panel (staggerIn sets --i). */
+.stagger-item {
+  animation: staggerRowIn .34s cubic-bezier(.32, .72, 0, 1) backwards;
+  animation-delay: calc(70ms + min(var(--i, 0), 10) * 30ms);
+}
+
+.scrim.closing .stagger-item {
+  animation: staggerRowOut .16s ease-in forwards;
+  animation-delay: calc(max(0, 6 - var(--i, 0)) * 12ms);
+}
+
+.menu.stagger.closing {
+  animation: staggerPanelOut .24s cubic-bezier(.4, 0, .6, 1) 30ms forwards;
+}
+
+.menu.stagger.closing > * {
+  animation: staggerRowOut .14s ease-in forwards;
+  animation-delay: calc(max(0, 6 - var(--i, 0)) * 10ms);
+}
+
+/* Menus unroll from their button as the rows arrive, and roll back up as they leave. */
+@keyframes staggerPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(.97);
+    clip-path: inset(0 0 calc(100% - 34px) 0 round 10px);
+  }
+  25% {
+    opacity: 1;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 10px);
+  }
+}
+
+@keyframes staggerPanelOut {
+  from {
+    clip-path: inset(0 0 0 0 round 10px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-2px) scale(.98);
+    clip-path: inset(0 0 calc(100% - 30px) 0 round 10px);
+  }
+}
+
+@keyframes staggerRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes staggerRowOut {
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+/* A brand mark in front of a menu row's label (agent switcher). */
+.mi-ico-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-ico {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--tint, var(--bg-3));
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.menu-item:disabled .menu-ico {
+  opacity: .45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu.stagger,
+  .menu.stagger > *,
+  .stagger-item {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}
+
 /* ================= Chat history ================= */
 .menu.history-menu {
   width: 300px;
@@ -6435,6 +6618,42 @@ body.vibing .box {
   right: 0;
 }
 
+/* Panel sashes are lifted into a fixed layer and placed over the gap between cards (see placeSashes). */
+.sash-layer>.sash {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 39; /* under the modal scrim (40) */
+}
+
+.sash-layer>.sash[hidden] {
+  display: none;
+}
+
+/* Panel sashes light the fixed .sash-line in the gap instead of their own edge. */
+[data-sash]::after {
+  display: none;
+}
+
+.sash-line {
+  position: fixed;
+  z-index: 39;
+  border-radius: 2px;
+  background: var(--blue);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s;
+}
+
+.sash-line.on {
+  opacity: 1;
+  transition-delay: .1s;
+}
+
+body:is(.resizing, .resizing-h) .sash-line.on {
+  transition-delay: 0s;
+}
+
 .sash-v.sash-left {
   left: 0;
 }
@@ -6505,18 +6724,33 @@ body.vibing .box {
   border-radius: 10px;
 }
 
-.social-card .nm {
-  align-self: end;
+/* Name and status sit together, centred against the logo and the button. */
+.social-card .sc-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
 }
 
-.social-card .sub {
-  align-self: start;
-  grid-column: 2;
+/* One feed per line, kept short instead of spanning the whole pane. */
+.set-pane .social-grid {
+  grid-template-columns: minmax(0, 360px);
+}
+
+/* The global .sub (modal subtitles) adds space below it; inside a card that pushed the text off centre. */
+.social-card .sc-text .sub {
+  margin: 0;
+}
+
+.social-card .mark {
+  grid-row: auto;
 }
 
 .social-card .btn {
   grid-column: 3;
-  grid-row: 1 / span 2;
   margin-top: 0;
   white-space: nowrap;
 }
@@ -6766,6 +7000,40 @@ body.vibing .box {
   transform: none;
 }
 
+/* Account rows: the trash sits after Active/Switch and shows on hover, like the branch picker's. */
+.set-acct-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.set-acct-ctl .br-del {
+  margin-left: 0;
+}
+
+.set-row:hover .br-del,
+.menu-item:hover .br-del {
+  opacity: 1;
+}
+
+.menu-item.has-del {
+  gap: 10px;
+}
+
+.menu-item.has-del>span:first-child {
+  margin-right: 18px;
+}
+
+.menu-item.has-del .br-del {
+  width: 22px;
+  height: 22px;
+  margin: -2px -6px -2px 0;
+}
+
+.menu-item:hover:not(:disabled) .br-del:not(.holding) {
+  color: rgba(255, 255, 255, .85);
+}
+
 /* no row shrink while holding */
 @keyframes holdFill {
   to {
@@ -6816,6 +7084,24 @@ button.pill:active, .pill-btn:active {
 .set-ctl .pill.blue {
   transition: all .15s ease;
 }
+
+/* The signed-in account's badge: green, and the same box as the Switch buttons on the other rows. */
+.set-ctl .pill.set-active {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 13px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.set-acct-ctl> :first-child {
+  min-width: 76px;
+  justify-content: center;
+}
+
 
 #agentPill:active,
 .pill.blue:active {
@@ -7539,16 +7825,17 @@ body.layout-animating #previewPane {
 
 /* ================= Settings pop-up ================= */
 .modal.settings-shell {
-  width: min(1000px, calc(100vw - 32px));
-  height: min(720px, calc(100vh - 48px));
+  width: min(900px, calc(100vw - 32px));
+  height: min(660px, calc(100vh - 48px));
   padding: 0;
   overflow: hidden;
 }
 
 .settings-modal {
   display: grid;
-  grid-template-columns: 230px 1fr;
+  grid-template-columns: 224px 1fr;
   height: 100%;
+  font-size: 14.5px;
 }
 
 .set-nav {
@@ -7562,7 +7849,9 @@ body.layout-animating #previewPane {
 }
 
 .set-nav h3 {
-  padding: 0 10px 12px;
+  padding: 0 10px 14px;
+  font-size: 26px;
+  line-height: 1.15;
 }
 
 .set-nav button {
@@ -7570,12 +7859,13 @@ body.layout-animating #previewPane {
   isolation: isolate;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 10px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 9px;
   background: transparent;
   color: var(--text-2);
+  font-size: 14.5px;
   text-align: left;
   cursor: pointer;
   transition: background .22s ease, color .22s ease;
@@ -7620,8 +7910,8 @@ body.layout-animating #previewPane {
 }
 
 .set-nav-img {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   object-fit: contain;
   opacity: .8;
 }
@@ -7676,7 +7966,7 @@ body.layout-animating #previewPane {
 .set-main {
   position: relative;
   overflow-y: auto;
-  padding: 22px 26px;
+  padding: 24px 28px;
 }
 
 .set-close {
@@ -7702,16 +7992,16 @@ body.layout-animating #previewPane {
 }
 
 .set-pane h4 {
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .set-pane h5 {
-  margin: 20px 0 8px;
+  margin: 24px 0 8px;
   color: var(--text-2);
   font-family: 'Inter', var(--font-ui), sans-serif;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
@@ -7721,8 +8011,8 @@ body.layout-animating #previewPane {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 11px 0;
+  gap: 20px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--glass-line);
 }
 
@@ -7732,12 +8022,33 @@ body.layout-animating #previewPane {
 
 .set-title {
   color: var(--text);
+  font-size: 15px;
 }
 
 .set-sub {
-  margin: 2px 0 0;
+  margin: 3px 0 0;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
+}
+
+.set-pane .btn-sm {
+  padding: 6px 13px;
+  font-size: 13.5px;
+  border-radius: 8px;
+}
+
+/* "Friends will see": the preview card's lines get room to breathe. */
+.discord-preview {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 18px 20px;
+  line-height: 1.45;
+}
+
+.discord-preview b {
+  margin-bottom: 2px;
+  font-size: 15px;
 }
 
 .set-ctl {
@@ -7746,14 +8057,15 @@ body.layout-animating #previewPane {
 
 .set-seg button {
   flex: none;
-  padding: 6px 12px;
+  padding: 8px 15px;
+  font-size: 14px;
   cursor: pointer;
 }
 
-/* ---------- liquid on/off switch (after Jhey Tompkins' liquid toggle) ----------
-   --complete runs 0 (off) → 100 (on) and drives the colour and every position, so dragging just sets it inline.
-   At rest the knob is white and the track shows through a hole cut by #lt-remove-black. Pressed, the knob grows
-   into a glass lens and the track melts into it through #lt-goo. */
+/* ---------- on/off switch ----------
+   A rounded-rect track with a rounded-square knob. --complete runs 0 (off) → 100 (on) and drives the colour and the
+   knob's place, so dragging just sets it inline. The knob stretches toward the middle of its travel and settles
+   back square at either end, so a flip reads as one elastic slide. */
 @property --complete {
   syntax: '<number>';
   inherits: true;
@@ -7762,27 +8074,24 @@ body.layout-animating #previewPane {
 
 .switch {
   --complete: 0;
-  --transition: .2s;
-  --ease: ease-out;
-  --border: 2px;
-  --width: 52;
-  --height: 22;
+  --pad: 3px;
+  --knob: 20px;
+  --stretch: 10px;
   /* grey → Breeze blue (#005EFF is hsl 218 100% 50%) */
-  --checked: hsl(218 calc(8% + var(--complete) * .92%) calc(81% - var(--complete) * .31%));
+  --checked: hsl(218 calc(8% + var(--complete) * .92%) calc(28% + var(--complete) * .22%));
   position: relative;
   flex: none;
-  width: calc(var(--width) * 1px);
-  height: calc(var(--height) * 1px);
+  width: 50px;
+  height: calc(var(--knob) + 2 * var(--pad));
   padding: 0;
   border: 0;
-  border-radius: 100px;
-  background: transparent;
+  border-radius: 9px;
+  background: var(--checked);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
   cursor: pointer;
-  overflow: visible;
-  container-type: inline-size;
   outline-offset: 2px;
   touch-action: none;
-  transition: --complete var(--transition) var(--ease), outline var(--transition) var(--ease);
+  transition: --complete .22s cubic-bezier(.65, 0, .35, 1), outline .2s ease;
 }
 
 .switch.on {
@@ -7790,15 +8099,25 @@ body.layout-animating #previewPane {
 }
 
 .switch[data-dragging] {
-  transition: outline var(--transition) var(--ease);
+  transition: outline .2s ease;
 }
 
 .switch * {
   pointer-events: none;
 }
 
-.switch span {
-  display: block;
+.sw-knob {
+  /* 0 at either end, 1 halfway across */
+  --mid: calc(min(var(--complete), 100 - var(--complete)) / 50);
+  position: absolute;
+  top: var(--pad);
+  left: calc(var(--pad) + (100% - var(--knob) - 2 * var(--pad)) * var(--complete) / 100 - var(--stretch) * var(--mid) / 2);
+  width: calc(var(--knob) + var(--stretch) * var(--mid));
+  height: var(--knob);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35), 0 0 0 .5px rgba(0, 0, 0, .08);
+  transition: scale .2s cubic-bezier(.34, 1.56, .64, 1);
 }
 
 .switch:focus-visible {
@@ -7810,157 +8129,13 @@ body.layout-animating #previewPane {
   outline: none;
 }
 
+.switch:is(:active, [data-active]):not(:disabled) .sw-knob {
+  scale: 1.08 .94;
+}
+
 .switch:disabled {
   opacity: .5;
   cursor: wait;
-}
-
-.lt-knockout {
-  position: absolute;
-  inset: 0;
-  border-radius: 100px;
-  filter: url(#lt-remove-black);
-  will-change: filter;
-  transform: translate3d(0, 0, 0);
-}
-
-.lt-indicator {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 100%;
-  height: 100%;
-  translate: -50% -50%;
-  border-radius: 100px;
-  background: var(--checked);
-  container-type: inline-size;
-}
-
-.lt-mask {
-  position: absolute;
-  top: 50%;
-  left: var(--border);
-  width: calc(60% - (2 * var(--border)));
-  height: calc(100% - (2 * var(--border)));
-  border-radius: 100px;
-  background: #000;
-  translate: calc((var(--complete) / 100) * (100cqi - 60cqi)) -50%;
-  transition-property: height, width, margin;
-  transition-duration: var(--transition);
-  transition-timing-function: var(--ease);
-}
-
-.lt-liquid {
-  position: absolute;
-  top: 50%;
-  left: var(--border);
-  width: calc(60% - (2 * var(--border)));
-  height: calc(100% - (2 * var(--border)));
-  border-radius: 100px;
-  container-type: inline-size;
-  translate: calc((var(--complete) / 100) * (100cqi - 100% - (2 * var(--border)))) -50%;
-  transition: scale var(--transition) var(--ease);
-}
-
-.lt-shadow {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  border-radius: 100px;
-  opacity: 0;
-  box-shadow: 1px -1px 2px hsl(0 0% 100% / .5) inset,
-    0 -1px 2px hsl(0 0% 100% / .5) inset,
-    -1px -1px 2px hsl(0 0% 100% / .5) inset,
-    1px 1px 2px hsl(0 0% 30% / .5) inset,
-    -4px 2px 5px -3px hsl(0 0% 30% / .25) inset,
-    -1px 1px 3px hsl(0 0% 30% / .25) inset,
-    -1px -1px 4px hsl(0 0% 60% / .15),
-    1px 1px 2px hsl(0 0% 30% / .15),
-    1px 1px 3px hsl(0 0% 30% / .15),
-    -1px -1px 1px hsl(0 0% 100% / .25) inset,
-    2px 3px 8px -3px hsl(0 0% 30% / .5);
-  transition: opacity var(--transition) var(--ease);
-}
-
-.lt-cover {
-  position: absolute;
-  inset: 0;
-  border-radius: 100px;
-  background: #fff;
-  transition: opacity var(--transition) var(--ease);
-}
-
-.lt-wrapper {
-  position: absolute;
-  inset: 0;
-  border-radius: 100px;
-  clip-path: inset(0 0 0 0 round 100px);
-  filter: blur(2px);
-  transition: filter var(--transition) var(--ease);
-}
-
-.lt-liquids {
-  position: absolute;
-  inset: 0;
-  border-radius: 100px;
-  overflow: hidden;
-  filter: url(#lt-goo);
-  transform: translate3d(0, 0, 0);
-}
-
-.lt-liquid-shadow {
-  position: absolute;
-  inset: 0;
-  border-radius: 100px;
-  box-shadow: inset 0 0 1px 2px var(--checked),
-    inset calc(((var(--complete) / 100) * 4px) - 2px) 0 1px 2px var(--checked);
-}
-
-/* The whole track, slid inside the knob's lens so the lens shows the part of the track under it. */
-.lt-track {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: calc(var(--width) * 1px);
-  height: calc(var(--height) * 1px);
-  border-radius: 100px;
-  background: var(--checked);
-  translate: calc((var(--complete) / 100) * (100cqi - 100% - (6 * var(--border)))) -50%;
-  transition-property: height, width, left;
-  transition-duration: var(--transition);
-  transition-timing-function: var(--ease);
-}
-
-.switch.on:not(:active, [data-active]) .lt-track {
-  left: calc(var(--border) * 6);
-}
-
-/* Pressed: the knob swells into a lens. */
-.switch:is(:active, [data-active]):not(:disabled) .lt-mask {
-  width: calc((60% - (2 * var(--border))) * 1.65);
-  height: calc((100% - (2 * var(--border))) * 1.65);
-  margin-left: calc((60% - (2 * var(--border))) * -.325);
-}
-
-.switch:is(:active, [data-active]):not(:disabled) .lt-liquid {
-  scale: 1.65;
-}
-
-.switch:is(:active, [data-active]):not(:disabled) .lt-wrapper {
-  filter: blur(0);
-}
-
-.switch:is(:active, [data-active]):not(:disabled) .lt-shadow {
-  opacity: 1;
-}
-
-.switch:is(:active, [data-active]):not(:disabled) .lt-cover {
-  opacity: 0;
-}
-
-.switch:is(:active, [data-active]):not(:disabled) .lt-track {
-  left: calc(var(--border) * 3);
-  height: calc((var(--height) * 1px) - (6 * var(--border)));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -7979,7 +8154,7 @@ body.layout-animating #previewPane {
 }
 
 .set-volume input[type=range] {
-  width: 160px;
+  width: 190px;
   height: 4px;
   margin: 0;
   border-radius: 1.5px;
@@ -7999,9 +8174,9 @@ body.layout-animating #previewPane {
 }
 
 .set-volume-val {
-  width: 34px;
+  width: 40px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 13.5px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -8016,10 +8191,10 @@ body.layout-animating #previewPane {
 
 .set-agent {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
-  gap: 2px 8px;
-  padding: 8px 10px;
+  gap: 2px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg-2);
@@ -8043,7 +8218,7 @@ body.layout-animating #previewPane {
 
 .set-agent .nm {
   align-self: end;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -8053,19 +8228,18 @@ body.layout-animating #previewPane {
 .set-agent .set-sub {
   grid-column: 2;
   align-self: start;
-  font-size: 11px;
+  font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .set-agent-mark {
-  grid-row: span 2;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   overflow: hidden;
   font-weight: 700;
 }
@@ -8117,6 +8291,46 @@ body.layout-animating #previewPane {
   cursor: default;
 }
 
+/* Four to a row: logo on top, name centred under it. */
+.set-agent {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  align-content: center;
+  row-gap: 10px;
+  padding: 8px;
+  text-align: center;
+}
+
+.set-agent .set-agent-mark {
+  width: 28px;
+  height: 28px;
+}
+
+.set-agent .nm {
+  align-self: center;
+  max-width: 100%;
+}
+
+/* Not installed: dimmed logo and name, with the Install button underneath. */
+.set-agent.missing {
+  grid-template-rows: auto auto;
+  row-gap: 10px;
+  cursor: default;
+}
+
+.set-agent.missing .set-agent-mark,
+.set-agent.missing .nm {
+  opacity: .5;
+}
+
+.set-pane .set-agent-install {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  padding: 1px 10px;
+  font-size: 12.5px;
+  border-radius: 7px;
+}
+
 /* Account bar: rounded corner rectangle holding the avatar, who is signed in and the account buttons. */
 .set-user {
   display: flex;
@@ -8141,13 +8355,13 @@ body.layout-animating #previewPane {
 
 .set-user-actions .btn {
   border-radius: 8px;
-  padding: 6px 12px;
+  padding: 7px 14px;
 }
 
 .set-user .avatar {
-  width: 40px;
-  height: 40px;
-  font-size: 15px;
+  width: 46px;
+  height: 46px;
+  font-size: 17px;
 }
 
 @media (max-width: 620px) {
@@ -8542,4 +8756,71 @@ body.layout-animating #previewPane {
 
 .tabs .tab-list svg {
   transition: transform .2s cubic-bezier(.2, .8, .2, 1);
+}
+
+/* ---------- feed sign-in: the site in a rounded frame over the whole app, blurred behind ---------- */
+.feed-connect {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, .42);
+  backdrop-filter: blur(18px) saturate(.9);
+  animation: fade .3s cubic-bezier(.32, .72, 0, 1);
+}
+
+.feed-connect.closing {
+  animation: fadeOut .24s ease forwards;
+  pointer-events: none;
+}
+
+.feed-connect-frame {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - 48px));
+  border: 1px solid var(--glass-line);
+  border-radius: 18px;
+  background: var(--bg-1);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .6);
+  overflow: hidden;
+  animation: modalIn .34s cubic-bezier(.32, .72, 0, 1);
+}
+
+.feed-connect.closing .feed-connect-frame {
+  animation: sink .24s cubic-bezier(.4, 0, .6, 1) forwards;
+}
+
+.feed-connect-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 14px;
+  font-weight: 600;
+}
+
+.feed-connect-head .mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.feed-connect-head .btn {
+  margin-left: auto;
+}
+
+/* The desktop app lays the site's view exactly over this box. */
+.feed-connect-body {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  margin: 0 6px 6px;
+  border-radius: 14px;
+  background: #000;
+}
+
+/* The blue hover row would swallow Antigravity's blue logo, so it turns to the white one there. */
+.menu-item:is(:hover:not(:disabled), .kb) .menu-ico.tint-antigravity .brand-img {
+  content: url("../../assets/icons/antigravity_white.png");
 }

@@ -9,6 +9,7 @@ const listen = (ch, cb) => {
 };
 
 contextBridge.exposeInMainWorld('breeze', {
+  version: process.argv.find(a => a.startsWith('--breeze-version='))?.slice(17) ?? '',
   fs: {
     openFolder: () => invoke('fs:openFolder'),
     createFolder: () => invoke('fs:createFolder'),
@@ -109,7 +110,9 @@ contextBridge.exposeInMainWorld('breeze', {
   },
   vibe: {
     status: () => invoke('vibe:status'),
-    connect: id => invoke('vibe:connect', id),
+    connect: (id, bounds) => invoke('vibe:connect', id, bounds),
+    connectBounds: bounds => invoke('vibe:connectBounds', bounds),
+    connectClose: () => invoke('vibe:connectClose'),
     disconnect: id => invoke('vibe:disconnect', id),
     show: (id, bounds) => invoke('vibe:show', id, bounds),
     bounds: bounds => invoke('vibe:bounds', bounds),
