@@ -93,6 +93,7 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: none;
 }
 
 /* Prevent blue text selection highlights & dragging across UI chrome */
@@ -1283,8 +1284,8 @@ body.resizing-h iframe {
 }
 
 .sash-v.sash-left {
-  left: -3px;
   right: auto;
+  left: 0;
 }
 
 .sash-h {
@@ -2932,7 +2933,7 @@ body.resizing-h .term-body {
 
 .term-line input.raw-input {
   color: var(--text) !important;
-  -webkit-text-fill-color: var(--text) !important;
+  -webkit-text-fill-color: var(--text);
 }
 
 .term-line input::selection {
@@ -4612,34 +4613,13 @@ body.vibing .ide {
 }
 
 .scm-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
   font-size: 11.5px;
   font-weight: 600;
   text-transform: none;
   letter-spacing: normal;
-  color: var(--text-2);
-  cursor: pointer;
-  user-select: none;
-  border-radius: 6px;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-  transition: none !important;
   transform: none !important;
   animation: none !important;
-}
-
-.scm-head *,
-.scm-head .title,
-.scm-head .chev,
-.scm-head .count {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-.scm-head {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4651,6 +4631,15 @@ body.vibing .ide {
   outline: 1px solid transparent !important;
   outline-offset: -1px;
   transition: background-color .18s cubic-bezier(.16, 1, .3, 1), color .18s cubic-bezier(.16, 1, .3, 1), outline-color .18s cubic-bezier(.16, 1, .3, 1) !important;
+}
+
+.scm-head *,
+.scm-head .title,
+.scm-head .chev,
+.scm-head .count {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .scm-head:hover {
@@ -4984,41 +4973,30 @@ body.vibing .ide {
   color: #fdba74;
 }
 
+/* An open checkpoint: the graph's lanes carry on down the left while the details card fills the rest. */
 .commit-detail-row {
-  display: flex !important;
-  flex-direction: row !important;
-  align-items: stretch !important;
-  width: 100% !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  position: relative !important;
-  box-sizing: border-box !important;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .commit-detail-row .detail-graph-col {
-  position: relative !important;
-  flex-shrink: 0 !important;
-  align-self: stretch !important;
-  display: flex !important;
-  flex-direction: column !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  height: auto !important;
-  min-height: 100% !important;
-  overflow: visible !important;
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  overflow: visible;
 }
 
-.commit-detail-row .detail-graph-col .detail-graph,
+/* Its width is the svg's width attribute (the graph's lane count); it stretches to the card's height. */
 .commit-detail-row .detail-graph {
-  position: static !important;
-  flex: 1 1 100% !important;
-  align-self: stretch !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 100% !important;
-  display: block !important;
-  overflow: visible !important;
-  pointer-events: none !important;
+  display: block;
+  flex: 1 1 auto;
+  overflow: visible;
+  pointer-events: none;
 }
 
 .scm .commit-detail,
@@ -5483,11 +5461,6 @@ body.vibing .ide {
   }
 }
 
-/* Overflowing tabs scroll sideways with the mouse wheel instead of showing a scrollbar. */
-.tabs {
-  scrollbar-width: none;
-}
-
 /* ================= Onboarding: mode step ================= */
 .ob-step.mode-step {
   width: min(640px, calc(100vw - 32px));
@@ -5596,20 +5569,17 @@ body.vibing .ide {
 
 .project-card .seg button {
   transition: border-color .15s, background-color .15s, color .15s;
-}
-
-.project-card .seg button:hover {
-  border-color: var(--blue);
-  background: var(--blue-soft);
-}
-
-.project-card .seg button {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 10px;
   color: var(--text);
+}
+
+.project-card .seg button:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .project-card .folder-path {
@@ -6022,9 +5992,6 @@ body.vibing .box {
 
 
 /* ================= No scrollbars anywhere (wheel, trackpad and keyboard scrolling still work) ================= */
-* {
-  scrollbar-width: none;
-}
 
 ::-webkit-scrollbar {
   display: none;
@@ -6654,10 +6621,6 @@ body:is(.resizing, .resizing-h) .sash-line.on {
   transition-delay: 0s;
 }
 
-.sash-v.sash-left {
-  left: 0;
-}
-
 .terminal>.sash-h {
   top: 0;
 }
@@ -6680,6 +6643,8 @@ body:is(.resizing, .resizing-h) .sash-line.on {
 
 /* One sliding line under the open tab (see placeTabInk); the per-tab line is off. */
 .tabs {
+  /* Overflowing tabs scroll sideways with the mouse wheel instead of showing a scrollbar. */
+  scrollbar-width: none;
   position: relative;
 }
 
@@ -6722,6 +6687,7 @@ body:is(.resizing, .resizing-h) .sash-line.on {
   width: 36px;
   height: 36px;
   border-radius: 10px;
+  grid-row: auto;
 }
 
 /* Name and status sit together, centred against the logo and the button. */
@@ -6743,10 +6709,6 @@ body:is(.resizing, .resizing-h) .sash-line.on {
 /* The global .sub (modal subtitles) adds space below it; inside a card that pushed the text off centre. */
 .social-card .sc-text .sub {
   margin: 0;
-}
-
-.social-card .mark {
-  grid-row: auto;
 }
 
 .social-card .btn {
@@ -7505,7 +7467,7 @@ body.layout-animating #previewPane {
 }
 
 .agent-tab.enter {
-  animation: agentTabIn .2s cubic-bezier(.2, .8, .2, 1);
+  animation: agentTabEnter .2s cubic-bezier(.16, 1, .3, 1) both;
 }
 
 @keyframes agentTabIn {
@@ -7524,19 +7486,8 @@ body.layout-animating #previewPane {
 }
 
 .agent-tab.leaving {
-  width: 0 !important;
-  min-width: 0 !important;
-  max-width: 0 !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
   border-width: 0 !important;
-  opacity: 0 !important;
   filter: blur(4px) !important;
-  transform: scale(0.85) translateY(2px) !important;
-  pointer-events: none !important;
-  overflow: hidden !important;
   transition: width .18s cubic-bezier(.16, 1, .3, 1),
               max-width .18s cubic-bezier(.16, 1, .3, 1),
               padding .18s cubic-bezier(.16, 1, .3, 1),
@@ -7544,6 +7495,19 @@ body.layout-animating #previewPane {
               opacity .15s ease-out,
               filter .15s ease-out,
               transform .18s cubic-bezier(.16, 1, .3, 1) !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  width: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin-left: 0 !important;
+  margin-right: -4px !important;
+  opacity: 0 !important;
+  transform: scale(0.82) translateY(2px) !important;
+  border-color: transparent !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
 }
 
 .agent-tab.leaving ~ .agent-tab-ink,
@@ -7658,26 +7622,6 @@ body.layout-animating #previewPane {
     transform: scale(1) translateY(0);
     max-width: 150px;
   }
-}
-
-.agent-tab.enter {
-  animation: agentTabEnter .2s cubic-bezier(.16, 1, .3, 1) both;
-}
-
-.agent-tab.leaving {
-  min-width: 0 !important;
-  max-width: 0 !important;
-  width: 0 !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-  margin-left: 0 !important;
-  margin-right: -4px !important;
-  opacity: 0 !important;
-  transform: scale(0.82) translateY(2px) !important;
-  border-color: transparent !important;
-  pointer-events: none !important;
-  overflow: hidden !important;
-  white-space: nowrap !important;
 }
 
 .agent-tab-new {
@@ -8535,11 +8479,10 @@ body.layout-animating #previewPane {
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  transition: background .15s, opacity .15s;
+  /* Hovering turns the refresh arrows once instead of changing the button colour. */
+  transition: background .15s, opacity .15s, transform .2s cubic-bezier(.34, 1.56, .64, 1);
 }
 
-/* Hovering turns the refresh arrows once instead of changing the button colour. */
-.sync-btn { transition: background .15s, opacity .15s, transform .2s cubic-bezier(.34, 1.56, .64, 1); }
 .sync-btn:not(:disabled):hover { transform: scale(1.06); }
 .sync-btn:not(:disabled):active { transform: scale(.97); }
 .sync-btn svg { transition: transform .32s cubic-bezier(.3, .7, .2, 1); }
@@ -8823,4 +8766,11 @@ body.layout-animating #previewPane {
 /* The blue hover row would swallow Antigravity's blue logo, so it turns to the white one there. */
 .menu-item:is(:hover:not(:disabled), .kb) .menu-ico.tint-antigravity .brand-img {
   content: url("../../assets/icons/antigravity_white.png");
+}
+
+/* Keyboard shortcuts search with nothing found. */
+.keys-empty {
+  grid-column: 1 / -1;
+  padding: 20px 0;
+  text-align: center;
 }

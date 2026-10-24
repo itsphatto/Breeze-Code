@@ -221,7 +221,8 @@ async function servePreview(req) {
   }
 }
 
-app.whenReady().then(async () => {
+async function startApp() {
+  await app.whenReady();
   protocol.handle(PREVIEW_SCHEME, servePreview);
   // The menu bar is drawn in HTML; the native one would only duplicate it.
   Menu.setApplicationMenu(null);
@@ -229,13 +230,13 @@ app.whenReady().then(async () => {
   // Windows only shows notifications (Vibe Mode's "your code is ready") for an app with a user model id.
   if (isWin) app.setAppUserModelId(app.isPackaged ? 'com.breeze.ide' : process.execPath);
   createWindow();
-  await getTools().catch(logError('toolchains'));
+  try { await getTools(); } catch (e) { logError('toolchains')(e); }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
   configureAutoUpdater();
-
-}).catch(logError('startup'));
+}
+startApp().catch(logError('startup'));
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -755,7 +756,7 @@ const SOURCE_FILE = /\.(?:c|cc|cpp|cxx|cs|java|py|rs)$/i;
 function nearestProject(abs, isProject) {
   for (let dir = path.dirname(abs); ; dir = path.dirname(dir)) {
     let names = [];
-    try { names = fs.readdirSync(dir).filter(isProject).sort((a, b) => a.localeCompare(b)); } catch { /* unreadable: keep looking up */ }
+    try { names = fs.readdirSync(dir).filter(name => isProject(name)).sort((a, b) => a.localeCompare(b)); } catch { /* unreadable: keep looking up */ }
     if (names.length) return path.join(dir, names[0]);
     if (path.relative(root, dir) === '' || dir === path.dirname(dir)) return null;
   }
@@ -897,22 +898,12 @@ const agentBins = new Map(); // agent id -> executable found by the last scan
 // Folders of the agents found off PATH, so the Terminal panel can run them by name.
 const agentDirs = () => [...new Set([...agentBins.values()].filter(b => !b.endsWith('.app')).map(b => path.dirname(b)))];
 
+// Asked once and shared: `agy models` can take seconds, and a second scan shouldn't start another.
 let cachedAntigravityModels = null;
 function antigravityModels(bin) {
-  if (cachedAntigravityModels?.length) return cachedAntigravityModels;
-  try {
-    cachedAntigravityModels = AntigravityAgentService.getAvailableModels(bin);
-    return cachedAntigravityModels;
-  } catch {
-    return [
-      'claude-sonnet-4-6',
-      'gemini-3.8-flash-high',
-      'claude-opus-4-6-thinking',
-      'gemini-3.8-flash-medium',
-      'gemini-3.8-flash-low',
-      'gpt-oss-120b-medium',
-    ];
-  }
+  cachedAntigravityModels ??= AntigravityAgentService.getAvailableModelsAsync(bin)
+    .catch(() => [...AntigravityAgentService.DEFAULT_MODELS]);
+  return cachedAntigravityModels;
 }
 
 function which(cmd) {
@@ -943,7 +934,9 @@ function versionOf(bin) {
 function agentInstallCmd(id, platform) {
   if (id === 'claude') return 'npm install -g @anthropic-ai/claude-code';
   if (id === 'codex') return 'npm install -g @openai/codex';
-  if (id === 'local') return platform === 'win32' ? 'winget install Ollama.Ollama' : platform === 'darwin' ? 'brew install ollama' : null;
+  if (id !== 'local') return null;
+  if (platform === 'win32') return 'winget install Ollama.Ollama';
+  if (platform === 'darwin') return 'brew install ollama';
   return null;
 }
 
@@ -965,15 +958,7 @@ async function detectAgent(a) {
     models = cm.length ? cm : ['gpt-4o', 'gpt-4o-mini', 'o1', 'o1-mini', 'o3-mini', 'chatgpt-4o-latest'];
     version = loadState().codexModel || 'gpt-4o';
   } else if (a.id === 'antigravity') {
-    const am = antigravityModels(bin);
-    models = am.length ? am : [
-      'claude-sonnet-4-6',
-      'gemini-3.8-flash-high',
-      'claude-opus-4-6-thinking',
-      'gemini-3.8-flash-medium',
-      'gemini-3.8-flash-low',
-      'gpt-oss-120b-medium',
-    ];
+    models = bin ? await antigravityModels(bin) : [...AntigravityAgentService.DEFAULT_MODELS];
     version = loadState().antigravityModel || models[0] || 'claude-sonnet-4-6';
   } else if (a.id === 'claude') {
     models = CLAUDE_MODELS;
@@ -1017,12 +1002,13 @@ handle('sys:runCommand', async (_e, cmd) => {
   if (!allowed.includes(command)) return false;
   const escaped = command.replaceAll(/[\\"]/g, String.raw`\$&`);
   if (process.platform === 'win32') {
-    const comspec = process.env.ComSpec || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe');
+    const comspec = process.env.ComSpec || path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32', 'cmd.exe');
     spawn(comspec, ['/c', 'start', 'cmd.exe', '/k', command], { detached: true, stdio: 'ignore' }).unref();
   } else if (process.platform === 'darwin') {
     spawn('/usr/bin/osascript', ['-e', `tell application "Terminal" to do script "${escaped}"`], { detached: true, stdio: 'ignore' }).unref();
   } else {
-    spawn('x-terminal-emulator', ['-e', command], { detached: true, stdio: 'ignore' }).unref();
+    // Debian's terminal alternative, by its full path rather than whatever PATH would find first.
+    spawn('/usr/bin/x-terminal-emulator', ['-e', command], { detached: true, stdio: 'ignore' }).unref();
   }
   return true;
 });
@@ -1317,29 +1303,34 @@ const CLAUDE_TOOLS = {
   WebFetch: i => ['web', `Read ${i.url}`],
   TodoWrite: () => ['todo', 'Updated its to-do list'],
 };
+// One piece of an assistant message: text for the chat, or a tool call shown as a line (and the file it touched).
+function claudeContent(runId, c, ctx) {
+  if (c.type === 'text' && c.text?.trim()) {
+    ctx.lastText = c.text;
+    emit(runId, { t: 'text', text: c.text });
+    return;
+  }
+  if (c.type !== 'tool_use') return;
+  const [kind, label, file] = CLAUDE_TOOLS[c.name]?.(c.input || {}) ?? ['tool', c.name];
+  emit(runId, { t: 'tool', kind, label });
+  if (file) emit(runId, { t: 'file', path: relOut(file) });
+}
+function claudeResult(runId, d, ctx, mode) {
+  if (d.is_error || d.subtype !== 'success') {
+    // Reported when the process exits (streamCli): the reason may only be on stderr, and a stale
+    // session gets one retry as a fresh chat there.
+    ctx.lastError = d.result || (d.errors || []).join('\n') || '';
+    return;
+  }
+  ctx.done = true;
+  const text = d.result || ctx.lastText;
+  if (mode === 'plan' && text) emit(runId, { t: 'plan', text });
+  emit(runId, { t: 'done', ok: true, tokens: (d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0) });
+}
 function claudeEvent(runId, d, ctx, mode) {
   if (d.type === 'system' && d.subtype === 'init' && d.session_id) emit(runId, { t: 'session', id: d.session_id });
-  else if (d.type === 'assistant') {
-    for (const c of d.message?.content || []) {
-      if (c.type === 'text' && c.text?.trim()) { ctx.lastText = c.text; emit(runId, { t: 'text', text: c.text }); }
-      else if (c.type === 'tool_use') {
-        const [kind, label, file] = CLAUDE_TOOLS[c.name]?.(c.input || {}) ?? ['tool', c.name];
-        emit(runId, { t: 'tool', kind, label });
-        if (file) emit(runId, { t: 'file', path: relOut(file) });
-      }
-    }
-  } else if (d.type === 'result') {
-    if (d.is_error || d.subtype !== 'success') {
-      // Reported when the process exits (streamCli): the reason may only be on stderr, and a stale
-      // session gets one retry as a fresh chat there.
-      ctx.lastError = d.result || (d.errors || []).join('\n') || '';
-      return;
-    }
-    ctx.done = true;
-    const text = d.result || ctx.lastText;
-    if (mode === 'plan' && text) emit(runId, { t: 'plan', text });
-    emit(runId, { t: 'done', ok: true, tokens: (d.usage?.input_tokens || 0) + (d.usage?.output_tokens || 0) });
-  }
+  else if (d.type === 'assistant') for (const c of d.message?.content || []) claudeContent(runId, c, ctx);
+  else if (d.type === 'result') claudeResult(runId, d, ctx, mode);
 }
 
 // Codex's config may name a model the signed-in account can't use (e.g. a ChatGPT plan without API models).
@@ -1743,28 +1734,31 @@ function parseBranchHeader(head) {
   const count = word => Number(new RegExp(String.raw`${word} (\d+)`).exec(track)?.[1] || 0);
   return { branch: branch === 'HEAD (no branch)' ? 'detached' : branch, upstream, ahead: count('ahead'), behind: count('behind') };
 }
+// An ignored path ("!! dir/"), relative to the open folder with forward slashes and no trailing slash.
+function ignoredPath(rel) {
+  let clean = rel.replaceAll('\\', '/');
+  while (clean.endsWith('/')) clean = clean.slice(0, -1);
+  return clean;
+}
+// One "XY path" entry: an ignored path or a changed file, unless it lies outside the open folder.
+function addStatusEntry(res, e, top, currentRoot) {
+  const x = e[0], y = e[1];
+  const rel = path.relative(currentRoot, path.join(top, e.slice(3)));
+  if (rel.startsWith('..')) return;
+  if (x !== '!' || y !== '!') { res.files.push({ path: rel.split(path.sep).join('/'), x, y }); return; }
+  const clean = ignoredPath(rel);
+  if (clean) res.ignored.push(clean);
+}
 function parseGitStatusPorcelain(out, top, currentRoot) {
   const res = { branch: '', upstream: '', ahead: 0, behind: 0, files: [], ignored: [] };
   const parts = out.split('\0');
   for (let i = 0; i < parts.length; i++) {
     const e = parts[i];
-    if (e.startsWith('## ')) {
-      Object.assign(res, parseBranchHeader(e.slice(3)));
-    } else if (e) {
-      const x = e[0], y = e[1];
-      const rel = path.relative(currentRoot, path.join(top, e.slice(3)));
-      if (x === '!' && y === '!') {
-        if (!rel.startsWith('..')) {
-          let clean = rel.replaceAll('\\', '/');
-          while (clean.endsWith('/')) clean = clean.slice(0, -1);
-          if (clean) res.ignored.push(clean);
-        }
-      } else {
-        if (x === 'R' || x === 'C') i++;
-        if (!rel.startsWith('..')) {
-          res.files.push({ path: rel.split(path.sep).join('/'), x, y });
-        }
-      }
+    if (e.startsWith('## ')) Object.assign(res, parseBranchHeader(e.slice(3)));
+    else if (e) {
+      addStatusEntry(res, e, top, currentRoot);
+      // A rename or copy is followed by its old path as the next entry, which isn't a change of its own.
+      if (e[0] === 'R' || e[0] === 'C') i++;
     }
   }
   return res;
@@ -1886,154 +1880,119 @@ handle('git:sync', async (_e, op) => {
   throw new Error('Unknown sync operation');
 });
 
+// The first agent that can write a commit message when none is picked: installed CLIs first, then a local LLM.
+async function defaultCommitAgent() {
+  for (const id of ['antigravity', 'codex', 'claude']) if (agentBins.get(id)) return id;
+  return (await llmConfig(true).catch(() => null)) ? 'local' : null;
+}
+// Agents tend to wrap the message in a code fence or quotes; the commit box wants the bare text.
+function cleanCommitText(text, fallback) {
+  let clean = String(text || '').trim();
+  if (clean.startsWith('```') && clean.endsWith('```')) clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+  const quoted = (clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"));
+  if (quoted) clean = clean.slice(1, -1).trim();
+  return clean || fallback;
+}
+// Runs an agent CLI with the prompt on stdin and resolves with whatever `finish` makes of its whole output.
+function runCommitCli(bin, args, base, prompt, finish, onLine) {
+  return new Promise((resolve, reject) => {
+    const child = /\.(?:cmd|bat)$/i.test(bin)
+      ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
+      : spawn(bin, args, { cwd: base, windowsHide: true, env: process.env });
+    let out = '';
+    let buf = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => {
+      out += chunk;
+      if (!onLine) return;
+      buf += chunk;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      lines.forEach(onLine);
+    });
+    child.stdin.on('error', () => { /* exited early; close reports it */ });
+    child.stdin.end(prompt);
+    child.on('close', () => resolve(finish(out)));
+    child.on('error', reject);
+  });
+}
+function antigravityCommitMsg(base, prompt, model) {
+  const service = new AntigravityAgentService({
+    executablePath: agentBins.get('antigravity') || undefined,
+    cwd: base,
+    mode: 'ask',
+    model: model || 'gemini-3.8-flash-low',
+    effort: undefined, // No forced effort requirement: every model (Claude, Flash, Opus, GPT-OSS) runs without conflict
+    prompt,
+    autoOpenAuth: false,
+  });
+  return new Promise((resolve, reject) => {
+    let resultText = '';
+    service.on('output', ev => {
+      if (ev.type !== 'text' || !ev.text) return;
+      // A finished JSON turn carries the whole reply; plain-text output arrives one line at a time.
+      if (ev.raw || !resultText) resultText = ev.text;
+      else resultText = `${resultText}\n${ev.text}`;
+    });
+    service.on('error', reject);
+    service.on('exit', code => {
+      const clean = cleanCommitText(resultText, '');
+      if (clean) resolve(clean);
+      else if (code === 0) resolve('chore: update project');
+      else reject(new Error(`Antigravity exited with code ${code}`));
+    });
+    service.start().catch(reject);
+  });
+}
+async function localCommitMsg(base, prompt, model) {
+  const cfg = await llmConfig(true).catch(() => null);
+  if (!cfg) throw new Error('No Ollama server is connected');
+  const body = {
+    model: model || cfg.model,
+    messages: [
+      { role: 'system', content: 'You write detailed Git commit messages: a Conventional Commits subject line (at most 72 characters) followed by a blank line and one specific bullet per distinct change, naming the files, components or behaviour affected. Follow the format and rules in the request exactly. Output ONLY the commit message without quotes, code fences or explanations.' },
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.2,
+    stream: false
+  };
+  const j = await llmRequest({ base, cfg }, body);
+  return cleanCommitText(withoutThinking(j.choices?.[0]?.message?.content || ''), 'chore: update files');
+}
+function codexCommitMsg(base, prompt, model, effort) {
+  const bin = agentBins.get('codex');
+  if (!bin) throw new Error('Codex was not found');
+  const targetModel = model || 'gpt-4o-mini';
+  const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', '-m', targetModel];
+  if (effortArg(effort) && /^(o1|o3|o4)/i.test(targetModel)) args.push('-c', `model_reasoning_effort="${effortArg(effort)}"`);
+  let message = '';
+  const onLine = l => {
+    try {
+      const ev = JSON.parse(l);
+      if (ev.type === 'item.completed' && ev.item?.type === 'agent_message' && ev.item?.text) message = ev.item.text;
+    } catch { /* not a JSON event */ }
+  };
+  return runCommitCli(bin, args, base, prompt, () => cleanCommitText(message, 'chore: update project'), onLine);
+}
+function claudeCommitMsg(base, prompt, model) {
+  const bin = agentBins.get('claude');
+  if (!bin) throw new Error('Claude Code CLI was not found');
+  const targetModel = CLAUDE_MODELS.includes(model) && model !== 'default' ? model : 'haiku';
+  const args = ['-p', '--output-format', 'json', '--model', targetModel, '--disallowedTools', ...CLAUDE_WRITE_TOOLS];
+  const finish = out => {
+    let text;
+    try { text = JSON.parse(out).result; } catch { text = out; }
+    return cleanCommitText(text, 'chore: update project');
+  };
+  return runCommitCli(bin, args, base, prompt, finish);
+}
+const COMMIT_WRITERS = { antigravity: antigravityCommitMsg, local: localCommitMsg, codex: codexCommitMsg, claude: claudeCommitMsg };
 handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
   const base = root;
   if (!base) throw new Error('Open a folder first');
-
-  let targetAgent = agent;
-  if (!targetAgent) {
-    if (agentBins.get('antigravity')) targetAgent = 'antigravity';
-    else if (agentBins.get('codex')) targetAgent = 'codex';
-    else if (agentBins.get('claude')) targetAgent = 'claude';
-    else {
-      const cfg = await llmConfig(true).catch(() => null);
-      if (cfg) targetAgent = 'local';
-    }
-  }
-
-  if (targetAgent === 'antigravity') {
-    const bin = agentBins.get('antigravity');
-    const targetModel = model || 'gemini-3.8-flash-low';
-    const service = new AntigravityAgentService({
-      executablePath: bin || undefined,
-      cwd: base,
-      mode: 'ask',
-      model: targetModel,
-      effort: undefined, // No forced effort requirement: every model (Claude, Flash, Opus, GPT-OSS) runs without conflict
-      prompt,
-      autoOpenAuth: false,
-    });
-    return new Promise((resolve, reject) => {
-      let resultText = '';
-      service.on('output', ev => {
-        if (ev.type !== 'text' || !ev.text) return;
-        // A finished JSON turn carries the whole reply; plain-text output arrives one line at a time.
-        resultText = ev.raw ? ev.text : (resultText ? `${resultText}\n${ev.text}` : ev.text);
-      });
-      service.on('error', reject);
-      service.on('exit', code => {
-        let clean = resultText.trim();
-        if (clean.startsWith('```') && clean.endsWith('```')) {
-          clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-        }
-        if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
-          clean = clean.slice(1, -1).trim();
-        }
-        if (clean) resolve(clean);
-        else if (code === 0) resolve('chore: update project');
-        else reject(new Error(`Antigravity exited with code ${code}`));
-      });
-      service.start().catch(reject);
-    });
-  }
-
-  if (targetAgent === 'local') {
-    const cfg = await llmConfig(true).catch(() => null);
-    if (!cfg) throw new Error('No Ollama server is connected');
-    const targetModel = model || cfg.model;
-    const body = {
-      model: targetModel,
-      messages: [
-        { role: 'system', content: 'You write detailed Git commit messages: a Conventional Commits subject line (at most 72 characters) followed by a blank line and one specific bullet per distinct change, naming the files, components or behaviour affected. Follow the format and rules in the request exactly. Output ONLY the commit message without quotes, code fences or explanations.' },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.2,
-      stream: false
-    };
-    const j = await llmRequest({ base, cfg }, body);
-    let text = withoutThinking(j.choices?.[0]?.message?.content || '').trim();
-    if (text.startsWith('```') && text.endsWith('```')) {
-      text = text.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-    }
-    if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
-      text = text.slice(1, -1).trim();
-    }
-    return text || 'chore: update files';
-  }
-
-  if (targetAgent === 'codex') {
-    const bin = agentBins.get('codex');
-    if (!bin) throw new Error('Codex was not found');
-    const targetModel = model || 'gpt-4o-mini';
-    const args = ['exec', '--json', '-s', 'read-only', '--skip-git-repo-check', ...(targetModel ? ['-m', targetModel] : [])];
-    if (effortArg(effort) && /^(o1|o3|o4)/i.test(targetModel)) {
-      args.push('-c', `model_reasoning_effort="${effortArg(effort)}"`);
-    }
-    return new Promise((resolve, reject) => {
-      const child = /\.(?:cmd|bat)$/i.test(bin)
-        ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
-        : spawn(bin, args, { cwd: base, windowsHide: true, env: process.env });
-      let outText = '';
-      let buf = '';
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', chunk => {
-        buf += chunk;
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const l of lines) {
-          try {
-            const ev = JSON.parse(l);
-            if (ev.type === 'item.completed' && ev.item?.type === 'agent_message' && ev.item?.text) {
-              outText = ev.item.text;
-            }
-          } catch {}
-        }
-      });
-      child.stdin.end(prompt);
-      child.on('close', () => {
-        let clean = outText.trim();
-        if (clean.startsWith('```') && clean.endsWith('```')) {
-          clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-        }
-        if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
-          clean = clean.slice(1, -1).trim();
-        }
-        resolve(clean || 'chore: update project');
-      });
-      child.on('error', reject);
-    });
-  }
-
-  if (targetAgent === 'claude') {
-    const bin = agentBins.get('claude');
-    if (!bin) throw new Error('Claude Code CLI was not found');
-    const targetModel = CLAUDE_MODELS.includes(model) && model !== 'default' ? model : 'haiku';
-    const args = ['-p', '--output-format', 'json', '--model', targetModel, '--disallowedTools', ...CLAUDE_WRITE_TOOLS];
-    return new Promise((resolve, reject) => {
-      const child = /\.(?:cmd|bat)$/i.test(bin)
-        ? spawn(shellCommand(bin, args), { cwd: base, windowsHide: true, env: process.env, shell: true })
-        : spawn(bin, args, { cwd: base, windowsHide: true, env: process.env });
-      let out = '';
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', chunk => { out += chunk; });
-      child.stdin.on('error', () => { /* exited early; close reports it */ });
-      child.stdin.end(prompt);
-      child.on('close', () => {
-        let clean = '';
-        try { clean = String(JSON.parse(out).result || '').trim(); } catch { clean = out.trim(); }
-        if (clean.startsWith('```') && clean.endsWith('```')) {
-          clean = clean.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
-        }
-        if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) {
-          clean = clean.slice(1, -1).trim();
-        }
-        resolve(clean || 'chore: update project');
-      });
-      child.on('error', reject);
-    });
-  }
-
-  throw new Error(`Unsupported agent: ${agent}`);
+  const writer = COMMIT_WRITERS[agent || await defaultCommitAgent()];
+  if (!writer) throw new Error(`Unsupported agent: ${agent}`);
+  return writer(base, prompt, model, effort);
 });
 
 /* ================= Sign in with GitHub / Google ================= */
@@ -2284,9 +2243,19 @@ async function googleSignIn({ clientId, clientSecret }, signal) {
 const DRIVE_SCOPE = syncEngine.DRIVE_SCOPE;
 const syncDir = () => path.join(app.getPath('userData'), 'sync');
 // One small file per account and folder: { id, rev, base } from the last sync.
-const linkFile = (acct, dir) => path.join(syncDir(), `${crypto.createHash('sha1').update(`${acct}\0${dir}`).digest('hex')}.json`);
+// The file is named by a hash of the account and folder (just a stable name, nothing secret).
+const linkName = (algo, acct, dir) => crypto.createHash(algo).update(acct + '\0' + dir).digest('hex') + '.json'; // NOSONAR: sha1 only matches the names of pre-sha256 link files
+const linkFile = (acct, dir) => path.join(syncDir(), linkName('sha256', acct, dir));
 function readLink(acct, dir) {
-  try { return JSON.parse(fs.readFileSync(linkFile(acct, dir), 'utf8')); } catch { return null; }
+  const file = linkFile(acct, dir);
+  // Links saved before the switch to sha256 sit under their sha1 name; move one over the first time it's read.
+  // (sha1 here only recognises an old name; nothing is protected by it.)
+  const legacy = path.join(syncDir(), linkName('sha1', acct, dir));
+  try { if (!fs.existsSync(file) && fs.existsSync(legacy)) fs.renameSync(legacy, file); } catch { /* read the old one below */ }
+  for (const f of [file, legacy]) {
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* try the next */ }
+  }
+  return null;
 }
 function writeLink(acct, dir, link) {
   fs.mkdirSync(syncDir(), { recursive: true });
@@ -2348,9 +2317,12 @@ syncHandle('sync:clone', (_e, id) => oneSync(async () => {
     defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return null;
-  const safeName = ws.name.replace(/[\/:*?"<>|]/g, '-') || 'workspace';
+  const safeName = ws.name.replace(/[/:*?"<>|]/g, '-') || 'workspace';
+  // The first of "name", "name (2)", "name (3)"… that doesn't exist yet or is an empty folder.
+  const taken = async d => fs.existsSync(d) && (await fsp.readdir(d)).length > 0;
   let dir = path.join(r.filePaths[0], safeName);
-  for (let n = 2; fs.existsSync(dir) && (await fsp.readdir(dir)).length; n++) dir = path.join(r.filePaths[0], `${safeName} (${n})`);
+  let n = 2;
+  while (await taken(dir)) dir = path.join(r.filePaths[0], `${safeName} (${n++})`);
   await fsp.mkdir(dir, { recursive: true });
   const { link, summary } = await syncEngine.syncWorkspace({
     store, dir, link: { id, rev: 0, base: {} }, mode: 'pull', device: os.hostname(), name: ws.name,
