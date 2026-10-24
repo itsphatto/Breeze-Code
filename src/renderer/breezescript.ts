@@ -104,7 +104,7 @@ interface BreezeApi {
   team: {
     parse(text: string): Promise<TeamParse>;
     claim(opts: { shared: string; members: { agentId: string; task: string; session: string | null }[] }): Promise<TeamClaimResult>;
-    start(opts: { teamId: string; owners: Record<string, string> }): Promise<Record<string, number>>;
+    start(opts: { teamId: string; owners: Record<string, string>; exclude?: string[] }): Promise<Record<string, number>>;
     stop(teamId: string): Promise<void>;
     undo(opts: { teamId: string; path: string }): Promise<void>;
   };
@@ -8842,7 +8842,6 @@ interface AgentTeamState {
   stripEl: HTMLElement;
   finished?: Set<number>;     // runs whose done has arrived
   failed?: Set<string>;       // members that did not finish (error or stopped)
-  hidden?: Set<number>;       // runs of members removed on the split card: stopped at once, never shown
   crossings?: Set<string>;    // one key per agent and path that crossed (see crossingKey)
   stopped?: boolean;          // the person stopped the team
 }
@@ -10043,7 +10042,21 @@ async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<vo
   tab.runId = -1; // busy: Send turns into Stop
   tab.run = null;
   refreshTabBusy(tab);
+  try {
+    await runAgentTeam(tab, parsed, claimState);
+  } catch (e) {
+    // Something unexpected broke the team flow: never leave the tab busy with nothing running.
+    if (tab.teamClaim === claimState) {
+      endTeamClaim(tab, claimState);
+      if (claimState.teamId) background(api.team.stop(claimState.teamId));
+    }
+    if (!line.classList.contains('settled')) settleClaimLine(line, 'Couldn’t plan who does what');
+    errorCard(errMsg(e), undefined, tab);
+  }
+}
 
+async function runAgentTeam(tab: AgentTabState, parsed: TeamParse, claimState: TeamClaimState): Promise<void> {
+  const { members, line } = claimState;
   let claim: TeamClaimResult;
   try {
     claim = await api.team.claim({ shared: parsed.shared, members: members.map(m => ({ ...m, session: tab.sessions[m.agentId] ?? null })) });
@@ -10054,6 +10067,7 @@ async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<vo
     errorCard(errMsg(e), undefined, tab);
     return;
   }
+  claimState.teamId = claim.teamId; // from here on, a stop or an unexpected error can stop the team
   const s = SURFACES[tab.surfaceName];
   for (const [agentId, id] of Object.entries(claim.sessions ?? {})) {
     tab.sessions[agentId] = id;
@@ -10065,7 +10079,6 @@ async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<vo
     endTeamClaim(tab, claimState);
     return;
   }
-  claimState.teamId = claim.teamId;
   settleClaimLine(line, 'Planned who does what');
   saveChat(tab);
 
@@ -10085,7 +10098,7 @@ async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<vo
 
   let ids: Record<string, number>;
   try {
-    ids = await api.team.start({ teamId: claim.teamId, owners });
+    ids = await api.team.start({ teamId: claim.teamId, owners, exclude: [...removed] }); // removed members never start
   } catch (e) {
     const cancelled = claimState.cancelled;
     endTeamClaim(tab, claimState);
@@ -10097,16 +10110,13 @@ async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<vo
 
   const runs = new Map<number, Run>();
   const names: Record<string, string> = {};
-  const hidden = new Set<number>();
-  for (const m of members) {
+  for (const m of keep) {
     const id = ids[m.agentId];
     if (typeof id !== 'number') continue;
     runs.set(id, { id, tabId: tab.id, surfaceName: tab.surfaceName, agent: m.agentId, mode: 'build', uiMode: 'build', phase: 'builder', tools: 0, files: new Set(), plan: null, lastText: '', replied: false, announce: false });
     names[m.agentId] = agentNameOf(m.agentId);
-    // Main starts every member it claimed with; one taken off the card is stopped before it does anything.
-    if (removed.has(m.agentId)) { hidden.add(id); background(api.agent.stop(id)); }
   }
-  const shown = [...runs.values()].filter(r => !hidden.has(r.id));
+  const shown = [...runs.values()];
   tab.panel.querySelector(':scope > .team-strip')?.remove();
   const stripEl = document.createElement('div');
   stripEl.className = 'team-strip';
@@ -10116,7 +10126,7 @@ async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<vo
 
   const agentTeam: AgentTeamState = {
     id: claim.teamId, runs, pending: runs.size, names, stripEl,
-    finished: new Set(), failed: new Set(), hidden, crossings: new Set(), stopped: claimState.cancelled,
+    finished: new Set(), failed: new Set(), crossings: new Set(), stopped: claimState.cancelled,
   };
   tab.agentTeam = agentTeam;
   tab.teamClaim = undefined;
@@ -10263,7 +10273,7 @@ function undoTeamFile(teamId: string, path: string, btn: HTMLButtonElement, tab:
 }
 
 function teamSummary(tab: AgentTabState, team: AgentTeamState, ev: AgentEvent): void {
-  const shown = [...team.runs.values()].filter(r => !team.hidden?.has(r.id));
+  const shown = [...team.runs.values()];
   const crossed = team.crossings ?? new Set<string>();
   const memberRows = shown.map(r => {
     const files = [...r.files].filter(p => !crossed.has(crossingKey(r.agent, p))); // a crossing was put back
@@ -10305,15 +10315,13 @@ function finishTeamMember(r: Run, ev: AgentEvent, tab: AgentTabState, team: Agen
   finished.add(r.id);
   if (agentRun?.id === r.id) agentRun = null;
   const ok = !!ev.ok && !ev.stopped;
-  if (!team.hidden?.has(r.id)) {
-    if (!ok) (team.failed ??= new Set()).add(r.agent);
-    const chip = team.stripEl.querySelector<HTMLElement>(`[data-team-chip="${CSS.escape(r.agent)}"]`);
-    if (chip) {
-      chip.classList.remove('working');
-      chip.classList.add(ok ? 'done' : 'failed');
-      const state = chip.querySelector('.team-chip-state');
-      if (state) state.textContent = ok ? 'done' : ev.stopped ? 'stopped' : 'failed';
-    }
+  if (!ok) (team.failed ??= new Set()).add(r.agent);
+  const chip = team.stripEl.querySelector<HTMLElement>(`[data-team-chip="${CSS.escape(r.agent)}"]`);
+  if (chip) {
+    chip.classList.remove('working');
+    chip.classList.add(ok ? 'done' : 'failed');
+    const state = chip.querySelector('.team-chip-state');
+    if (state) state.textContent = ok ? 'done' : ev.stopped ? 'stopped' : 'failed';
   }
   for (const [p, l] of Object.entries(locks)) if (l.agent === r.agent) delete locks[p];
   renderTree(); renderTabs();
@@ -10327,7 +10335,7 @@ function finishTeamMember(r: Run, ev: AgentEvent, tab: AgentTabState, team: Agen
   for (const k of Object.keys(locks)) delete locks[k];
   renderTree(); renderTabs();
   refreshTabBusy(tab);
-  const all = [...team.runs.values()].filter(x => !team.hidden?.has(x.id));
+  const all = [...team.runs.values()];
   lastRunFiles = [...new Set(all.flatMap(x => [...x.files]))];
   const tools = all.reduce((n, x) => n + x.tools, 0);
   const allOk = !team.failed?.size && !team.stopped;
@@ -10509,8 +10517,6 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
 
 function handleAgentEvent(r: Run, ev: AgentEvent, tab: AgentTabState): void {
   const team = tab.agentTeam?.runs.has(r.id) ? tab.agentTeam : undefined;
-  // A member removed on the split card is stopped as it starts: only its end matters.
-  if (team?.hidden?.has(r.id) && ev.t !== 'done' && ev.t !== 'team-done') return;
   if (!r.replied && ev.t !== 'session' && ev.t !== 'done' && ev.t !== 'team-done') onFirstReply(r, tab);
   const prev = labelAgent;
   labelAgent = team && ev.t !== 'team-done' ? r.agent : null;

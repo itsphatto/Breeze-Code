@@ -1279,9 +1279,12 @@ handle('team:start', (_e, o) => {
   const team = teams.get(o?.teamId);
   if (!team) throw new Error(TEAM_FINISHED);
   const owners = o.owners ?? {};
+  const exclude = o.exclude ?? [];
   const member = a => team.members.some(m => m.agentId === a);
   if (!isPlainObject(owners) || !Object.values(owners).every(member)) throw new Error('Each file must belong to an agent on this team.');
-  return team.start(owners);
+  if (!Array.isArray(exclude) || !exclude.every(member)) throw new Error('Only an agent on this team can be left out.');
+  if (team.members.every(m => exclude.includes(m.agentId))) throw new Error('A team needs at least one agent.');
+  return team.start(owners, { exclude });
 });
 handle('team:stop', (_e, teamId) => dropTeam(teamId));
 handle('team:undo', (_e, o) => {

@@ -325,18 +325,23 @@ class TeamCoordinator {
     });
   }
 
-  async start(owners = {}) {
+  // `exclude`: members taken off the team before it builds. They get no build run, own nothing, are no one's
+  // teammate in a brief or deny list, and team-done does not wait for them.
+  async start(owners = {}, { exclude = [] } = {}) {
     if (this.stopped) throw new Error(FINISHED);
     if (this.phase === 'new' || this.phase === 'claiming') throw new Error('The team has not finished claiming its files.');
     if (this.phase !== 'claimed') throw new Error('That team has already started.');
+    const out = new Set(exclude ?? []);
+    const members = this.members.filter(m => !out.has(m.agentId));
+    if (!members.length) throw new Error('A team needs at least one agent.');
     this.phase = 'starting';
     const merged = {};
-    for (const m of this.members) {
+    for (const m of members) {
       for (const p of this.claims[m.agentId]) if (!Object.hasOwn(merged, p)) merged[p] = m.agentId;
     }
     for (const [p, agentId] of Object.entries(owners ?? {})) {
       const rel = cleanRel(p);
-      if (rel && this.members.some(m => m.agentId === agentId)) merged[rel] = agentId;
+      if (rel && members.some(m => m.agentId === agentId)) merged[rel] = agentId;
     }
     try {
       this.snap = await snapshot(this.root, Object.keys(merged));
@@ -345,6 +350,7 @@ class TeamCoordinator {
       throw err;
     }
     if (this.stopped) throw new Error(FINISHED);
+    this.members = members; // briefs, ownership checks and team-done only know the members that build
     this.owners = merged;
     this.startOwners = { ...merged };
     this.phase = 'building';

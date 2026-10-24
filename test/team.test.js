@@ -389,6 +389,34 @@ test('start lets owners decide clashes', async t => {
   assert.deepEqual(co.owners, { 'package.json': 'codex', 'server/': 'codex' });
 });
 
+test('start skips excluded members', async t => {
+  const root = tempProject(t);
+  const deps = fakeDeps();
+  const members = [...teamMembers(), { agentId: 'local', name: 'Local', task: 'write the docs' }];
+  const co = new TeamCoordinator({ id: 'team-1', root, shared: 'A todo app', members, deps });
+  const claimed = co.claim();
+  co.observe(3, { t: 'text', text: '```json\n{"paths":["docs/"]}\n```' });
+  for (const id of [1, 2, 3]) co.observe(id, { t: 'done', ok: true });
+  await claimed;
+  await assert.rejects(co.start({}, { exclude: ['claude', 'codex', 'local'] }));
+  const ids = await co.start({ 'docs/': 'local' }, { exclude: ['local'] });
+  assert.deepEqual(Object.keys(ids).sort(), ['claude', 'codex']);
+  const builds = deps.runs.filter(r => r.opts.mode === 'build');
+  assert.deepEqual(builds.map(r => r.opts.agent).sort(), ['claude', 'codex']);
+  for (const { opts } of builds) {
+    assert.ok(!opts.prompt.includes('Local'), 'an excluded member is not a teammate');
+    assert.ok(!opts.prompt.includes('docs/'));
+  }
+  assert.deepEqual(co.owners, {}); // its claim and the owner given to it are dropped
+  assert.deepEqual(claudeDenyArgs(co.owners, 'claude'), []);
+  co.observe(ids.claude, { t: 'done', ok: true });
+  co.observe(ids.codex, { t: 'done', ok: true });
+  await co.settled();
+  const done = deps.of('team-done');
+  assert.deepEqual(done.map(e => e.runId).sort(), [ids.claude, ids.codex].sort());
+  assert.deepEqual(Object.keys(done[0].ev.notes).sort(), ['claude', 'codex']);
+});
+
 test('restores a crossing and emits it', async t => {
   const { root, deps, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
   put(root, 'web/a.js', 'hacked');
