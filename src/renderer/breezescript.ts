@@ -1693,39 +1693,6 @@ function modelMenuItems(a: DetectedAgent, onSelect?: () => void): MenuItem[] {
   }));
 }
 
-function updateComposerModelSelect(a: DetectedAgent | null): void {
-  const sel = $('#agentModelSelect') as HTMLSelectElement | null;
-  if (!sel) return;
-  const btn = sel.nextElementSibling?.classList.contains('dd-btn') ? (sel.nextElementSibling as HTMLElement) : null;
-  if (!a?.found || !a.models?.length) {
-    sel.classList.add('hidden');
-    if (btn) btn.classList.add('hidden');
-    sel.innerHTML = '';
-    return;
-  }
-  sel.classList.remove('hidden');
-  if (btn) {
-    btn.classList.remove('hidden', 'model-swap');
-    const _reflow = btn.offsetWidth;
-    btn.classList.add('model-swap');
-  }
-  const current = a.version || a.models[0];
-  const eff = currentEffort();
-  sel.innerHTML = a.models.map(m => `<option value="${escAttr(m)}"${m === current ? ' selected' : ''}>${esc(m)}</option>`).join('');
-  sel.value = current;
-  if (btn) {
-    btn.innerHTML = `<span class="dd-val">${esc(current)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-    btn.title = `${current} (${eff} effort)`;
-  }
-  sel.onchange = async () => {
-    const chosen = sel.value;
-    await applyModelAndEffort(a, chosen, currentEffort());
-    if (btn) {
-      btn.innerHTML = `<span class="dd-val">${esc(chosen)}<small class="dd-eff"> · ${esc(currentEffort())}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-      btn.title = `${chosen} (${currentEffort()} effort)`;
-    }
-  };
-}
 /* ----- Agent bar: one chip per installed agent; a chip inserts its @mention ----- */
 // Mention names must match src/main/mentions.js: the short name, the full name and the id, lowercased.
 const AGENT_SHORT_NAMES = new Map([['claude', 'Claude'], ['codex', 'Codex'], ['antigravity', 'Antigravity'], ['local', 'Local']]);
@@ -1756,7 +1723,12 @@ function makeDefaultAgent(ag: DetectedAgent): void {
   toast(`Active agent: ${ag.name}`);
 }
 function agentChipMenuItems(ag: DetectedAgent): MenuItem[] {
+  // Each model opens its effort levels, so the agent's chip is where model and effort are picked.
+  const models: MenuItem[] = ag.models?.length
+    ? [{ label: 'Model', enabled: () => false }, ...modelMenuItems(ag), { sep: true }]
+    : [];
   return [
+    ...models,
     { label: 'Make default', checked: () => ag.id === appState.agent, enabled: () => ag.id !== appState.agent, run: () => makeDefaultAgent(ag) },
     { sep: true },
     { label: 'Manage agents', run: openAgentPicker },
@@ -1845,7 +1817,7 @@ function renderAgentBar(): void {
   $('#boxModel').innerHTML = `${esc(label)}${svgIcon('chevronDown', 12)}`;
   for (const k of Object.values(agentsDef)) k.model = modelLabel(a);
   renderAgents();
-  updateComposerModelSelect(a);
+  renderPromptModels();
   updateScmGenBtn();
 }
 
@@ -9847,8 +9819,31 @@ function mentionHtml(text: string): string {
 }
 // The prompt's text is drawn by a layer behind it (the textarea's own text is transparent), so mentions can be blue.
 const promptHl = $('#promptHl');
+// The installed agents @mentioned in `text`, once each, in the order they appear.
+function mentionedAgents(text: string): DetectedAgent[] {
+  const agents = (appState.detect?.agents ?? []).filter(a => a.found);
+  const out: DetectedAgent[] = [];
+  for (const [a, b] of mentionRanges(text)) {
+    const word = text.slice(a + 1, b).toLowerCase();
+    const ag = agents.find(x => agentMentionNames(x).includes(word));
+    if (ag && !out.includes(ag)) out.push(ag);
+  }
+  return out;
+}
+// Under the prompt: the model (and effort) of each agent tagged in it.
+function renderPromptModels(): void {
+  const box = $('#promptModels');
+  const tagged = mentionedAgents(SURFACES.ide.prompt.value).filter(a => a.models?.length || a.version);
+  box.innerHTML = tagged.map(a => {
+    const model = a.version || a.models?.[0] || '';
+    const eff = a.api ? '' : `<small class="dd-eff"> · ${esc(currentEffort())}</small>`;
+    const name = tagged.length > 1 ? `<b>${esc(agentShortName(a))}</b> ` : '';
+    return `<span class="prompt-model" title="${escAttr(`${agentShortName(a)}: ${model}`)}">${name}${esc(model)}${eff}</span>`;
+  }).join('');
+}
 function syncPromptHl(): void {
   const ta = SURFACES.ide.prompt;
+  renderPromptModels();
   // A trailing newline needs a character after it, or the layer is a line short.
   promptHl.innerHTML = mentionHtml(ta.value) + (ta.value.endsWith('\n') ? ' ' : '');
   promptHl.style.right = `${ta.offsetWidth - ta.clientWidth}px`; // clear of its scroll bar, if it shows one
@@ -10685,12 +10680,6 @@ function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
 // The native <select> stays in the page (hidden) so code and forms keep reading its value.
 function updateDropdownLabel(sel: HTMLSelectElement, btn: HTMLElement): void {
   const text = sel.selectedOptions[0]?.text || sel.value || '';
-  if (sel.id === 'agentModelSelect') {
-    const eff = currentEffort();
-    btn.innerHTML = `<span class="dd-val">${esc(text)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-    btn.title = `${text} (${eff} effort)`;
-    return;
-  }
   btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
   btn.title = text;
 }
@@ -10698,25 +10687,18 @@ function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
   if (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350)) { closeMenu(); return; }
   closeMenu();
   const label = () => updateDropdownLabel(sel, btn);
-  const a = sel.id === 'agentModelSelect' ? selectedAgent() : null;
-  const items: MenuItem[] = (a?.found && a.models?.length)
-    ? modelMenuItems(a, () => {
-      sel.value = a.version || a.models?.[0] || '';
+  const items: MenuItem[] = [...sel.options].map(o => ({
+    label: o.text,
+    checked: () => o.value === sel.value,
+    enabled: () => !o.disabled,
+    run: () => {
+      sel.value = o.value;
       label();
+      if (sel.onchange) (sel.onchange as (e: Event) => void)(new Event('change'));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
       btn.focus();
-    })
-    : [...sel.options].map(o => ({
-      label: o.text,
-      checked: () => o.value === sel.value,
-      enabled: () => !o.disabled,
-      run: () => {
-        sel.value = o.value;
-        label();
-        if (sel.onchange) (sel.onchange as (e: Event) => void)(new Event('change'));
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        btn.focus();
-      },
-    }));
+    },
+  }));
   const r = btn.getBoundingClientRect();
   btn.classList.add('open');
   btn.setAttribute('aria-expanded', 'true');
@@ -10999,10 +10981,9 @@ async function generateCommitMsg(): Promise<void> {
     const truncated = fullDiff.length > 5000 ? fullDiff.slice(0, 5000) + '\n...(truncated)' : fullDiff;
 
     // Use currently selected model if available, otherwise lowest/available model for agent
-    const modelSel = $('#agentModelSelect') as HTMLSelectElement | null;
-    const userChosenModel = modelSel?.value?.trim() || undefined;
+    const userChosenModel = activeAg.version?.trim() || undefined;
     const { model: fallbackModel } = lowestModelFor(activeAg);
-    const chosenModel = userChosenModel || fallbackModel || activeAg.version || activeAg.models?.[0];
+    const chosenModel = userChosenModel || fallbackModel || activeAg.models?.[0];
 
     const prevCommit = gitLog.commits?.[0];
     const prevCommitContext = prevCommit

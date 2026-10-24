@@ -3310,13 +3310,6 @@ body.resizing-h .term-body {
   overflow: hidden;
 }
 
-.composer .agentModelSelect-btn {
-  flex: 0 1 auto;
-  min-width: 44px;
-  max-width: none;
-  overflow: hidden;
-}
-
 .composer .dd-btn {
   min-width: 0;
   flex-shrink: 1;
@@ -7254,10 +7247,14 @@ button.pill:active, .pill-btn:active {
 
 /* Agent model select in composer and header */
 #agentMode { font-size: 12px; height: 28px; padding: 2px 6px; }
-#agentModelSelect { font-size: 12px; height: 28px; padding: 2px 6px; }
-.agentModelSelect-btn { max-width: none; }
-.agentModelSelect-btn .dd-eff { color: var(--text-3); font-size: 11px; margin-left: 2px; }
 .menu.sub.effort-menu { min-width: 130px; }
+
+/* Models of the agents @mentioned in the prompt */
+.prompt-models { display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; font-size: 12px; color: var(--text-2); }
+.prompt-models:empty { display: none; }
+.prompt-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-model b { font-weight: 600; color: var(--text); }
+.prompt-model .dd-eff { color: var(--text-3); font-size: 11px; }
 
 /* Composer attachments */
 .composer-attachments { display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
@@ -7297,10 +7294,9 @@ button.pill:active, .pill-btn:active {
   z-index: 48;
   opacity: 0;
   transition: opacity 1.2s cubic-bezier(.4, 0, .2, 1);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  -webkit-mask-image: radial-gradient(circle var(--glow-reach, 440px) at var(--glow-x, 100%) var(--glow-y, 0%), #000 0%, rgba(0,0,0,0.85) 45%, transparent 80%);
-  mask-image: radial-gradient(circle var(--glow-reach, 440px) at var(--glow-x, 100%) var(--glow-y, 0%), #000 0%, rgba(0,0,0,0.85) 45%, transparent 80%);
+  /* No backdrop blur while a file is dragged over: the text under the glow stays sharp. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .agent-fluid-canvas {
