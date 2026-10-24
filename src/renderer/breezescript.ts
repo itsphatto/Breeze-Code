@@ -232,12 +232,19 @@ const store = {
 // first click or key press, and the speaker button in the status bar (or Settings › Sound Effects) turns them off.
 const sfx = (() => {
   let on = store.get('breeze.sound', true);
-  let volume = store.get('breeze.volume', 50); // 0–100; the middle is the old fixed level
+  let volume = store.get('breeze.volume', 25); // 0–100; 25 is the default (and where the slider snaps)
+  // Levels saved on the old, quieter scale would be far too loud on the new one, so they start over at 25 once.
+  if (!store.get('breeze.volumeScale2', false)) {
+    volume = 25;
+    store.set('breeze.volume', volume);
+    store.set('breeze.volumeScale2', true);
+  }
   let ctx: AudioContext | null = null;
   let master: GainNode | null = null;
   let lastAt = -Infinity; // when any sound last played, so a button that makes its own sound doesn't also click
 
-  const gainFor = (v: number) => v / 100;
+  // 25 plays twice as loud as the old fixed level did; the top of the slider is four times that.
+  const gainFor = (v: number) => v / 25;
 
   // Audio may only start after a gesture, so the context is made on the first one.
   function unlock(): void {
@@ -882,6 +889,7 @@ const LINE_ICONS: Record<string, IconNode> = {
   down: [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]],
   chevronRight: [['path', { d: 'm9 18 6-6-6-6' }]],
   chevronDown: [['path', { d: 'm6 9 6 6 6-6' }]],
+  chevronLeft: [['path', { d: 'm15 18-6-6 6-6' }]],
   sparkles: [['path', { d: 'm12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z' }], ['path', { d: 'M5 3v4' }], ['path', { d: 'M19 17v4' }], ['path', { d: 'M3 5h4' }], ['path', { d: 'M17 19h4' }]],
   backspace: [['path', { d: 'M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }], ['path', { d: 'm12 9 6 6' }], ['path', { d: 'm18 9-6 6' }]],
   volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
@@ -1810,6 +1818,8 @@ function renderAgentBar(): void {
   const found = (appState.detect?.agents ?? []).filter(x => x.found);
   // The default agent comes first, so it is the last chip to be folded into "+N".
   found.sort((x, y) => Number(y.id === a?.id) - Number(x.id === a?.id));
+  // Where each chip was, so a new default can glide to the front instead of jumping there.
+  const before = new Map($$<HTMLElement>('.agent-chip[data-agent]:not(.hidden)', bar).map(c => [c.dataset.agent, c.getBoundingClientRect().left]));
   if (found.length) {
     bar.innerHTML = found.map(x => agentChipHtml(x, x.id === a?.id)).join('');
   } else {
@@ -1823,6 +1833,13 @@ function renderAgentBar(): void {
     on.addEventListener('animationend', () => on.classList.remove('agent-swap'), { once: true });
   }
   fitAgentBar();
+  if (prev !== bar.dataset.current && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    for (const c of $$<HTMLElement>('.agent-chip[data-agent]:not(.hidden)', bar)) {
+      const x = before.get(c.dataset.agent);
+      const dx = x == null ? 0 : x - c.getBoundingClientRect().left;
+      if (dx) c.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+    }
+  }
   const model = a?.api && a.version ? ' · ' + a.version : '';
   const label = a ? a.name + model : 'Choose an agent';
   $('#boxModel').innerHTML = `${esc(label)}${svgIcon('chevronDown', 12)}`;
@@ -8236,7 +8253,7 @@ document.addEventListener('keydown', e => {
   if (menuKeys(e)) return;
   if (e.key === 'Escape') {
     if (vibeOn) { exitVibe(); return; }
-    if (modalOpen()) { closeModal(); return; }
+    if (modalOpen()) { dismissModal(); return; }
     if (findOpen) { closeFind(); activeText()?.ta.focus(); return; }
   }
   if (modalOpen() || vibeOn || $('#ide').classList.contains('hidden')) return;
@@ -8547,7 +8564,7 @@ function bindSettings(m: HTMLElement): void {
   });
   on('sDiscordDetails', () => { appState.discordDetails = !appState.discordDetails; saveApp(); queueDiscord(); refreshSettings(); });
   // Sound: drag or scroll to set the level, one tick when it settles so you hear it.
-  // Near 50 the knob snaps to 50; pushing on out of the snap zone turns the snap off until the drag (or scroll) ends.
+  // Near 25 (the default) the knob snaps to 25; pushing on out of the snap zone turns the snap off until the drag (or scroll) ends.
   const vol = $<HTMLInputElement>('#sVolume', pane);
   if (vol) {
     vol.style.setProperty('--fill', `${vol.value}%`);
@@ -8560,17 +8577,18 @@ function bindSettings(m: HTMLElement): void {
       $('#sVolumeVal', pane).textContent = `${v}%`;
       void setIcon($('#sVolumeIco', pane), volumeIcon(v));
     };
-    const near = (v: number) => Math.abs(v - 50) <= SNAP;
+    const SNAP_AT = 25;
+    const near = (v: number) => Math.abs(v - SNAP_AT) <= SNAP;
     const settle = (raw: number) => {
       if (snapped && !near(raw)) { snapped = false; snapArmed = false; }
-      if (snapArmed && near(raw)) { snapped = true; raw = 50; }
+      if (snapArmed && near(raw)) { snapped = true; raw = SNAP_AT; }
       show(raw);
     };
     const rearm = () => { snapArmed = true; snapped = false; };
     vol.oninput = () => settle(+vol.value);
     vol.onchange = () => { sfx.play('tick'); rearm(); };
     // The speaker mutes, and a second press brings back the level it had.
-    let unmuteTo = 50;
+    let unmuteTo = SNAP_AT;
     on('sVolumeIco', () => {
       const cur = +vol.value;
       if (cur) unmuteTo = cur;
@@ -8581,8 +8599,8 @@ function bindSettings(m: HTMLElement): void {
       e.preventDefault();
       const cur = +vol.value;
       const next = clamp(cur + (e.deltaY < 0 || e.deltaX > 0 ? 1 : -1), 0, 100);
-      // A tick away from a snapped 50 is a push out of the snap: let it through.
-      if (snapped && cur === 50) { snapped = false; snapArmed = false; show(next); }
+      // A tick away from a snapped 25 is a push out of the snap: let it through.
+      if (snapped && cur === SNAP_AT) { snapped = false; snapArmed = false; show(next); }
       else settle(next);
       clearTimeout(wheelIdle);
       wheelIdle = window.setTimeout(() => { sfx.play('tick'); rearm(); }, 450);
@@ -8600,7 +8618,12 @@ function bindSettings(m: HTMLElement): void {
   on('sAddAcct', () => addAccount());
   on('sSignOut', () => background(signOut().then(refreshSettings)));
   // Help
-  $$('[data-set-cmd]', pane).forEach(b => b.onclick = () => { const c = b.dataset.setCmd ?? ''; closeModal(); run(c); });
+  // A command that opens a modal replaces Settings and leads back to it; setup and reload close Settings first.
+  $$('[data-set-cmd]', pane).forEach(b => b.onclick = () => {
+    const c = b.dataset.setCmd ?? '';
+    if (c === 'help.setup' || c === 'win.reload') closeModal();
+    run(c);
+  });
 }
 // Redraws the open pane when something changes elsewhere (Discord connects, a feed signs in, …).
 function refreshSettings(): void {
@@ -9257,7 +9280,7 @@ function userMsg(text: string, attachments?: AgentAttachment[], tab?: AgentTabSt
     }).join('');
     imgHtml = `<div class="msg-attachments">${items}</div>`;
   }
-  const bodyText = text ? `<div>${esc(text).replaceAll('\n', '<br>')}</div>` : '';
+  const bodyText = text ? `<div>${(msgSurface.name === 'ide' ? mentionHtml(text) : esc(text)).replaceAll('\n', '<br>')}</div>` : '';
   addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${bodyText}${imgHtml}</div></div>`, t);
 }
 
@@ -9797,15 +9820,54 @@ function uninstalledMention(text: string): string | null {
   }
   return null;
 }
+// Where each "@Agent" for an installed agent sits in `text`, as [start, end) pairs.
+function mentionRanges(text: string): [number, number][] {
+  const names = (appState.detect?.agents ?? []).filter(a => a.found).flatMap(agentMentionNames).sort((x, y) => y.length - x.length);
+  const out: [number, number][] = [];
+  if (!names.length) return out;
+  const re = /(^|\s)@/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const at = m.index + m[1].length;
+    const rest = text.slice(at + 1).toLowerCase();
+    const hit = names.find(n => rest.startsWith(n) && !/[\w-]/.test(rest[n.length] ?? ''));
+    if (hit) out.push([at, at + 1 + hit.length]);
+  }
+  return out;
+}
+// `text` escaped, with its mentions of installed agents wrapped in <span class="mention">.
+function mentionHtml(text: string): string {
+  let html = '';
+  let from = 0;
+  for (const [a, b] of mentionRanges(text)) {
+    html += `${esc(text.slice(from, a))}<span class="mention">${esc(text.slice(a, b))}</span>`;
+    from = b;
+  }
+  return html + esc(text.slice(from));
+}
+// The prompt's text is drawn by a layer behind it (the textarea's own text is transparent), so mentions can be blue.
+const promptHl = $('#promptHl');
+function syncPromptHl(): void {
+  const ta = SURFACES.ide.prompt;
+  // A trailing newline needs a character after it, or the layer is a line short.
+  promptHl.innerHTML = mentionHtml(ta.value) + (ta.value.endsWith('\n') ? ' ' : '');
+  promptHl.style.right = `${ta.offsetWidth - ta.clientWidth}px`; // clear of its scroll bar, if it shows one
+  promptHl.scrollTop = ta.scrollTop;
+}
+SURFACES.ide.prompt.addEventListener('scroll', () => { promptHl.scrollTop = SURFACES.ide.prompt.scrollTop; });
+new ResizeObserver(syncPromptHl).observe(SURFACES.ide.prompt);
+
 function mentionWarning(s: Surface): void {
+  if (s.name === 'ide') syncPromptHl();
   const warn = s.name === 'ide' ? uninstalledMention(s.prompt.value) : null;
-  let el = s.prompt.parentElement?.querySelector<HTMLElement>(':scope > .mention-warn') ?? null;
+  const anchor = s.prompt.closest<HTMLElement>('.prompt-field') ?? s.prompt;
+  let el = anchor.parentElement?.querySelector<HTMLElement>(':scope > .mention-warn') ?? null;
   if (!el) {
     if (!warn) return;
     el = document.createElement('div');
     el.className = 'mention-warn';
     el.setAttribute('role', 'status');
-    s.prompt.insertAdjacentElement('afterend', el);
+    anchor.insertAdjacentElement('afterend', el);
   }
   el.textContent = warn ?? '';
   el.classList.toggle('hidden', !warn);
@@ -11896,15 +11958,21 @@ function staggerModal(m: HTMLElement): void {
   const kids = [...m.children];
   staggerIn(kids.length === 1 ? kids[0].children : kids);
 }
+// A modal opened from Settings (or from a modal that was) leads back there: it gets a "Settings" back button,
+// and dismissing it (Esc, its close or cancel button, a click outside) reopens Settings on the same page.
+let modalBackToSettings = false;
 function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () => void, place: 'center' | 'top' = 'center'): void {
+  const back = !html.includes('settings-modal') && (!!settingsRoot() || modalBackToSettings);
   closeModal();
   $$('#modalRoot .scrim.closing').forEach(x => x.remove());
   const top = place === 'top';
-  $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`);
+  const backBtn = back ? `<button type="button" class="modal-back" data-back aria-label="Back to Settings">${svgIcon('chevronLeft', 14)}<span>Settings</span></button>` : '';
+  $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${backBtn}${html}</div></div>`);
   const m = $('#modalRoot .scrim:not(.closing) .modal');
   modalOnClose = onClose ?? null;
-  $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) closeModal(); };
-  $$('[data-close]', m).forEach(b => b.onclick = closeModal);
+  modalBackToSettings = back;
+  $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) dismissModal(); };
+  $$('[data-close], [data-back]', m).forEach(b => b.onclick = dismissModal);
   const owner = popOwner();
   if (owner) growFrom(m, owner);
   bind?.(m);
@@ -11912,11 +11980,18 @@ function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () =
 }
 function closeModal(): void {
   const scrim = $('#modalRoot .scrim:not(.closing)');
+  modalBackToSettings = false;
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
   setTimeout(() => scrim.remove(), scrim.querySelector('.settings-shell') ? 460 : 380);
   const cb = modalOnClose; modalOnClose = null; cb?.();
+}
+// Closing without acting on the modal: one opened from Settings goes back there.
+function dismissModal(): void {
+  const back = modalBackToSettings;
+  closeModal();
+  if (back) openSettings($('#settingsBtn'));
 }
 function bindToasts(root: ParentNode = document): void {
   $$('[data-toast]', root).forEach(b => b.onclick = () => toast(b.dataset.toast ?? ''));

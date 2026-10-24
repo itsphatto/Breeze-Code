@@ -482,8 +482,11 @@
         <div class="composer">
           <div class="composer-box">
             <div class="composer-attachments hidden" id="promptAttachments"></div>
-            <textarea id="prompt" rows="2" aria-label="Message to the agent"
-              placeholder="Describe what you want to build"></textarea>
+            <div class="prompt-field">
+              <div class="prompt-hl" id="promptHl" aria-hidden="true"></div>
+              <textarea id="prompt" rows="2" aria-label="Message to the agent"
+                placeholder="Describe what you want to build"></textarea>
+            </div>
             <div class="row">
               <!-- No mode picker: the agent decides for itself whether to answer, plan or change files. -->
               <select class="select hidden" id="agentMode" aria-hidden="true" tabindex="-1"><option value="build">Auto</option></select>
