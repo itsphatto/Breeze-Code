@@ -181,6 +181,25 @@ function toast(text: string): void {
   sfx.play('ping');
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 200); }, 2600);
 }
+// Changes a label's text with a quick fade-in, and lets its box grow or shrink to the new width instead of jumping.
+function swapText(el: HTMLElement, text: string): void {
+  if (el.textContent === text) return;
+  if (!el.isConnected || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = text; return; }
+  const from = el.getBoundingClientRect().width;
+  el.textContent = text;
+  el.getAnimations().forEach(a => { if (a.id === 'swap') a.cancel(); });
+  const fade = el.animate([{ opacity: 0, filter: 'blur(3px)', transform: 'translateY(2px)' }, { opacity: 1, filter: 'blur(0)', transform: 'none' }], { duration: 240, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  fade.id = 'swap';
+  const to = el.getBoundingClientRect().width;
+  if (Math.abs(from - to) < 1 || getComputedStyle(el).display === 'inline') return;
+  const { overflow, whiteSpace } = el.style;
+  el.style.overflow = 'hidden';
+  el.style.whiteSpace = 'nowrap';
+  const size = el.animate([{ width: `${from}px` }, { width: `${to}px` }], { duration: 300, easing: 'cubic-bezier(.32, .72, 0, 1)' });
+  size.id = 'swap';
+  const done = () => { el.style.overflow = overflow; el.style.whiteSpace = whiteSpace; };
+  size.onfinish = done; size.oncancel = done;
+}
 // Starts async work without waiting for it; a failure shows as a toast.
 function background(work: Promise<unknown>): void {
   work.catch(e => toast(errMsg(e)));
@@ -208,17 +227,31 @@ const sfx = (() => {
   let master: GainNode | null = null;
   let lastAt = -Infinity; // when any sound last played, so a button that makes its own sound doesn't also click
 
+  // 50% is about five times the old full level; the curve keeps the low end fine-grained and the limiter the top end clean.
+  const gainFor = (v: number) => Math.pow(v / 100, 1.2) * 6;
+
   // Audio may only start after a gesture, so the context is made on the first one.
   function unlock(): void {
     if (ctx) return;
     try {
       ctx = new AudioContext();
       master = ctx.createGain();
-      master.gain.value = volume / 100;
-      master.connect(ctx.destination);
+      master.gain.value = gainFor(volume);
+      // A soft limiter keeps the louder levels from clipping when several blips overlap.
+      const limit = ctx.createDynamicsCompressor();
+      limit.threshold.value = -4;
+      limit.knee.value = 6;
+      limit.ratio.value = 12;
+      limit.attack.value = 0.002;
+      limit.release.value = 0.1;
+      master.connect(limit).connect(ctx.destination);
     } catch { ctx = null; } // no audio available
   }
   for (const t of ['pointerdown', 'keydown']) addEventListener(t, unlock, { capture: true, passive: true });
+  // The desktop window allows audio without a gesture, so the context is ready before the first sound is asked for;
+  // coming back to the window wakes it if Chromium put it to sleep meanwhile.
+  unlock();
+  addEventListener('focus', () => { if (ctx && ctx.state !== 'running') void ctx.resume().catch(() => {}); });
 
   // One blip: a pitch (optionally sliding) with a fast attack and a fade-out.
   function tone(freq: number, dur: number, { type = 'sine', vol = 0.1, to = freq, at = 0 }: { type?: OscillatorType; vol?: number; to?: number; at?: number } = {}): void {
@@ -259,15 +292,38 @@ const sfx = (() => {
     build: () => tone(200, 0.35, { to: 620, type: 'sawtooth', vol: 0.03 }),
     success: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i === 3 ? 0.4 : 0.14, { vol: 0.08, at: i * 0.09 })),
     launch: () => { tone(330, 0.16, { to: 660, type: 'triangle', vol: 0.08 }); tone(1320, 0.05, { vol: 0.05, at: 0.14 }); },
+    // Controls
+    toggleOn: () => { tone(700, 0.05, { type: 'triangle', vol: 0.07 }); tone(1180, 0.07, { type: 'triangle', vol: 0.07, at: 0.045 }); },
+    toggleOff: () => { tone(1050, 0.05, { type: 'triangle', vol: 0.06 }); tone(620, 0.07, { type: 'triangle', vol: 0.06, at: 0.045 }); },
+    select: () => { tone(1320 * jitter(0.04), 0.04, { vol: 0.07 }); tone(1760, 0.06, { vol: 0.05, at: 0.03 }); },
+    rowHover: () => tone(3000 * jitter(0.08), 0.018, { vol: 0.018 }),
+    focus: () => tone(980, 0.06, { to: 1150, vol: 0.035 }),
+    link: () => tone(1200, 0.07, { to: 1600, type: 'triangle', vol: 0.05 }),
+    row: () => tone(1100 * jitter(0.08), 0.035, { type: 'triangle', vol: 0.06 }),
+    drop: () => { tone(500, 0.06, { to: 260, vol: 0.09 }); tone(160, 0.1, { type: 'triangle', vol: 0.05, at: 0.03 }); },
+    copy: () => [1568, 2093].forEach((f, i) => tone(f, 0.05, { vol: 0.05, at: i * 0.04 })),
+    trash: () => tone(260, 0.16, { to: 110, type: 'sawtooth', vol: 0.03 }),
+    deny: () => { tone(220, 0.08, { type: 'square', vol: 0.03 }); tone(185, 0.12, { type: 'square', vol: 0.03, at: 0.08 }); },
+    slide: () => tone(900 * jitter(0.1), 0.015, { type: 'triangle', vol: 0.025 }),
+    keyDel: () => tone(1300 * jitter(0.2), 0.022, { to: 1000, type: 'triangle', vol: 0.03 }),
+    keyEnter: () => tone(1100, 0.04, { to: 800, type: 'triangle', vol: 0.05 }),
+    remove: () => { tone(900, 0.07, { to: 300, type: 'triangle', vol: 0.06 }); tone(1800, 0.03, { vol: 0.025, at: 0.01 }); },
+    // Agent thinking (a soft questioning lift), answer text streaming in, and a fresh answer arriving
+    think: () => { tone(392, 0.14, { to: 440, vol: 0.05 }); tone(587, 0.18, { to: 622, vol: 0.04, at: 0.12 }); },
+    stream: () => tone(2100 * jitter(0.15), 0.02, { vol: 0.02 }),
+    // While the model thinks: a soft, slightly wandering two-note murmur, repeated (see thinkingHum)
+    hum: () => { const f = [440, 494, 523, 587][Math.floor(secureRandom() * 4)]; tone(f, 0.22, { to: f * 1.03, vol: 0.035 }); tone(f * 1.5, 0.26, { to: f * 1.5 * 0.98, type: 'triangle', vol: 0.02, at: 0.14 }); },
+    answer: () => { tone(784, 0.1, { vol: 0.07 }); tone(1175, 0.16, { vol: 0.06, at: 0.07 }); },
   };
   type Sound = keyof typeof SOUNDS;
   // Fast repeating sounds (typing, tool lines) are spaced out so they stay ticks and don't buzz.
-  const GAP: Partial<Record<Sound, number>> = { key: 30, tool: 40 };
+  const GAP: Partial<Record<Sound, number>> = { key: 30, keyDel: 30, keyEnter: 30, tool: 40, rowHover: 45, slide: 35, stream: 90, remove: 70 };
   const last: Partial<Record<Sound, number>> = {};
 
   function play(name: Sound): void {
-    if (!on || !volume || !ctx || document.hidden) return;
-    if (ctx.state === 'suspended') void ctx.resume();
+    if (!on || !volume || document.hidden) return;
+    if (!ctx) unlock(); // a sound asked for before the first gesture (or after the context was lost)
+    if (!ctx) return;
     const now = performance.now();
     const gap = GAP[name];
     if (gap) {
@@ -275,6 +331,13 @@ const sfx = (() => {
       last[name] = now;
     }
     lastAt = now;
+    // Chromium suspends an idle context (and Windows can interrupt one when the audio device changes). Notes
+    // scheduled while it is paused would land in the past and be dropped, so they wait for it to run again.
+    if (ctx.state !== 'running') {
+      const c = ctx;
+      c.resume().then(() => { if (c.state === 'running') SOUNDS[name](); }).catch(() => { ctx = null; master = null; });
+      return;
+    }
     SOUNDS[name]();
   }
 
@@ -290,18 +353,98 @@ const sfx = (() => {
     volume = Math.max(0, Math.min(100, Math.round(v)));
     store.set('breeze.volume', volume);
     if (volume && !on) { on = true; store.set('breeze.sound', on); }
-    if (master) master.gain.value = volume / 100;
+    if (master) master.gain.value = gainFor(volume);
   }
 
-  // Buttons click and hover like the website's; one that just made its own sound (send, a menu opening) stays quiet.
+  // Everything you can press makes a sound that fits what it is. The kind is read before the click lands (a switch
+  // still shows its old state then); it plays after, unless the control's own handler already made a sound.
+  const KINDS: [string, Sound | ((el: Element) => Sound)][] = [
+    ['.switch, [role="switch"], input[type="checkbox"], input[type="radio"]', el => (el.getAttribute('aria-checked') === 'true' || (el as HTMLInputElement).checked) ? 'toggleOff' : 'toggleOn'],
+    ['[data-close], .set-close', 'close'],
+    // Closing a tab or dropping a chip is a removal: its sound plays on the press, not after the fold-away.
+    ['[data-close-tab], .tab-close, .term-tab-close, .attachment-del, [data-mi-del], .x-btn', 'remove'],
+    ['.menu-item', el => el.classList.contains('has-sub') ? 'tick' : 'select'],
+    ['.tab, [role="tab"], .agent-tab, [data-set-tab], .seg button', 'tab'],
+    ['[data-copy], .copy-btn', 'copy'],
+    ['a[href]', 'link'],
+    ['.tree-item, .row, [role="option"], [role="menuitem"], .chat-file-chip, .card', 'row'],
+    ['button, [role="button"], summary, select, label, .btn, .pill-btn, .mode-card', 'click'],
+  ];
+  const kindOf = (t: EventTarget | null): Sound | null => {
+    if (!(t instanceof Element)) return null;
+    for (const [sel, s] of KINDS) {
+      const el = t.closest(sel);
+      if (!el) continue;
+      if ((el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') return null; // denied on the press
+      return typeof s === 'function' ? s(el) : s;
+    }
+    return null;
+  };
+  let pending: Sound | null = null;
+  let pendingAt = 0;
   document.addEventListener('click', e => {
-    const el = (e.target as Element).closest?.('.btn, .pill-btn, .mode-card, .seg button');
-    if (el && performance.now() - lastAt > 60) play('click');
+    pending = kindOf(e.target);
+    pendingAt = performance.now();
+    // Close buttons often stop the click from bubbling, so a removal sounds right here instead of after.
+    if (pending === 'remove') { play('remove'); pending = null; }
+  }, true);
+  document.addEventListener('click', () => {
+    if (pending && lastAt < pendingAt) play(pending);
+    pending = null;
   });
+  // Disabled buttons swallow clicks, so they're caught on the press instead.
+  document.addEventListener('pointerdown', e => {
+    const el = (e.target as Element).closest?.('button:disabled, [aria-disabled="true"]');
+    if (el && e.button === 0) play('deny');
+  }, true);
+  // Text boxes chirp on focus; dropdown pickers and sliders answer their changes.
+  document.addEventListener('focusin', e => {
+    const el = e.target as HTMLElement;
+    if (el.matches?.('input:not([type="range"], [type="checkbox"], [type="radio"]), textarea, [contenteditable="true"]') && performance.now() - lastAt > 120) play('focus');
+  });
+  document.addEventListener('change', e => { if ((e.target as Element).matches?.('select')) play('select'); });
+  document.addEventListener('input', e => { if ((e.target as Element).matches?.('input[type="range"]')) play('slide'); });
+  document.addEventListener('drop', () => play('drop'));
+  // Typing anywhere in Breeze ticks (the editor's own ticks fall inside the same gap, so they never double up).
+  document.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat && e.key !== 'Backspace') return;
+    const el = e.target as HTMLElement;
+    if (!el.matches?.('input:not([type="range"], [type="checkbox"], [type="radio"]), textarea, [contenteditable="true"], [contenteditable=""]')) return;
+    if (e.key === 'Backspace' || e.key === 'Delete') play('keyDel');
+    else if (e.key === 'Enter') play('keyEnter');
+    else if (e.key.length === 1) play('key');
+  }, true);
+  // Things that leave the page (a tab, a chip, a toast, a message) make a small falling sound. A redraw that takes
+  // items out and puts as many back in the same moment is not a removal, and text edits are never counted.
+  const REMOVABLE = '.tab, .agent-tab, .term-tab, .attachment-chip, .chat-file-chip, .chat-img-wrap, .toast, .msg, .card, .tool-line, .run-done';
+  const count = (nodes: NodeList[]) => {
+    let n = 0;
+    for (const list of nodes) for (const node of list) {
+      if (!(node instanceof Element)) continue;
+      if (node.matches(REMOVABLE)) n++;
+      n += node.querySelectorAll(REMOVABLE).length;
+    }
+    return n;
+  };
+  const removals = new MutationObserver(records => {
+    const gone = count(records.map(r => r.removedNodes));
+    if (!gone || gone <= count(records.map(r => r.addedNodes))) return;
+    // The control that removed it already made its sound (a tab's X sounds on the press, before the fold-away ends).
+    if (performance.now() - lastAt < 120 || performance.now() - (last.remove ?? -Infinity) < 700) return;
+    if (records.some(r => (r.target as Element).closest?.('#menuRoot, #modalRoot, .menu'))) return; // menus and dialogs have their own close sounds
+    play('remove');
+  });
+  addEventListener('DOMContentLoaded', () => removals.observe(document.body, { childList: true, subtree: true }));
+  if (document.body) removals.observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('copy', () => play('copy'));
+  // Buttons hover like the website's; menu rows and list rows give a fainter tick.
   document.addEventListener('pointerover', e => {
     if (e.pointerType !== 'mouse') return;
-    const el = (e.target as Element).closest?.('.btn');
-    if (el && !el.contains(e.relatedTarget as Node | null)) play('hover');
+    const t = e.target as Element;
+    const btn = t.closest?.('.btn');
+    if (btn) { if (!btn.contains(e.relatedTarget as Node | null)) play('hover'); return; }
+    const row = t.closest?.('.menu-item, [role="option"], .tree-item');
+    if (row && !row.contains(e.relatedTarget as Node | null)) play('rowHover');
   });
 
   return { play, toggle, setVolume, get on() { return on; }, get volume() { return on ? volume : 0; } };
@@ -734,6 +877,8 @@ const LINE_ICONS: Record<string, IconNode> = {
   backspace: [['path', { d: 'M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }], ['path', { d: 'm12 9 6 6' }], ['path', { d: 'm18 9-6 6' }]],
   volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
   volumeOff: [['path', { d: SPEAKER }], ['path', { d: 'm22 9-6 6' }], ['path', { d: 'm16 9 6 6' }]],
+  volumeMin: [['path', { d: SPEAKER }]],
+  volumeLow: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }]],
   eye: [['path', { d: 'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
   gear: [['path', { d: 'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
   user: [['path', { d: 'M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2' }], ['circle', { cx: 12, cy: 7, r: 4 }]],
@@ -764,6 +909,8 @@ const iconBody = (name: string): string =>
       return `<${tag} ${attrs}/>`;
     })
     .join('');
+// The speaker shows the level: muted, then no, one or two waves.
+const volumeIcon = (v: number): string => (v <= 0 ? 'volumeOff' : v < 34 ? 'volumeMin' : v < 67 ? 'volumeLow' : 'volume');
 function svgIcon(name: string, size = 16): string {
   return `<svg class="ico-svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-icon="${name}" aria-hidden="true">${iconBody(name)}</svg>`;
 }
@@ -792,6 +939,16 @@ async function setIcon(host: Element, name: string): Promise<void> {
   if (!svg || svg.dataset.icon === name || !LINE_ICONS[name]) return;
   const from = svg.dataset.icon ?? name;
   svg.dataset.icon = name;
+  // The speaker gives a little bounce as its waves change: bigger going louder, a dip going quieter or muted.
+  if (name.startsWith('volume') && from.startsWith('volume') && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const rank = (n: string) => ['volumeOff', 'volumeMin', 'volumeLow', 'volume'].indexOf(n);
+    const up = rank(name) > rank(from);
+    svg.animate([
+      { transform: 'scale(1) rotate(0)' },
+      { transform: up ? 'scale(1.28) rotate(-8deg)' : 'scale(.74) rotate(6deg)', offset: .4 },
+      { transform: 'scale(1) rotate(0)' },
+    ], { duration: 380, easing: 'cubic-bezier(.3, 1.4, .5, 1)' });
+  }
   const lib = await loadMorph();
   if (!lib) { svg.innerHTML = iconBody(name); return; }
   let m = morphs.get(svg);
@@ -1068,7 +1225,7 @@ function setSyncBusy(busy: boolean): void {
   const b = $<HTMLButtonElement>('#syncBtn');
   b.classList.toggle('busy', busy);
   b.disabled = busy;
-  $('span', b).textContent = busy ? 'Syncing' : 'Sync';
+  swapText($('span', b), busy ? 'Syncing' : 'Sync');
 }
 $('#syncBtn').onclick = () => {
   if (!user) addAccount();
@@ -1247,8 +1404,8 @@ let detecting: Promise<Detection> | null = null;
 
 function detectTools(force = false): Promise<Detection> {
   if (detecting !== null) return detecting;
-  $('#aiPill').className = 'pill'; $('#aiPill').textContent = 'Scanning';
-  $('#toolsPill').className = 'pill'; $('#toolsPill').textContent = 'Scanning';
+  $('#aiPill').className = 'pill'; swapText($('#aiPill'), 'Scanning');
+  $('#toolsPill').className = 'pill'; swapText($('#toolsPill'), 'Scanning');
   if (!appState.detect) $('#agentList').innerHTML = '<div class="row text-3"><div class="spinner sm"></div>Checking this computer</div>';
   detecting = api.sys.detect(force).then(d => {
     appState.detect = d;
@@ -1256,7 +1413,7 @@ function detectTools(force = false): Promise<Detection> {
     renderDetection();
     return d;
   }).catch((e: unknown) => {
-    $('#aiPill').className = 'pill warn'; $('#aiPill').textContent = 'Scan failed';
+    $('#aiPill').className = 'pill warn'; swapText($('#aiPill'), 'Scan failed');
     $('#aiHint').textContent = errMsg(e);
     throw e;
   }).finally(() => { detecting = null; });
@@ -1324,7 +1481,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
     const key = $<HTMLInputElement>('[data-llm-key]', root);
     const save = async () => {
       const err = root.querySelector<HTMLElement>('.key-err');
-      connect.disabled = true; connect.textContent = 'Connecting';
+      connect.disabled = true; swapText(connect, 'Connecting');
       try {
         const r = await api.llm.connect('', key.value);
         Object.assign(local() ?? {}, { found: true, path: r.url ?? null, version: r.model, models: r.models });
@@ -1333,7 +1490,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
         toast(`Connected · ${r.model}`);
         onChange();
       } catch (e) {
-        connect.disabled = false; connect.textContent = 'Connect';
+        connect.disabled = false; swapText(connect, 'Connect');
         if (err) { err.textContent = errMsg(e); err.classList.remove('hidden'); }
       }
     };
@@ -1416,7 +1573,7 @@ function renderDetection(): void {
   $('#agentList').innerHTML = agentOptionsHtml(d);
   bindAgentOptions($('#agentList'), renderDetection);
   $('#aiPill').className = found.length ? 'pill ok' : 'pill warn';
-  $('#aiPill').textContent = found.length ? `${found.length} ready` : 'None ready';
+  swapText($('#aiPill'), found.length ? `${found.length} ready` : 'None ready');
   $('#aiHint').textContent = found.length
     ? 'Pick the agent Breeze hands work to. Installed agents use their own sign-in; a local LLM runs on your own computer.'
     : 'No coding agent found. Install one and rescan, or connect a local LLM server.';
@@ -1430,7 +1587,7 @@ function renderDetection(): void {
       if (!cmd) return;
       b.classList.add('busy');
       const prev = b.textContent;
-      b.textContent = 'Running';
+      swapText(b, 'Running');
       try {
         if (await api.sys.runCommand(cmd)) toast(`Launched terminal command: ${cmd}`);
         else toast(`Breeze can't run that command. Run it yourself: ${cmd}`);
@@ -1439,14 +1596,14 @@ function renderDetection(): void {
       } finally {
         setTimeout(() => {
           b.classList.remove('busy');
-          b.textContent = prev;
+          swapText(b, prev);
         }, 2000);
       }
     };
   });
   const missing = d.tools.filter(t => !t.found && !t.optional).map(t => t.name);
   $('#toolsPill').className = missing.length ? 'pill warn' : 'pill ok';
-  $('#toolsPill').textContent = missing.length ? `${missing.join(' & ')} missing` : 'Ready';
+  swapText($('#toolsPill'), missing.length ? `${missing.join(' & ')} missing` : 'Ready');
 
   const summary = d.tools.filter(t => t.found || !t.optional).map(t => `${t.name.replace('.js', '').replace('C/C++', 'C')} ${t.found ? 'ready' : 'missing'}`).join(' · ');
   $('#sbTools').innerHTML = `<span class="${missing.length ? 'dot-warn' : 'dot-ok'}"></span> ${summary}`;
@@ -1625,7 +1782,7 @@ function renderModeChoice(): void {
   $$('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === appState.mode));
   $('#projFolder').textContent = rootInfo ? rootInfo.root : 'No folder yet';
   $('#projFolder').title = rootInfo?.root ?? '';
-  $('#startBuilding').textContent = appState.mode === 'box' ? 'Open Breeze Box' : 'Open Breeze Code';
+  swapText($('#startBuilding'), appState.mode === 'box' ? 'Open Breeze Box' : 'Open Breeze Code');
 }
 $$('[data-mode]').forEach(b => b.onclick = () => {
   appState.mode = b.dataset.mode === 'box' ? 'box' : 'ide';
@@ -2357,12 +2514,48 @@ const ICONS: Record<string, string> = {
   lock: page('#8b8b95', '<rect x="5.6" y="8.6" width="4.8" height="3.6" rx=".8" fill="#8b8b95"/><path d="M6.6 8.6V7.6a1.4 1.4 0 0 1 2.8 0v1" fill="none" stroke="#8b8b95" stroke-width="1"/>'),
   license: page('#e5c07b', '<circle cx="8" cy="9" r="1.8" fill="none" stroke="#e5c07b" stroke-width="1"/>'),
   file: page('#8b8b95'),
+  xml: svg16('<path d="M5 4.5 1.8 8 5 11.5M11 4.5 14.2 8 11 11.5" fill="none" stroke="#e37933" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.4" cy="8" r=".9" fill="#e37933"/><circle cx="8" cy="8" r=".9" fill="#e37933"/><circle cx="9.6" cy="8" r=".9" fill="#e37933"/>'),
+  yaml: svg16('<path d="M2 3h2.6L6.5 6.4 8.4 3H11L7.8 8.3V13H5.2V8.3z" fill="#cb171e"/><path d="M10 9.5h4M10 12h3" stroke="#cb171e" stroke-width="1.4" stroke-linecap="round"/>'),
+  toml: badge('#9c4221', '#ffffff', 'TML', 4.4),
+  vue: svg16('<path d="M1 2.5h3L8 9.4l4-6.9h3L8 14.5z" fill="#41b883"/><path d="M4 2.5h2.4L8 5.3l1.6-2.8H12L8 9.4z" fill="#35495e"/>'),
+  svelte: svg16('<path d="M11.8 2.6c-1.4-1-3.4-.7-4.5.6L4.6 6c-.9 1-1 2.6-.2 3.7-.4.8-.4 1.7 0 2.5 1 1.8 3.5 2.3 5.1 1l2.7-2.8c.9-1 1-2.6.2-3.7.4-.8.4-1.7 0-2.5-.2-.6-.5-1.2-.6-1.6z" fill="#ff3e00"/><path d="M9.8 5.2 6.4 8.6M9.6 7.4 6.2 10.8" stroke="#fff" stroke-width="1.1" stroke-linecap="round"/>'),
+  astro: svg16('<path d="M5.6 2h4.8l3.2 9.2c-1.4-.8-3.2-1.2-5.6-1.2s-4.2.4-5.6 1.2z" fill="#ff5d01"/><path d="M5.8 12c0 1.2 1 2.5 2.2 2.5s2.2-1.3 2.2-2.5c-1.4.6-3 .6-4.4 0z" fill="#ff5d01" fill-opacity=".7"/>'),
+  dart: svg16('<path d="M4 1.5 1.5 4v7l3.2 3.5h7l2.8-2.8V6.5L9 1.5z" fill="#0175c2" fill-opacity=".25"/><path d="M4 1.5h5l5.5 5v5.2L4.7 1.9zM1.5 4l9 9.5h-5.8L1.5 11z" fill="#0175c2"/>'),
+  lua: svg16('<circle cx="7.5" cy="8.5" r="6" fill="#000080"/><circle cx="7.5" cy="8.5" r="6" fill="none" stroke="#7a7aff" stroke-width=".8"/><circle cx="10" cy="6" r="1.6" fill="#fff"/><circle cx="13.5" cy="2.5" r="1.4" fill="#7a7aff"/>'),
+  r: badge('#276dc3', '#ffffff', 'R'),
+  scala: svg16('<path d="M4 2.5c3 .8 8 1 8 1v2.5s-5-.2-8-1zM4 6.8c3 .8 8 1 8 1v2.5s-5-.2-8-1zM4 11c3 .8 8 1 8 1v2.5s-5-.2-8-1z" fill="#dc322f"/>'),
+  zig: badge('#f7a41d', '#1e1e1e', 'ZIG', 4.4),
+  elixir: svg16('<path d="M8.2 1.5c-2.5 2.6-4.7 6-4.7 8.6 0 2.4 2 4.4 4.5 4.4s4.5-1.8 4.5-4.3c0-3-2.6-4.3-2.6-6.6-1 1.3-1.5 2.3-1.7 3.4-.6-1.6-.4-3.7 0-5.5z" fill="#6e4a7e"/><path d="M6.2 9.5c-.3 1.5.4 3 1.8 3.3" fill="none" stroke="#c3a0d6" stroke-width=".9" stroke-linecap="round"/>'),
+  haskell: svg16('<path d="M1.5 13.5 5 8 1.5 2.5h2.6L7.6 8l-3.5 5.5z" fill="#5e5086"/><path d="M5.1 13.5 8.6 8 5.1 2.5h2.6l7 11h-2.6l-2.2-3.4-2.2 3.4z" fill="#8f4e8b"/><path d="M11.4 6.2h3.1v1.5h-2.2zM12.3 8.5h2.2V10h-1.2z" fill="#5e5086"/>'),
+  perl: badge('#39457e', '#ffffff', 'PL', 5.4),
+  docker: svg16('<path d="M1.2 8.2h12.4c.5-.9 1.3-1.2 1.9-1.1-.2-.8-.8-1.2-1.4-1.2-.3-.9-1-1.3-1-1.3s-.7.9-.4 2H1.2c-.2 3.4 2 6 6.2 6 3.6 0 5.8-1.8 6.6-4.4" fill="#2496ed" fill-opacity=".25" stroke="#2496ed" stroke-width="1" stroke-linejoin="round"/><path d="M2.6 5.6h1.8v1.8H2.6zM4.8 5.6h1.8v1.8H4.8zM7 5.6h1.8v1.8H7zM9.2 5.6H11v1.8H9.2zM4.8 3.4h1.8v1.8H4.8zM7 3.4h1.8v1.8H7zM7 1.2h1.8V3H7z" fill="#2496ed"/>'),
+  make: svg16('<path d="M9.8 2.2a3.3 3.3 0 0 0-3.4 4.4L2 11a1.4 1.4 0 0 0 2 2l4.4-4.4a3.3 3.3 0 0 0 4.4-3.4l-2 2-1.9-.5-.5-1.9z" fill="#6d8086" fill-opacity=".3" stroke="#a9b6ba" stroke-width="1.1" stroke-linejoin="round"/>'),
+  graphql: svg16('<path d="M8 1.8 13.4 4.9v6.2L8 14.2l-5.4-3.1V4.9zM8 1.8 2.6 11.1h10.8z" fill="none" stroke="#e535ab" stroke-width="1" stroke-linejoin="round"/><circle cx="8" cy="1.8" r="1.1" fill="#e535ab"/><circle cx="13.4" cy="4.9" r="1.1" fill="#e535ab"/><circle cx="13.4" cy="11.1" r="1.1" fill="#e535ab"/><circle cx="8" cy="14.2" r="1.1" fill="#e535ab"/><circle cx="2.6" cy="11.1" r="1.1" fill="#e535ab"/><circle cx="2.6" cy="4.9" r="1.1" fill="#e535ab"/>'),
+  proto: badge('#4285f4', '#ffffff', 'PB', 5.4),
+  terraform: svg16('<path d="M6 2.3 9.6 4.4v4.2L6 6.5zM10.2 4.4l3.6-2.1v4.2l-3.6 2.1zM2.2 0.1 5.6 2.1v4.2L2.2 4.3zM6 7 9.6 9.1v4.2L6 11.2z" fill="#7b42bc"/>'),
+  notebook: svg16('<rect x="2.5" y="1.5" width="11" height="13" rx="1.5" fill="#f37626" fill-opacity=".16" stroke="#f37626" stroke-width="1.2"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="#f37626" stroke-width="1.1" stroke-linecap="round"/><path d="M2.5 4h-1M2.5 8h-1M2.5 12h-1" stroke="#f37626" stroke-width="1.2" stroke-linecap="round"/>'),
+  gradle: svg16('<path d="M13.6 4.2c-.8-.8-2.1-.8-2.9 0l.6.6c.4-.3 1-.3 1.3.1.5.5.2 1.4-.6 2.2C10 8.8 6.6 5.2 2 7.5c-.6.3-.3 1.6.5 2.4l.9-.6.8 1v2.2h1.5v-1.6c1 .3 2.2.3 3.2 0v1.6h1.5V10c1.5-.9 2.8-2.4 3.4-4 .3-.7.2-1.4-.2-1.8z" fill="#02303a" stroke="#5ecbd3" stroke-width=".9" stroke-linejoin="round"/>'),
+  cmake: svg16('<path d="M8 1.5 14.5 14H1.5z" fill="#064f8c" fill-opacity=".25"/><path d="M8 1.5 1.5 14l6.5-4z" fill="#064f8c"/><path d="M8 1.5V10l6.5 4z" fill="#3eae2b"/><path d="M8 10 1.5 14h13z" fill="#e72429"/>'),
+  vim: svg16('<path d="M8 1.3 14.7 8 8 14.7 1.3 8z" fill="#019833"/><path d="M4.5 5h3l-.4.5v4L10 5.5h-.6l.4-.5h2l-.4.5-4.6 6h-1V5.5H5z" fill="#fff"/>'),
+  tex: badge('#3d6117', '#ffffff', 'TeX', 4.6),
+  diff: svg16('<rect x="1.5" y="1.5" width="13" height="13" rx="2.5" fill="#56b6c2" fill-opacity=".14" stroke="#56b6c2" stroke-width="1.1"/><path d="M5.5 3.8v4.4M3.3 6h4.4M8.8 11h4" stroke="#56b6c2" stroke-width="1.4" stroke-linecap="round"/>'),
+  cert: page('#e5c07b', '<circle cx="8" cy="8.8" r="1.9" fill="none" stroke="#e5c07b" stroke-width="1"/><path d="m7 10.5-.6 2.4 1.6-.8 1.6.8-.6-2.4" fill="#e5c07b"/>'),
+  key: svg16('<circle cx="5" cy="10.5" r="3" fill="none" stroke="#f0b429" stroke-width="1.5"/><path d="m7.2 8.3 6-6M11 4.5l1.6 1.6M12.6 2.9l1.4 1.4" fill="none" stroke="#f0b429" stroke-width="1.5" stroke-linecap="round"/>'),
+  eslint: svg16('<path d="M5 1.8h6l4 6.2-4 6.2H5L1 8z" fill="#4b32c3" fill-opacity=".25" stroke="#8080f2" stroke-width="1.1" stroke-linejoin="round"/><path d="M6.4 5.1h3.2L11.2 8l-1.6 2.9H6.4L4.8 8z" fill="#8080f2"/>'),
+  prettier: svg16('<path d="M2 3h6M10 3h4M2 5.5h3M7 5.5h7M2 8h8M12 8h2M2 10.5h4M8 10.5h6M2 13h7" stroke-width="1.4" stroke-linecap="round" stroke="#56b3b4"/><path d="M8 3h2M5 5.5h2M10 8h2M6 10.5h2" stroke-width="1.4" stroke-linecap="round" stroke="#f7b93e"/>'),
+  vite: svg16('<path d="M14.5 2.5 8.3 14a.4.4 0 0 1-.7 0L1.5 2.5a.4.4 0 0 1 .4-.6L8 3l6.1-1.1a.4.4 0 0 1 .4.6z" fill="#646cff" fill-opacity=".85"/><path d="M10.8 1.6 6.4 2.5a.2.2 0 0 0-.1.2l-.3 4.8a.2.2 0 0 0 .2.2l1.2-.3a.2.2 0 0 1 .2.2l-.3 1.7a.2.2 0 0 0 .3.2l.8-.2a.2.2 0 0 1 .3.2l-.6 2.9c0 .2.2.3.3.1l.1-.1 2.5-5a.2.2 0 0 0-.2-.3l-1.2.2a.2.2 0 0 1-.2-.2l.8-2.8a.2.2 0 0 0-.3-.3z" fill="#ffc517"/>'),
+  tailwind: svg16('<path d="M8 3.5c-1.9 0-3 .9-3.5 2.8.7-.9 1.5-1.3 2.4-1 .5.1.9.5 1.3.9.7.7 1.4 1.5 3.1 1.5 1.9 0 3-.9 3.5-2.8-.7.9-1.5 1.3-2.4 1-.5-.1-.9-.5-1.3-.9-.7-.7-1.4-1.5-3.1-1.5zM4.5 7.7C2.6 7.7 1.4 8.6 1 10.5c.7-.9 1.5-1.3 2.4-1 .5.1.9.5 1.3.9.7.7 1.4 1.5 3.1 1.5 1.9 0 3-.9 3.5-2.8-.7.9-1.5 1.3-2.4 1-.5-.1-.9-.5-1.3-.9-.7-.7-1.4-1.5-3.1-1.5z" fill="#38bdf8"/>'),
+  readme: svg16('<circle cx="8" cy="8" r="6.5" fill="#42a5f5" fill-opacity=".18" stroke="#42a5f5" stroke-width="1.2"/><path d="M8 7.2v4" stroke="#42a5f5" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="4.9" r="1" fill="#42a5f5"/>'),
+  changelog: page('#7cb342', '<path d="M8 7v2.2l1.4 1" fill="none" stroke="#7cb342" stroke-width="1.1" stroke-linecap="round"/><circle cx="8" cy="9.2" r="2.6" fill="none" stroke="#7cb342" stroke-width="1"/>'),
+  sourcemap: page('#9aa5b1', '<path d="M5.5 8.5h2v3h3M8.5 7.5l2 1-2 1" fill="none" stroke="#9aa5b1" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>'),
+  robots: svg16('<rect x="3" y="5" width="10" height="8" rx="2" fill="#78909c" fill-opacity=".2" stroke="#90a4ae" stroke-width="1.2"/><path d="M8 5V2.6" stroke="#90a4ae" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="2.2" r=".9" fill="#90a4ae"/><circle cx="6" cy="8.5" r="1" fill="#90a4ae"/><circle cx="10" cy="8.5" r="1" fill="#90a4ae"/><path d="M6.3 11h3.4" stroke="#90a4ae" stroke-width="1" stroke-linecap="round"/>'),
+  test: svg16('<path d="M6 1.8h4M6.8 1.8v4L2.6 12.6a1.1 1.1 0 0 0 1 1.6h8.8a1.1 1.1 0 0 0 1-1.6L9.2 5.8v-4" fill="none" stroke="#22c55e" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/><path d="M4.2 10h7.6l1.1 2.6a.7.7 0 0 1-.6 1H3.7a.7.7 0 0 1-.6-1z" fill="#22c55e"/>'),
 };
 const EXT_ICON: Record<string, string> = {
-  html: 'html', htm: 'html', xml: 'html', vue: 'html', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
+  html: 'html', htm: 'html', xhtml: 'html', xml: 'xml', xsd: 'xml', xsl: 'xml', xslt: 'xml', plist: 'xml', rss: 'xml', atom: 'xml', resx: 'xml', vue: 'vue', svelte: 'svelte', astro: 'astro', css: 'css', less: 'css', scss: 'scss', sass: 'scss',
   js: 'js', mjs: 'js', cjs: 'js', jsx: 'jsx', tsx: 'jsx', ts: 'ts', mts: 'ts', cts: 'ts', json: 'json', jsonc: 'json', md: 'md', markdown: 'md',
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', ico: 'image', bmp: 'image', avif: 'image', svg: 'svg',
-  py: 'py', java: 'java', jar: 'java', rs: 'rust', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'config', yaml: 'config', toml: 'config', ini: 'config',
+  py: 'py', java: 'java', jar: 'java', rs: 'rust', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp', cs: 'cs', csx: 'cs', csproj: 'config', sln: 'config', sh: 'shell', bash: 'shell', ps1: 'shell', bat: 'shell', cmd: 'shell', yml: 'yaml', yaml: 'yaml', toml: 'toml', ini: 'config', cfg: 'config', conf: 'config', properties: 'config', editorconfig: 'config', dart: 'dart', lua: 'lua', r: 'r', rmd: 'r', scala: 'scala', sc: 'scala', zig: 'zig', ex: 'elixir', exs: 'elixir', hs: 'haskell', lhs: 'haskell', pl: 'perl', pm: 'perl', graphql: 'graphql', gql: 'graphql', proto: 'proto', tf: 'terraform', tfvars: 'terraform', hcl: 'terraform', ipynb: 'notebook', gradle: 'gradle', cmake: 'cmake', mk: 'make', vim: 'vim', tex: 'tex', bib: 'tex', diff: 'diff', patch: 'diff', pem: 'cert', crt: 'cert', cer: 'cert', p12: 'cert', pfx: 'cert', key: 'key', pub: 'key', map: 'sourcemap', fish: 'shell', zsh: 'shell', psm1: 'shell', m: 'c', mm: 'cpp', fs: 'cs', fsx: 'cs', vb: 'cs', csh: 'shell', jl: 'py', pyw: 'py', pyi: 'py', ejs: 'html', hbs: 'html', pug: 'html', njk: 'html', twig: 'html', liquid: 'html', styl: 'css', pcss: 'css', postcss: 'css',
   txt: 'text', log: 'text', csv: 'text', tsv: 'text', rtf: 'text', lock: 'lock', exe: 'exe', msi: 'exe', app: 'exe', apk: 'exe', com: 'exe', scr: 'exe', dll: 'bin', so: 'bin', dylib: 'bin', bin: 'bin', o: 'bin', obj: 'bin', a: 'bin', lib: 'bin', class: 'bin', pyc: 'bin', wasm: 'bin', iso: 'bin', img: 'bin', dat: 'bin', zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive', gz: 'archive', tgz: 'archive', bz2: 'archive', xz: 'archive', pdf: 'pdf', doc: 'doc', docx: 'doc', odt: 'doc', xls: 'xls', xlsx: 'xls', ods: 'xls', ppt: 'ppt', pptx: 'ppt', odp: 'ppt', c: 'c', h: 'h', go: 'go', php: 'php', rb: 'rb', kt: 'kt', kts: 'kt', swift: 'swift', sql: 'sql', db: 'sql', sqlite: 'sql', sqlite3: 'sql', mp3: 'audio', wav: 'audio', ogg: 'audio', flac: 'audio', m4a: 'audio', aac: 'audio', mp4: 'video', mkv: 'video', mov: 'video', avi: 'video', webm: 'video', ttf: 'font', otf: 'font', woff: 'font', woff2: 'font', tiff: 'image', heic: 'image', psd: 'image',
 };
 function fileIcon(name: string): string {
@@ -2373,6 +2566,20 @@ function fileIcon(name: string): string {
   if (n.startsWith('license')) return ICONS.license;
   if (/^(tsconfig|jsconfig)[\w.-]*\.json$/.test(n)) return ICONS.ts;
   if (n === 'cargo.toml' || n === 'cargo.lock') return ICONS.rust;
+  if (n === 'dockerfile' || n.startsWith('dockerfile.') || n.endsWith('.dockerfile') || n === '.dockerignore' || /^(docker-)?compose[\w.-]*\.ya?ml$/.test(n)) return ICONS.docker;
+  if (n === 'makefile' || n === 'gnumakefile') return ICONS.make;
+  if (n === 'cmakelists.txt') return ICONS.cmake;
+  if (n.startsWith('.eslint') || /^eslint\.config\./.test(n)) return ICONS.eslint;
+  if (n.startsWith('.prettier') || /^prettier\.config\./.test(n)) return ICONS.prettier;
+  if (/^vite(st)?\.config\./.test(n)) return ICONS.vite;
+  if (/^tailwind\.config\./.test(n)) return ICONS.tailwind;
+  if (n === '.editorconfig') return ICONS.config;
+  if (n === 'robots.txt') return ICONS.robots;
+  if (/^readme(\.|$)/.test(n)) return ICONS.readme;
+  if (/^(changelog|changes|history)(\.|$)/.test(n)) return ICONS.changelog;
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(n) || /^test_.*\.py$|_test\.(py|go)$/.test(n)) return ICONS.test;
+  if (n.endsWith('.d.ts')) return ICONS.ts;
+  if (n === '.vimrc' || n === '.gvimrc') return ICONS.vim;
   const ext = n.includes('.') ? n.slice(n.lastIndexOf('.') + 1) : '';
   return ICONS[EXT_ICON[ext] ?? 'file'];
 }
@@ -2436,7 +2643,7 @@ async function refreshLiveShare(): Promise<void> {
   button.title = running
     ? `Live Share is running at ${status?.url ?? ''} · Click to turn off`
     : 'Host index.html locally and open it in your browser';
-  $('span', button).textContent = running ? 'Live Share: on' : 'Live Share';
+  swapText($('span', button), running ? 'Live Share: on' : 'Live Share');
   void setIcon(button, running ? 'stop' : 'play');
 }
 
@@ -4014,7 +4221,7 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   rootInfo = info;
   loadTreeOrder();
   background(holdSplash(loadNpmScripts()));
-  $('#projectName').textContent = info.name;
+  swapText($('#projectName'), info.name);
   $('#projectName').title = info.root;
   document.title = `${info.name} — Breeze Code`;
   const s = store.get<Session>(sessionKey(), { tabs: [], active: null, expanded: [], pos: {} });
@@ -4044,7 +4251,7 @@ function resetWorkspace(): void {
   treeOrder = {};
   openTabs = []; active = null; rootInfo = null;
   stopPreview();
-  $('#projectName').textContent = 'No folder';
+  swapText($('#projectName'), 'No folder');
   document.title = 'Breeze Code';
   gitState = { repo: false }; gitLog = { head: null, commits: [] };
   renderScm(); renderBranch(); emptyChat();
@@ -4776,6 +4983,38 @@ $('#tabs').addEventListener('auxclick', e => {
   if (tab && e.button === 1) closeTab(tab.dataset.tab as string);
 });
 
+// Closing tabs: the blue line glides straight to the tab that will be open once they have folded away, the same
+// slide as picking a tab, instead of vanishing and reappearing. Call before the closing tabs start to shrink.
+function slideInkOnClose(closing: string[]): void {
+  const tabs = $('#tabs');
+  const ink = tabs.querySelector<HTMLElement>('.tab-ink');
+  const tabEl = (p: string | null) => (p ? tabs.querySelector<HTMLElement>(`[data-tab="${CSS.escape(p)}"]`) : null);
+  // The tab that ends up open, picked the way dropTab picks it.
+  const left = [...openTabs];
+  let next = active;
+  for (const p of closing) {
+    const i = left.indexOf(p);
+    if (i === -1) continue;
+    left.splice(i, 1);
+    if (next === p) next = left[Math.min(i, left.length - 1)] ?? null;
+  }
+  const target = tabEl(next);
+  if (!ink || !target || closing.includes(next as string)) return;
+  // Tabs to its left that close slide it over by their width plus the gap after them.
+  let shift = 0;
+  for (const p of closing) {
+    const c = tabEl(p);
+    if (!c || c.offsetLeft >= target.offsetLeft) continue;
+    const after = c.nextElementSibling as HTMLElement | null;
+    shift += after?.classList.contains('tab') ? after.offsetLeft - c.offsetLeft : c.offsetWidth;
+  }
+  const to = { x: target.offsetLeft - shift + 10, y: target.offsetTop + target.offsetHeight - 1, w: Math.max(0, target.offsetWidth - 20) };
+  ink.style.transform = `translate(${to.x}px, ${to.y}px)`;
+  ink.style.width = `${to.w}px`;
+  inkAt = to; // the redraw after the close starts from here, so the line doesn't jump back
+  for (const p of closing) tabEl(p)?.classList.remove('on');
+  target.classList.add('on');
+}
 // Closes several tabs at once, asking once about any unsaved ones.
 function closeTabs(paths: string[]): void {
   const dirty = paths.map(p => buffers.get(p)).filter((b): b is EditorBuffer => isDirty(b));
@@ -4783,6 +5022,7 @@ function closeTabs(paths: string[]): void {
     const tabEls = paths.map(p => $(`#tabs [data-tab="${CSS.escape(p)}"]`)).filter((el): el is HTMLElement => !!el);
     const isClosingAll = paths.length >= openTabs.length;
     if (tabEls.length) {
+      if (!isClosingAll) slideInkOnClose(paths);
       tabEls.forEach(el => {
         if (el.classList.contains('closing')) return;
         const w = el.getBoundingClientRect().width;
@@ -4925,9 +5165,10 @@ function closeTab(path: string): void {
   const finish = () => {
     const tabEl = $(`#tabs [data-tab="${CSS.escape(path)}"]`);
     const isLastTab = openTabs.length <= 1;
-    if (!tabEl?.classList.contains('closing')) sfx.play('close');
+    if (!tabEl?.classList.contains('closing')) sfx.play('remove');
     if (tabEl) {
       if (tabEl.classList.contains('closing')) return;
+      if (!isLastTab) slideInkOnClose([path]);
       const w = tabEl.getBoundingClientRect().width;
       tabEl.style.width = `${w}px`;
       tabEl.style.maxWidth = `${w}px`;
@@ -5747,8 +5988,7 @@ function editorKeys(e: KeyboardEvent): void {
   const b = textareaOwner.get(ta);
   const k = e.key.toLowerCase();
   if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter')) {
-    lastUserTypeAt = Date.now();
-    sfx.play('key');
+    lastUserTypeAt = Date.now(); // the tick itself comes from sfx's typing listener
   }
   if (suggestKeys(e, ta)) return;
   if (b && pairKey(e, ta)) { e.preventDefault(); return; }
@@ -6240,22 +6480,29 @@ function closeTermSession(id: number, e?: MouseEvent): void {
     background(api.term.kill(session.proc));
   }
 
-  if (session.paneEl && session.paneEl !== $('#termOut')) {
-    session.paneEl.remove();
-  } else if (session.paneEl === $('#termOut')) {
-    session.paneEl.innerHTML = '';
-  }
-
+  const pane = session.paneEl;
+  const wasActive = activeTermSession?.id === id;
   termSessions.splice(idx, 1);
+  renderTermTabs(); // the tab starts folding away now
 
-  if (termSessions.length === 0) {
-    createTermSession();
-  } else if (activeTermSession?.id === id) {
-    const nextIdx = Math.min(idx, termSessions.length - 1);
-    activateTermSession(termSessions[nextIdx].id);
-  } else {
-    renderTermTabs();
-  }
+  // The closed terminal's output fades and sinks away first, then the next one fades up in its place.
+  const shown = wasActive && pane && pane.offsetParent !== null && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const out = shown ? pane.animate([{ opacity: 1, transform: 'none', filter: 'blur(0)' }, { opacity: 0, transform: 'translateY(6px)', filter: 'blur(2px)' }], { duration: 170, easing: 'cubic-bezier(.4, 0, 1, 1)', fill: 'forwards' }) : null;
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    if (pane && pane !== $('#termOut')) pane.remove();
+    else if (pane) { pane.getAnimations().forEach(a => a.cancel()); pane.innerHTML = ''; }
+    if (termSessions.length === 0) {
+      createTermSession();
+    } else if (wasActive) {
+      const next = termSessions[Math.min(idx, termSessions.length - 1)];
+      activateTermSession(next.id);
+      if (shown) next.paneEl?.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+    }
+  };
+  if (out) { out.finished.then(finish, finish); setTimeout(finish, 260); } else finish(); // a hidden window pauses animations
 }
 
 const TERM_TAB_ANIM_MS = 220;
@@ -7762,6 +8009,7 @@ function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTML
   m.className = `${cls} stagger`;
   m.setAttribute('role', 'menu');
   m.innerHTML = items.map((it, i) => menuItemHtml(it, i)).join('');
+  m.style.setProperty('--n', String(items.length)); // menus that open upwards stagger their rows from the bottom
   applyDataStyles(m);
   $('#menuRoot').append(m);
   m.style.left = `${Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8))}px`;
@@ -7785,6 +8033,7 @@ function openSubmenu(btn: HTMLElement, it: MenuItem): void {
   const cls = 'menu sub' + (it.subClass ? ` ${it.subClass}` : '');
   const sub = renderMenu(r.right + 4, r.top - 5, it.sub?.() ?? [], cls);
   if (btn.closest('.menu.up')) {
+    sub.classList.add('up');
     sub.style.top = `${Math.max(8, r.bottom - sub.offsetHeight + 5)}px`;
   }
   if (sub.getBoundingClientRect().left < r.right) sub.style.left = `${Math.max(8, r.left - sub.offsetWidth - 4)}px`; // no room on the right
@@ -8049,7 +8298,7 @@ function settingsBody(tab: SettingsTab): string {
       ${accountHtml()}
       <h5>Preferences</h5>
       ${settingRow('Workspace', 'Full editor, or chat only.', segHtml('sMode', [['ide', 'Breeze Code'], ['box', 'Breeze Box']], appState.mode))}
-      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="1" value="${sfx.volume}" aria-label="Sound volume"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
+      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume"><button class="set-volume-ico" id="sVolumeIco" title="Mute" aria-label="Mute">${svgIcon(volumeIcon(sfx.volume), 14)}</button><input type="range" id="sVolume" min="0" max="100" step="1" value="${sfx.volume}" aria-label="Sound volume"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
       <h5>Layout</h5>
       ${settingRow('Side bar', 'Ctrl+B', switchHtml('sSide', layout.sideOpen, 'Side bar'))}
       ${settingRow('Agents panel', 'Ctrl+Alt+B', switchHtml('sAgents', layout.agentsOpen, 'Agents panel'))}
@@ -8156,7 +8405,7 @@ function bindSettings(m: HTMLElement): void {
     if (!ag) return;
     if (!ag.install) { background(api.sys.openExternal(ag.url)); return; }
     (b as HTMLButtonElement).disabled = true;
-    b.textContent = 'Installing';
+    swapText(b, 'Installing');
     try {
       if (await api.sys.runCommand(ag.install)) toast(`Installing ${ag.name} in a terminal. Scan again when it finishes.`);
       else { toast(`Run this to install ${ag.name}: ${ag.install}`); background(api.sys.openExternal(ag.url)); }
@@ -8195,6 +8444,7 @@ function bindSettings(m: HTMLElement): void {
       sfx.setVolume(v);
       vol.style.setProperty('--fill', `${v}%`);
       $('#sVolumeVal', pane).textContent = `${v}%`;
+      void setIcon($('#sVolumeIco', pane), volumeIcon(v));
     };
     const near = (v: number) => Math.abs(v - 50) <= SNAP;
     const settle = (raw: number) => {
@@ -8205,6 +8455,14 @@ function bindSettings(m: HTMLElement): void {
     const rearm = () => { snapArmed = true; snapped = false; };
     vol.oninput = () => settle(+vol.value);
     vol.onchange = () => { sfx.play('tick'); rearm(); };
+    // The speaker mutes, and a second press brings back the level it had.
+    let unmuteTo = 50;
+    on('sVolumeIco', () => {
+      const cur = +vol.value;
+      if (cur) unmuteTo = cur;
+      show(cur ? 0 : unmuteTo);
+      sfx.play(cur ? 'close' : 'tick');
+    });
     vol.addEventListener('wheel', e => {
       e.preventDefault();
       const cur = +vol.value;
@@ -8486,7 +8744,7 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
     session: session ?? null,
     sessionAgent: session ? appState.agent : null,
     agentId: appState.agent || 'antigravity',
-    uiMode: s.mode?.value || 'plan',
+    uiMode: 'build',
     promptDraft: '',
     attachments: [],
   };
@@ -8542,12 +8800,14 @@ function placeAgentTabInk(s: Surface): void {
   agentInkAt[s.name] = next;
 }
 
+const closingAgentTabs = new Set<string>();
 function renderAgentTabs(s: Surface): void {
   const tabsList = s.name === 'box' ? $('#boxAgentTabsList') : $('#agentTabsList');
   if (!tabsList) return;
   const list = surfaceTabs[s.name];
   const curId = activeTabId[s.name];
-  const isMulti = list.length > 1;
+  // A tab that is folding away doesn't count, so the one that stays loses its X right as the other starts to go.
+  const isMulti = list.filter(t => !closingAgentTabs.has(t.id)).length > 1;
 
   const currentTabIds = new Set(list.map(t => t.id));
   tabsList.querySelectorAll<HTMLElement>('.agent-tab').forEach(el => {
@@ -8643,7 +8903,7 @@ function switchAgentTab(s: Surface, tid: string): void {
   }
 
   s.prompt.value = next.promptDraft || '';
-  s.mode.value = next.uiMode || 'plan';
+  s.mode.value = 'build';
   attachmentsMap[s.name] = next.attachments || [];
   renderAttachments(s);
 
@@ -8667,6 +8927,7 @@ function closeAgentTab(s: Surface, tid: string): void {
   const tabEl = tabsList?.querySelector<HTMLElement>(`[data-agent-tab="${tid}"]`);
 
   const finalize = () => {
+    closingAgentTabs.delete(tid);
     tab.panel.remove();
     const curIdx = surfaceTabs[s.name].findIndex(t => t.id === tid);
     if (curIdx !== -1) surfaceTabs[s.name].splice(curIdx, 1);
@@ -8696,7 +8957,7 @@ function closeAgentTab(s: Surface, tid: string): void {
         tab.panel.classList.remove('active');
         nextTab.panel.classList.add('active');
         s.prompt.value = nextTab.promptDraft || '';
-        s.mode.value = nextTab.uiMode || 'plan';
+        s.mode.value = 'build';
         attachmentsMap[s.name] = nextTab.attachments || [];
         renderAttachments(s);
         updateTabBusyState(s, nextTab);
@@ -8708,6 +8969,7 @@ function closeAgentTab(s: Surface, tid: string): void {
     tabEl.style.maxWidth = `${w}px`;
     const _reflow = tabEl.offsetWidth;
     tabEl.classList.add('leaving');
+    closingAgentTabs.add(tid);
 
     if (surfaceTabs[s.name].length === 2) {
       const remainingTab = surfaceTabs[s.name].find(t => t.id !== tid);
@@ -8741,7 +9003,7 @@ function updateTabBusyState(s: Surface, tab?: AgentTabState): void {
   s.send.classList.toggle('stop', on);
   void setIcon(s.send, on ? 'stop' : 'send');
   const span = $('span', s.send);
-  if (span) span.textContent = on ? 'Stop' : 'Send';
+  if (span) swapText(span, on ? 'Stop' : 'Send');
   s.send.title = on ? 'Stop the agent' : 'Send (Enter)';
   s.prompt.closest('.composer-box')?.classList.toggle('busy', on);
 }
@@ -8801,7 +9063,7 @@ function speaker(k: AgentKey, s: Surface = msgSurface): { name: string; letter: 
 function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
   const t = tab || getActiveTab(msgSurface);
   const { name, letter, tint } = speaker(k, SURFACES[t.surfaceName]);
-  sfx.play('msg');
+  sfx.play('answer');
   return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`, t);
 }
 
@@ -8842,13 +9104,25 @@ function showThinking(label: string, k: AgentKey = 'assistant', tab?: AgentTabSt
     el.setAttribute('role', 'status');
     el.innerHTML = '<span class="avatar mini"></span><span class="lbl"></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
     t.panel.appendChild(el);
+    sfx.play('think');
+    humWhileThinking();
     if (t.id === activeTabId[t.surfaceName]) scrollChat(SURFACES[t.surfaceName]);
   }
   const { letter, tint } = speaker(k, SURFACES[t.surfaceName]);
   const avatar = $('.avatar', el);
   if (avatar) avatar.outerHTML = brandMark('avatar mini', tint, letter);
   const lbl = $('.lbl', el);
-  if (lbl) lbl.textContent = label;
+  if (lbl) swapText(lbl, label);
+}
+
+// A quiet murmur every couple of seconds for as long as any agent is still thinking.
+let thinkingHum: TimeoutId | undefined;
+function humWhileThinking(): void {
+  if (thinkingHum != null) return;
+  thinkingHum = setInterval(() => {
+    if (!document.querySelector('.agent-tab-panel .thinking')) { clearInterval(thinkingHum); thinkingHum = undefined; return; }
+    sfx.play('hum');
+  }, 1800);
 }
 
 function hideThinking(tab?: AgentTabState): void {
@@ -9389,7 +9663,7 @@ async function sendPrompt(): Promise<void> {
 
   msgSurface = s;
   sfx.play('send');
-  const uiMode = s.mode.value;
+  const uiMode = 'build'; // no mode picker any more: the agent works with full tools and decides how to answer
   s.prompt.value = '';
   tab.promptDraft = '';
   attachmentsMap[s.name] = [];
@@ -9528,6 +9802,7 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
       if (bodyEl) {
         bodyEl.innerHTML = md(ev.text);
         r.lastText = ev.text;
+        sfx.play('stream'); // a light patter while the answer streams in
         if (tab.id === activeTabId[tab.surfaceName]) scrollChat(SURFACES[tab.surfaceName]);
         saveChat(tab);
         return;
@@ -9907,10 +10182,19 @@ function autoResizeScmMsg(el?: HTMLTextAreaElement | null): void {
   const msg = el || ($('#scmMsg') as HTMLTextAreaElement | null);
   if (!msg) return;
   msg.style.height = 'auto';
-  const target = Math.min(160, Math.max(28, msg.scrollHeight));
+  // An empty box sizes to its placeholder, which wraps onto two lines in a narrow side bar (scrollHeight ignores it).
+  const empty = !msg.value;
+  if (empty) msg.value = msg.placeholder;
+  const need = msg.scrollHeight;
+  if (empty) msg.value = '';
+  const target = Math.min(160, Math.max(28, need));
   msg.style.height = `${target}px`;
-  msg.style.overflowY = msg.scrollHeight > 160 ? 'auto' : 'hidden';
+  msg.style.overflowY = need > 160 ? 'auto' : 'hidden';
 }
+// The side bar can be resized (and starts hidden), which rewraps the text, so the box re-fits whenever its width changes.
+const scmMsgWidth = new ResizeObserver(entries => {
+  for (const e of entries) if (e.contentRect.width) autoResizeScmMsg(e.target as HTMLTextAreaElement);
+});
 
 function currentActiveAgent(): DetectedAgent | null {
   try {
@@ -10075,6 +10359,8 @@ function renderScm(): void {
   const msg = $<HTMLTextAreaElement>('#scmMsg', el);
   msg.value = scmDraft;
   autoResizeScmMsg(msg);
+  scmMsgWidth.disconnect();
+  scmMsgWidth.observe(msg);
   msg.oninput = () => {
     scmDraft = msg.value;
     autoResizeScmMsg(msg);
@@ -10342,9 +10628,14 @@ function commitDetailHtml(c: GitCommit, d?: GitCommitDetail): string {
         return `<div class="file" data-open-file="${escAttr(f.path)}" title="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp"><span class="fp-name">${esc(name)}</span><span class="fp-ext">${esc(ext)}</span></span><span class="file-stats"><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`;
       }).join('')
     : '<div class="side-note">Loading changed files</div>';
+  // The whole checkpoint at a glance: how many files, and the lines added and removed across all of them.
+  const added = d ? d.files.reduce((n, f) => n + f.added, 0) : 0;
+  const removed = d ? d.files.reduce((n, f) => n + f.removed, 0) : 0;
+  const total = d?.files.length ? `<div class="cd-total"><span>${plural(d.files.length, 'file')} changed</span><span class="file-stats"><span class="add">+${added}</span> <span class="del">−${removed}</span></span></div>` : '';
   return `<div class="commit-detail">
     <div class="cd-msg">${esc(d ? d.message : c.subject)}</div>
     <div class="cd-meta">${esc(d ? d.author : c.author)} · ${esc(d ? d.when : c.when)} · <code>${c.hash.slice(0, 8)}</code></div>
+    ${total}
     ${files}
     <div class="row mt-8 commit-actions"><button class="btn btn-sm" data-branch-from="${c.hash}">Branch from here</button><button class="btn btn-sm" data-copy-hash="${c.hash}">Copy id</button></div>
   </div>`;
@@ -10492,6 +10783,7 @@ function holdToDelete(btn: HTMLElement, onDone: () => void): void {
       timer = undefined;
       btn.classList.remove('holding');
       if (btn.isConnected) {
+        sfx.play('trash');
         onDone();
       }
     }, HOLD_MS);
@@ -10752,7 +11044,7 @@ function tickVibeClock(): void {
   const s = Math.floor((Date.now() - vibeStarted) / 1000);
   $('#vibeClock').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   const a = Object.values(agentsDef).find(x => x.status === 'working');
-  if (a) $('#vibeTask').textContent = `${a.name}: ${a.task}`;
+  if (a) swapText($('#vibeTask'), `${a.name}: ${a.task}`);
 }
 function enterVibe(): void {
   if (vibeOn) return;
@@ -10802,14 +11094,14 @@ function vibeDone(ok: boolean, plan = false): void {
   $('#vibeStatus').classList.add('hidden');
   $('#vibeReady').classList.remove('hidden');
   $('#vibeReady').classList.toggle('failed', !ok);
-  let text = ok ? '✓ Your code is ready' : 'The agent stopped';
-  if (ok && plan) text = '📋 The plan is ready for you';
-  $('#vibeReadyText').textContent = text;
+  let text = ok ? 'Your code is ready' : 'The agent stopped';
+  if (ok && plan) text = 'The plan is ready for you';
+  swapText($('#vibeReadyText'), text);
   let backBtnText = 'Back to code';
   if (ok) {
     backBtnText = plan ? 'Review plan' : 'Show me';
   }
-  $('#vibeBack').textContent = backBtnText;
+  swapText($('#vibeBack'), backBtnText);
   // The feed keeps playing; leaving Vibe Mode stays the user's call. The card pops and the system says so.
   const card = $('#vibeReady');
   card.classList.remove('ping');
@@ -10828,6 +11120,8 @@ function notifyVibe(title: string, body: string): void {
   else if (Notification.permission !== 'denied') void Notification.requestPermission().then(p => { if (p === 'granted') show(); });
 }
 $('#vibeClose').onclick = exitVibe;
+// Clicking the dimmed backdrop around the panel leaves Vibe Mode too.
+$('#vibe').addEventListener('click', e => { if (e.target === e.currentTarget) exitVibe(); });
 $('#vibeBack').onclick = () => {
   exitVibe();
   const t = lastRunFiles[0];
@@ -10840,7 +11134,9 @@ $('#vibeMute').onclick = () => {
   if (isDesktop) background(api.vibe.mute(vibeMuted));
 };
 // Keep the live feed glued to the frame when the window changes size.
-new ResizeObserver(() => { if (vibeOn && vibeSiteShown && isDesktop) background(api.vibe.bounds(frameRect())); }).observe(vibeFrame);
+const glueFeed = () => { if (vibeOn && vibeSiteShown && isDesktop) background(api.vibe.bounds(frameRect())); };
+new ResizeObserver(glueFeed).observe(vibeFrame);
+addEventListener('resize', glueFeed); // the frame can move without changing size
 
 /* ================= Discord ================= */
 // Rich Presence through the Discord app on this computer (main.js talks to it); updates are coalesced.
@@ -10944,7 +11240,7 @@ function closeModal(): void {
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
-  setTimeout(() => scrim.remove(), 380);
+  setTimeout(() => scrim.remove(), scrim.querySelector('.settings-shell') ? 460 : 380);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {
@@ -10952,6 +11248,18 @@ function bindToasts(root: ParentNode = document): void {
 }
 
 /* ================= Custom Tooltip UI ================= */
+// New text in a tip that is already up: the text fades in and the box resizes from its old size to the new one.
+function morphTooltip(el: HTMLElement, text: string): void {
+  const from = el.getBoundingClientRect();
+  el.textContent = text;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const to = el.getBoundingClientRect();
+  el.getAnimations().forEach(a => { if (a.id === 'tip') a.cancel(); });
+  const size = el.animate([{ width: `${from.width}px`, height: `${from.height}px` }, { width: `${to.width}px`, height: `${to.height}px` }], { duration: 260, easing: 'cubic-bezier(.32, .72, 0, 1)' });
+  size.id = 'tip';
+  const fade = el.animate([{ color: 'transparent', filter: 'blur(2px)' }, { color: '#f5f5f7', filter: 'blur(0)' }], { duration: 220, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  fade.id = 'tip';
+}
 let tooltipEl: HTMLElement | null = null;
 let tooltipTimer: TimeoutId | undefined;
 let cursorX = 0;
@@ -10964,8 +11272,10 @@ function initTooltip(): void {
   tooltipEl.setAttribute('aria-hidden', 'true');
   document.body.appendChild(tooltipEl);
 
+  let hideTimer: TimeoutId | undefined;
   const hideTooltip = () => {
     clearTimeout(tooltipTimer);
+    clearTimeout(hideTimer);
     if (tooltipEl?.classList.contains('visible')) {
       lastTooltipTime = Date.now();
       tooltipEl.classList.remove('visible');
@@ -11033,6 +11343,15 @@ function initTooltip(): void {
       return;
     }
     clearTimeout(tooltipTimer);
+    clearTimeout(hideTimer);
+    // Already showing (moving from one tab to the next): the same tip stays up, its text fades over and its box
+    // grows or shrinks to the new text instead of the whole tip fading out and in again.
+    if (tooltipEl.classList.contains('visible')) {
+      if (tooltipEl.textContent !== tip) morphTooltip(tooltipEl, tip);
+      updateTooltipPos();
+      lastTooltipTime = Date.now();
+      return;
+    }
     const warmDelay = (Date.now() - lastTooltipTime < 600) ? 0 : 120;
     tooltipTimer = setTimeout(() => {
       if (!target.isConnected || !tooltipEl) return;
@@ -11047,7 +11366,9 @@ function initTooltip(): void {
     const related = e.relatedTarget as HTMLElement | null;
     const current = (e.target as HTMLElement).closest<HTMLElement>('[data-tooltip]');
     if (current && related && current.contains(related)) return;
-    hideTooltip();
+    // A beat of grace, so stepping straight onto the next item morphs the tip instead of hiding it.
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(hideTooltip, 70);
   }, true);
 
   document.addEventListener('pointerdown', hideTooltip, true);
