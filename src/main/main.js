@@ -14,6 +14,8 @@ const { findTools, freshPath, toolEnv, runPlan, runSteps, ensureBuildIgnored, me
 const { isFileUrl, resolveUnder, blockedRel, agentBlocked, isLocalHost, safeGitArgs, shellCommand } = require('./guard');
 const { AntigravityAgentService } = require('./antigravityAgentService.js');
 const syncEngine = require('./sync');
+const { TeamCoordinator, claudeDenyArgs } = require('./team');
+const { parseMentions, shortName } = require('./mentions');
 
 let autoUpdater = null;
 try {
@@ -287,7 +289,7 @@ function boxDir() {
 async function setRoot(dir) {
   const st = await fsp.stat(dir);
   if (!st.isDirectory()) throw new Error('Not a folder');
-  if (root !== dir) stopLiveServer();
+  if (root !== dir) { stopLiveServer(); stopTeams(); }
   root = dir;
   termCwd = dir;
   const recent = [dir, ...(loadState().recent || []).filter(r => r !== dir)].slice(0, 10);
@@ -481,7 +483,7 @@ handle('fs:restore', async () => {
 });
 
 handle('fs:closeFolder', () => {
-  root = null; termCwd = os.homedir(); stopWatching(); stopLiveServer(); saveState({ lastRoot: null });
+  root = null; termCwd = os.homedir(); stopWatching(); stopLiveServer(); stopTeams(); saveState({ lastRoot: null });
 });
 
 handle('fs:recent', () => (loadState().recent || []).map(p => ({ path: p, name: path.basename(p) })));
@@ -1169,7 +1171,21 @@ handle('llm:disconnect', () => {
 // session · text · plan · tool · file · note · error · done
 const runs = new Map();
 let nextRun = 1;
-const emit = (runId, ev) => win?.webContents.send('agent:event', runId, ev);
+const sendEvent = (runId, ev) => win?.webContents.send('agent:event', runId, ev);
+// A team run's events go through its coordinator first, which hides the claim pass and enforces ownership.
+// A dropped team keeps the runs still going until their done, so a team stopped by a folder change hears them end.
+const teamOf = new Map(); // runId -> { team: TeamCoordinator, done }
+function emit(runId, ev) {
+  const entry = teamOf.get(runId);
+  if (entry) {
+    if (ev?.t === 'done') {
+      entry.done = true;
+      if (teams.get(entry.team.id) !== entry.team) teamOf.delete(runId);
+    }
+    if (entry.team.observe(runId, ev)) return;
+  }
+  sendEvent(runId, ev);
+}
 const relOut = p => {
   if (!p || !root) return p || '';
   const r = path.relative(root, path.resolve(root, p));
@@ -1177,22 +1193,101 @@ const relOut = p => {
 };
 const SAFE_ID = /^[\w-]{6,80}$/;
 
-handle('agent:run', (_e, opts) => {
+// `opts.team` ({ coordinator, agentId }) only ever comes from a TeamCoordinator, never from the renderer.
+function launchRun(opts) {
   const runId = nextRun++;
+  if (opts?.team) teamOf.set(runId, { team: opts.team.coordinator, done: false });
   startRun(runId, opts).catch(err => {
     emit(runId, { t: 'error', text: err.message });
     emit(runId, { t: 'done', ok: false });
     runs.delete(runId);
   });
   return runId;
-});
-handle('agent:stop', (_e, runId) => {
+}
+// A stopped run that is still going always ends with a done (teams wait for it).
+function stopRun(runId) {
   const r = runs.get(runId);
   if (!r) return;
   r.stopped = true;
-  if (r.service) r.service.stop();
+  if (r.service) r.service.stop().then(r.onStopped, r.onStopped); // the service drops its exit event once stopped
   if (r.child) killTree(r.child);
   r.abort?.abort();
+}
+handle('agent:run', (_e, opts) => launchRun({ ...opts, team: null }));
+handle('agent:stop', (_e, runId) => stopRun(runId));
+
+/* ----- Agent teams: one prompt split between several agents, each owning its own files ----- */
+const teams = new Map(); // teamId -> TeamCoordinator
+const teamTimers = new Map(); // teamId -> the timer that drops it
+const TEAM_TTL_MS = 30 * 60 * 1000;
+const CLAIM_MS = 60 * 1000;
+const MAX_TASK = 20000;
+const TEAM_FINISHED = 'That team has finished.';
+const teamDeps = { startRun: launchRun, stopRun, emit: sendEvent, setTimeout, clearTimeout };
+
+// The agents a prompt can mention: the CLI agents the last scan found, and the local LLM once one is set up.
+async function teamAgents() {
+  const llm = await llmConfig(false).catch(() => null);
+  return [
+    ...AGENTS.map(a => ({ id: a.id, name: a.name, found: agentBins.has(a.id) })),
+    { id: 'local', name: 'Ollama', found: !!llm?.model },
+  ];
+}
+function dropTeam(id) {
+  const t = teams.get(id);
+  if (!t) return;
+  clearTimeout(teamTimers.get(id));
+  teamTimers.delete(id);
+  teams.delete(id);
+  t.stop();
+  for (const [runId, entry] of teamOf) if (entry.team === t && entry.done) teamOf.delete(runId);
+}
+// A team and its snapshot go after 30 minutes, but not while one of its runs is still going.
+function expireTeam(id) {
+  const t = teams.get(id);
+  if ([...teamOf.values()].some(e => e.team === t && !e.done)) teamTimers.set(id, setTimeout(() => expireTeam(id), TEAM_TTL_MS));
+  else dropTeam(id);
+}
+function stopTeams() {
+  for (const id of [...teams.keys()]) dropTeam(id);
+}
+const isPlainObject = o => Object.prototype.toString.call(o) === '[object Object]';
+
+handle('team:parse', async (_e, text) => parseMentions(String(text ?? ''), await teamAgents()));
+handle('team:claim', async (_e, o) => {
+  const agents = await teamAgents();
+  if (!root) throw new Error('Open a folder first');
+  const list = o?.members;
+  if (!Array.isArray(list) || list.length < 2 || list.length > 4) throw new Error('A team needs 2 to 4 agents.');
+  if (o.shared != null && typeof o.shared !== 'string') throw new Error('The shared part of the prompt must be text.');
+  const members = [];
+  for (const m of list) {
+    const agent = agents.find(a => a.id === m?.agentId);
+    if (!agent?.found) throw new Error('That agent was not found on this computer.');
+    if (members.some(x => x.agentId === agent.id)) throw new Error('Each agent can only be on a team once.');
+    if (typeof m.task !== 'string') throw new Error('Every agent on a team needs a task.');
+    const session = typeof m.session === 'string' && SAFE_ID.test(m.session) ? m.session : null;
+    members.push({ agentId: agent.id, name: shortName(agent), task: m.task.slice(0, MAX_TASK), session });
+  }
+  const id = crypto.randomUUID();
+  const team = new TeamCoordinator({ id, root, shared: (o.shared ?? '').slice(0, MAX_TASK), members, deps: teamDeps });
+  teams.set(id, team);
+  teamTimers.set(id, setTimeout(() => expireTeam(id), TEAM_TTL_MS));
+  return { teamId: id, ...await team.claim({ timeoutMs: CLAIM_MS }) };
+});
+handle('team:start', (_e, o) => {
+  const team = teams.get(o?.teamId);
+  if (!team) throw new Error(TEAM_FINISHED);
+  const owners = o.owners ?? {};
+  const member = a => team.members.some(m => m.agentId === a);
+  if (!isPlainObject(owners) || !Object.values(owners).every(member)) throw new Error('Each file must belong to an agent on this team.');
+  return team.start(owners);
+});
+handle('team:stop', (_e, teamId) => dropTeam(teamId));
+handle('team:undo', (_e, o) => {
+  const team = teams.get(o?.teamId);
+  if (!team) throw new Error(TEAM_FINISHED);
+  return team.undo(o.path);
 });
 
 async function runAntigravity(runId, run, { mode, prompt, session, base }) {
@@ -1215,6 +1310,14 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
   run.service = service;
   let lastText = '';
   let doneEmitted = false;
+  // A stopped run ends here once: from 'exit', or from stopRun when the stopped service never sends 'exit'.
+  let stopEnded = false;
+  run.onStopped = () => {
+    if (stopEnded || doneEmitted) return;
+    stopEnded = true;
+    runs.delete(runId);
+    emit(runId, { t: 'done', ok: false, stopped: true });
+  };
 
   service.on('output', ev => {
     if (run.stopped) return;
@@ -1259,7 +1362,7 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
   service.on('exit', (code, signal) => {
     runs.delete(runId);
     if (run.stopped) {
-      emit(runId, { t: 'done', ok: false, stopped: true });
+      run.onStopped();
     } else if (!doneEmitted) {
       if (mode === 'plan' && lastText) {
         emit(runId, { t: 'plan', text: lastText });
@@ -1283,8 +1386,8 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
 const EFFORT_ARGS = { low: 'low', medium: 'medium', high: 'high', extra: 'xhigh' };
 const effortArg = effort => EFFORT_ARGS[String(effort || '').toLowerCase()] || null;
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
-function cliArgs(agent, mode, prompt, session) {
-  if (agent === 'claude') return claudeArgs(mode, prompt, session);
+function cliArgs(agent, mode, prompt, session, team) {
+  if (agent === 'claude') return claudeArgs(mode, prompt, session, team);
   const build = mode === 'build';
   const args = ['exec', '--json', '-s', build ? 'workspace-write' : 'read-only', '--skip-git-repo-check'];
   const st = loadState();
@@ -1302,10 +1405,13 @@ function cliArgs(agent, mode, prompt, session) {
 // modes can read and search but every tool that changes files is switched off.
 const NO_SESSION = /No conversation found with session ID/i;
 const CLAUDE_WRITE_TOOLS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'];
-function claudeArgs(mode, prompt, session) {
+// On a team, build mode also denies editing what a teammate owns (rule paths are relative to the project root).
+function claudeArgs(mode, prompt, session, team) {
   const build = mode === 'build';
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', build ? 'acceptEdits' : 'default'];
   if (!build) args.push('--disallowedTools', ...CLAUDE_WRITE_TOOLS);
+  const deny = build && team ? claudeDenyArgs(team.coordinator.owners, team.agentId) : [];
+  if (deny.length) args.push('--disallowedTools', ...deny);
   const st = loadState();
   const model = st.claudeModel;
   if (model && model !== 'default' && CLAUDE_MODELS.includes(model)) args.push('--model', model);
@@ -1378,18 +1484,18 @@ function codexFallback(errText) {
 }
 
 // Agents work in the open project; Breeze Box chats may also run without one, in the Breeze Box folder.
-async function startRun(runId, { agent, mode, prompt, session, box }) {
+async function startRun(runId, { agent, mode, prompt, session, box, team }) {
   const base = root || (box ? boxDir() : null);
   if (!base) throw new Error('Open a folder first');
   if (session && !SAFE_ID.test(session)) session = null;
-  const run = { child: null, abort: null, stopped: false };
+  const run = { child: null, abort: null, stopped: false, team: team || null };
   runs.set(runId, run);
   if (agent === 'local') return runLocal(runId, run, { mode, prompt, session, base });
   if (agent === 'antigravity') return runAntigravity(runId, run, { mode, prompt, session, base });
   const bin = agentBins.get(agent);
   if (!bin) throw new Error('That agent was not found on this computer. Rescan from Settings → Run Setup Again.');
   const launch = () => {
-    const cli = cliArgs(agent, mode, prompt, session);
+    const cli = cliArgs(agent, mode, prompt, session, run.team);
     // The prompt goes through stdin, so it never reaches a shell command line. Only fixed flags,
     // a validated model name and a validated session id do (npm .cmd shims need a shell on Windows).
     const opts = { cwd: base, windowsHide: true, env: process.env };
@@ -1517,6 +1623,16 @@ function agentPath(ctx, rel) {
   if (why) throw new Error(why);
   return abs;
 }
+// On a team, a write to a teammate's file is refused before it lands. A file no one owns becomes this agent's.
+async function checkTeamWrite(ctx, rel) {
+  if (!ctx.team) return;
+  const { coordinator, agentId } = ctx.team;
+  const owner = await coordinator.foreignOwner(agentId, rel);
+  if (!owner) return;
+  emit(ctx.runId, { t: 'crossing', path: rel, agent: agentId, owner, blocked: true });
+  const name = coordinator.members.find(m => m.agentId === owner)?.name || owner;
+  throw new Error(`That file belongs to ${name} on this team. Leave it and mention what you need in your final message.`);
+}
 const LLM_TOOL_FNS = {
   async list_files(ctx, a) {
     const dir = agentPath(ctx, a.path || '.');
@@ -1554,6 +1670,7 @@ const LLM_TOOL_FNS = {
   async edit_file(ctx, a) {
     const abs = agentPath(ctx, a.path);
     const rel = relTo(ctx.base, abs);
+    await checkTeamWrite(ctx, rel);
     const { text, line } = brain.applyEdit(await fsp.readFile(abs, 'utf8'), a.old_text, a.new_text);
     await fsp.writeFile(abs, text, 'utf8');
     emit(ctx.runId, { t: 'tool', kind: 'edit', label: `Edited ${rel}` });
@@ -1562,6 +1679,7 @@ const LLM_TOOL_FNS = {
   },
   async write_file(ctx, a) {
     const abs = agentPath(ctx, a.path);
+    await checkTeamWrite(ctx, relTo(ctx.base, abs));
     const content = String(a.content ?? '');
     await fsp.mkdir(path.dirname(abs), { recursive: true });
     await fsp.writeFile(abs, content, 'utf8');
@@ -1686,7 +1804,7 @@ async function runLocal(runId, run, { mode, prompt, session, base }) {
   const map = fresh ? `Project map:\n${brain.projectMap((await listFiles(base)).map(f => relTo(base, f)), Math.min(2400, Math.floor(budget * 0.8)))}\n\n` : '';
   messages.push({ role: 'user', content: `${map}${prompt}\n\n(${LLM_MODE_NOTE[mode] ?? LLM_MODE_NOTE.ask})` });
   const tools = LLM_TOOLS.filter(t => mode === 'build' || !WRITE_TOOLS.has(t.function.name));
-  const ctx = { runId, base, cfg, mode, noTools: false, seen: new Map(), turn: 0, toolNames: tools.map(t => t.function.name) };
+  const ctx = { runId, base, cfg, mode, team: run.team, noTools: false, seen: new Map(), turn: 0, toolNames: tools.map(t => t.function.name) };
   run.abort = new AbortController();
   const started = Date.now();
   let tokens = 0, lastText = '';
