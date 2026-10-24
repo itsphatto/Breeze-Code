@@ -21,7 +21,10 @@ interface Agent {
 }
 interface User { name: string; provider: string; login?: string; email?: string | null; avatar?: string | null; }
 type AgentMode = 'plan' | 'build' | 'ask';
-interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done' | 'auth' | 'auth-required'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; url?: string; command?: string; }
+interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done' | 'auth' | 'auth-required' | 'crossing' | 'team-done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; url?: string; command?: string; agent?: string; owner?: string; blocked?: boolean; error?: string; teamId?: string; changed?: string[]; notes?: Record<string, Record<string, string>>; skipped?: string[]; }
+// Agent teams: one prompt, several agents building in parallel (main process: team.js).
+interface TeamParse { shared: string; tasks: { agentId: string; text: string }[]; unknown: string[]; }
+interface TeamClaimResult { teamId: string; claims: Record<string, string[]>; clashes: { path: string; agents: string[] }[]; failed: string[]; sessions: Record<string, string>; }
 interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
 interface GitFile { path: string; x: string; y: string; }
 interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; incoming?: string[]; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; ignored?: string[]; }
@@ -97,6 +100,13 @@ interface BreezeApi {
     stop(runId: number): Promise<void>;
     setModel(agent: string, model: string, effort?: string): Promise<boolean>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
+  };
+  team: {
+    parse(text: string): Promise<TeamParse>;
+    claim(opts: { shared: string; members: { agentId: string; task: string; session: string | null }[] }): Promise<TeamClaimResult>;
+    start(opts: { teamId: string; owners: Record<string, string>; exclude?: string[] }): Promise<Record<string, number>>;
+    stop(teamId: string): Promise<void>;
+    undo(opts: { teamId: string; path: string }): Promise<void>;
   };
   git: {
     status(): Promise<GitStatus>;
@@ -222,12 +232,19 @@ const store = {
 // first click or key press, and the speaker button in the status bar (or Settings › Sound Effects) turns them off.
 const sfx = (() => {
   let on = store.get('breeze.sound', true);
-  let volume = store.get('breeze.volume', 50); // 0–100; the middle is the old fixed level
+  let volume = store.get('breeze.volume', 25); // 0–100; 25 is the default (and where the slider snaps)
+  // Levels saved on the old, quieter scale would be far too loud on the new one, so they start over at 25 once.
+  if (!store.get('breeze.volumeScale2', false)) {
+    volume = 25;
+    store.set('breeze.volume', volume);
+    store.set('breeze.volumeScale2', true);
+  }
   let ctx: AudioContext | null = null;
   let master: GainNode | null = null;
   let lastAt = -Infinity; // when any sound last played, so a button that makes its own sound doesn't also click
 
-  const gainFor = (v: number) => v / 100;
+  // 25 plays twice as loud as the old fixed level did; the top of the slider is four times that.
+  const gainFor = (v: number) => v / 25;
 
   // Audio may only start after a gesture, so the context is made on the first one.
   function unlock(): void {
@@ -716,6 +733,13 @@ function demoApi(): BreezeApi {
       async setModel() { return true; },
       onEvent(cb) { agentListeners.push(cb); return () => { }; },
     },
+    team: {
+      async parse(text) { return { shared: text, tasks: [], unknown: [] }; },
+      async claim() { throw new Error('Teams need the desktop app'); },
+      async start() { throw new Error('Teams need the desktop app'); },
+      async stop() { throw new Error('Teams need the desktop app'); },
+      async undo() { throw new Error('Teams need the desktop app'); },
+    },
     git: {
       async status() {
         return {
@@ -865,6 +889,7 @@ const LINE_ICONS: Record<string, IconNode> = {
   down: [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]],
   chevronRight: [['path', { d: 'm9 18 6-6-6-6' }]],
   chevronDown: [['path', { d: 'm6 9 6 6 6-6' }]],
+  chevronLeft: [['path', { d: 'm15 18-6-6 6-6' }]],
   sparkles: [['path', { d: 'm12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z' }], ['path', { d: 'M5 3v4' }], ['path', { d: 'M19 17v4' }], ['path', { d: 'M3 5h4' }], ['path', { d: 'M17 19h4' }]],
   backspace: [['path', { d: 'M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }], ['path', { d: 'm12 9 6 6' }], ['path', { d: 'm18 9-6 6' }]],
   volume: [['path', { d: SPEAKER }], ['path', { d: 'M16 9a5 5 0 0 1 0 6' }], ['path', { d: 'M19.364 18.364a9 9 0 0 0 0-12.728' }]],
@@ -1493,7 +1518,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
   if (model) model.onchange = () => background(api.llm.setModel(model.value).then(() => {
     Object.assign(local() ?? {}, { version: model.value });
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`Ollama model · ${model.value}`);
   }));
   root.querySelector<HTMLElement>('[data-llm-off]')?.addEventListener('click', e => {
@@ -1528,13 +1553,13 @@ function bindAgentOptions(root: HTMLElement, onChange: () => void): void {
         await api.agent.setModel('codex', modelVal);
         if (targetAgent) targetAgent.version = modelVal;
         saveApp();
-        renderAgentPill();
+        renderAgentBar();
         toast(`Codex model · ${modelVal}`);
       } else if (agId === 'antigravity' || agId === 'claude') {
         await api.agent.setModel(agId, modelVal);
         if (targetAgent) targetAgent.version = modelVal;
         saveApp();
-        renderAgentPill();
+        renderAgentBar();
         toast(`${targetAgent?.name ?? agId} model · ${modelVal}`);
       }
     };
@@ -1599,7 +1624,7 @@ function renderDetection(): void {
 
   const summary = d.tools.filter(t => t.found || !t.optional).map(t => `${t.name.replace('.js', '').replace('C/C++', 'C')} ${t.found ? 'ready' : 'missing'}`).join(' · ');
   $('#sbTools').innerHTML = `<span class="${missing.length ? 'dot-warn' : 'dot-ok'}"></span> ${summary}`;
-  renderAgentPill();
+  renderAgentBar();
 }
 $('#rescan').onclick = () => { detectTools(true).catch(() => { /* the agent card shows the error */ }); };
 
@@ -1629,19 +1654,19 @@ async function applyModelAndEffort(a: DetectedAgent, model: string, effort: Effo
     await api.agent.setModel('codex', model, effort.toLowerCase());
     a.version = model;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`Codex model set to ${model} (${effort} effort)`);
   } else if (a.id === 'antigravity' || a.id === 'claude') {
     await api.agent.setModel(a.id, model, effort.toLowerCase());
     a.version = model;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`${a.name} model set to ${model} (${effort} effort)`);
   } else if (a.api) {
     await api.llm.setModel(model);
     a.version = model;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
     toast(`Ollama model set to ${model}`); // a local server has no effort setting
   }
 }
@@ -1701,38 +1726,120 @@ function updateComposerModelSelect(a: DetectedAgent | null): void {
     }
   };
 }
-function agentPillMenuItems(): MenuItem[] {
-  const items: MenuItem[] = [];
-  items.push({ label: 'Switch Agent:', enabled: () => false });
-  for (const ag of appState.detect?.agents ?? []) {
-    items.push({
-      label: ag.name,
-      icon: brandMark('menu-ico', ag.id, ag.name[0]),
-      checked: () => ag.id === appState.agent,
-      enabled: () => ag.found,
-      run: () => {
-        appState.agent = ag.id;
-        const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
-        if (curTab) curTab.agentId = ag.id;
-        saveApp();
-        renderAgentPill();
-        updateScmGenBtn();
-        toast(`Active agent: ${ag.name}`);
-      }
-    });
-  }
-  items.push({ sep: true }, { label: 'Manage agents', run: openAgentPicker });
-  return items;
+/* ----- Agent bar: one chip per installed agent; a chip inserts its @mention ----- */
+// Mention names must match src/main/mentions.js: the short name, the full name and the id, lowercased.
+const AGENT_SHORT_NAMES = new Map([['claude', 'Claude'], ['codex', 'Codex'], ['antigravity', 'Antigravity'], ['local', 'Local']]);
+function agentShortName(a: DetectedAgent): string {
+  return AGENT_SHORT_NAMES.get(a.id) || a.name;
+}
+function agentMentionNames(a: DetectedAgent): string[] {
+  return [...new Set([agentShortName(a), a.name, a.id].map(n => String(n).toLowerCase()))];
+}
+// An agent's short name by id, whether or not the last scan found it.
+function agentNameOf(id: string): string {
+  const a = appState.detect?.agents.find(x => x.id === id);
+  return a ? agentShortName(a) : AGENT_SHORT_NAMES.get(id) ?? id;
+}
+// The logo and short name that mark an agent's lines in a team chat.
+function agentBadge(agentId: string): string {
+  const name = agentNameOf(agentId);
+  return `<span class="agent-tag">${brandMark('agent-tag-logo', agentId, name[0] ?? '?')}<b>${esc(name)}</b></span>`;
 }
 
+function makeDefaultAgent(ag: DetectedAgent): void {
+  appState.agent = ag.id;
+  const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
+  if (curTab) curTab.agentId = ag.id;
+  saveApp();
+  renderAgentBar();
+  updateScmGenBtn();
+  toast(`Active agent: ${ag.name}`);
+}
+function agentChipMenuItems(ag: DetectedAgent): MenuItem[] {
+  return [
+    { label: 'Make default', checked: () => ag.id === appState.agent, enabled: () => ag.id !== appState.agent, run: () => makeDefaultAgent(ag) },
+    { sep: true },
+    { label: 'Manage agents', run: openAgentPicker },
+  ];
+}
+// Opens (or, if it is already open, closes) a popup under a chip.
+function openChipMenu(chip: HTMLElement, items: MenuItem[]): void {
+  if (chip.classList.contains('open') || (justClosedTrigger === chip && Date.now() - justClosedAt < 350)) {
+    closeMenu();
+    return;
+  }
+  closeMenu();
+  chip.classList.add('open');
+  const r = chip.getBoundingClientRect();
+  popupMenu(r.left, r.bottom + 4, items, () => chip.classList.remove('open'), chip);
+}
 
-function renderAgentPill(): void {
+function agentChipHtml(a: DetectedAgent, on: boolean): string {
+  const short = agentShortName(a);
+  const logo = BRAND_ICONS[a.id] ? `<img class="pill-logo" src="../../assets/icons/${BRAND_ICONS[a.id]}" alt="" draggable="false">` : '';
+  return `<button type="button" class="agent-chip${on ? ' on' : ''}" data-agent="${escAttr(a.id)}" aria-label="Mention @${escAttr(short)}" aria-pressed="${on}">${logo}<span class="chip-name">${esc(short)}</span><span class="chip-more" role="button" aria-label="Options for ${escAttr(short)}" aria-haspopup="menu">${svgIcon('chevronDown', 10)}</span></button>`;
+}
+
+// Chips that do not fit the bar move into a trailing "+N" chip.
+function fitAgentBar(): void {
+  const bar = $('#agentBar');
+  bar.querySelector('.chip-rest')?.remove();
+  const chips = $$('.agent-chip[data-agent]', bar);
+  chips.forEach(c => c.classList.remove('hidden'));
+  const avail = bar.clientWidth;
+  if (chips.length < 2 || avail <= 0) return;
+  const gap = Number.parseFloat(getComputedStyle(bar).columnGap) || 0;
+  const widths = chips.map(c => c.offsetWidth);
+  if (widths.reduce((sum, w) => sum + w, 0) + gap * (chips.length - 1) <= avail) return;
+  const rest = document.createElement('button');
+  rest.type = 'button';
+  rest.className = 'agent-chip chip-rest';
+  rest.setAttribute('aria-haspopup', 'menu');
+  rest.textContent = `+${chips.length}`; // the widest label it can get
+  bar.append(rest);
+  let used = rest.offsetWidth;
+  let keep = 0;
+  for (const w of widths) {
+    if (used + gap + w > avail) break;
+    used += gap + w;
+    keep++;
+  }
+  keep = Math.max(keep, 1);
+  const hiddenChips = chips.slice(keep);
+  hiddenChips.forEach(c => c.classList.add('hidden'));
+  rest.textContent = `+${hiddenChips.length}`;
+  rest.dataset.hidden = hiddenChips.map(c => c.dataset.agent).join(',');
+  rest.setAttribute('aria-label', `${hiddenChips.length} more agents`);
+}
+
+function renderAgentBar(): void {
   const a = selectedAgent();
-  const pill = $('#agentPill');
-  const logo = a && BRAND_ICONS[a.id] ? `<img class="pill-logo" src="../../assets/icons/${BRAND_ICONS[a.id]}" alt="" draggable="false">` : '';
-  pill.innerHTML = `${logo}<span>${esc(a ? a.name : 'Choose an agent')}</span>`;
-  pill.removeAttribute('title');
-  delete pill.dataset.tooltip;
+  const bar = $('#agentBar');
+  const found = (appState.detect?.agents ?? []).filter(x => x.found);
+  // The default agent comes first, so it is the last chip to be folded into "+N".
+  found.sort((x, y) => Number(y.id === a?.id) - Number(x.id === a?.id));
+  // Where each chip was, so a new default can glide to the front instead of jumping there.
+  const before = new Map($$<HTMLElement>('.agent-chip[data-agent]:not(.hidden)', bar).map(c => [c.dataset.agent, c.getBoundingClientRect().left]));
+  if (found.length) {
+    bar.innerHTML = found.map(x => agentChipHtml(x, x.id === a?.id)).join('');
+  } else {
+    bar.innerHTML = '<button type="button" class="agent-chip on chip-choose">Choose an agent</button>';
+  }
+  const prev = bar.dataset.current;
+  bar.dataset.current = a?.id ?? '';
+  const on = bar.querySelector<HTMLElement>('.agent-chip.on');
+  if (on && prev && prev !== bar.dataset.current) {
+    on.classList.add('agent-swap');
+    on.addEventListener('animationend', () => on.classList.remove('agent-swap'), { once: true });
+  }
+  fitAgentBar();
+  if (prev !== bar.dataset.current && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    for (const c of $$<HTMLElement>('.agent-chip[data-agent]:not(.hidden)', bar)) {
+      const x = before.get(c.dataset.agent);
+      const dx = x == null ? 0 : x - c.getBoundingClientRect().left;
+      if (dx) c.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+    }
+  }
   const model = a?.api && a.version ? ' · ' + a.version : '';
   const label = a ? a.name + model : 'Choose an agent';
   $('#boxModel').innerHTML = `${esc(label)}${svgIcon('chevronDown', 12)}`;
@@ -1742,17 +1849,41 @@ function renderAgentPill(): void {
   updateScmGenBtn();
 }
 
-$('#agentPill').onclick = e => {
-  const btn = e.currentTarget as HTMLElement;
-  if (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350)) {
-    closeMenu();
+$('#agentBar').addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  const chip = t.closest<HTMLElement>('.agent-chip');
+  if (!chip) return;
+  if (chip.classList.contains('chip-choose')) { closeMenu(); openAgentPicker(); return; }
+  if (chip.classList.contains('chip-rest')) {
+    const ids = (chip.dataset.hidden ?? '').split(',');
+    const hidden = (appState.detect?.agents ?? []).filter(x => ids.includes(x.id));
+    openChipMenu(chip, hidden.map(x => ({ label: agentShortName(x), icon: brandMark('menu-ico', x.id, x.name[0]), run: () => insertMention(x) })));
     return;
   }
+  const ag = appState.detect?.agents.find(x => x.id === chip.dataset.agent);
+  if (!ag) return;
+  if (t.closest('.chip-more')) { openChipMenu(chip, agentChipMenuItems(ag)); return; }
   closeMenu();
-  btn.classList.add('open');
-  const r = btn.getBoundingClientRect();
-  popupMenu(r.left, r.bottom + 4, agentPillMenuItems(), () => btn.classList.remove('open'), btn);
-};
+  insertMention(ag);
+});
+$('#agentBar').addEventListener('keydown', e => {
+  const chip = (e.target as HTMLElement).closest<HTMLElement>('.agent-chip[data-agent]');
+  const ag = chip && appState.detect?.agents.find(x => x.id === chip.dataset.agent);
+  if (chip && ag && e.key === 'ArrowDown') { e.preventDefault(); openChipMenu(chip, agentChipMenuItems(ag)); }
+});
+new ResizeObserver(fitAgentBar).observe($('#agentBar'));
+
+// Inserts "@<Short> " where the caret is in the agents panel's prompt (a space before it if the text there needs one).
+function insertMention(a: DetectedAgent): void {
+  const ta = SURFACES.ide.prompt;
+  const from = ta.selectionStart ?? ta.value.length;
+  const to = ta.selectionEnd ?? from;
+  const before = ta.value.slice(0, from);
+  const text = `${before && !/\s$/.test(before) ? ' ' : ''}@${agentShortName(a)} `;
+  ta.setRangeText(text, from, to, 'end');
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
 
 function openAgentPicker(): void {
   openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. A local LLM connects by its server address.</p>
@@ -2621,7 +2752,8 @@ const isDirty = (b?: EditorBuffer) => !!b && b.kind === 'text' && b.text !== b.s
 let sessionTimer: TimeoutId | undefined;
 let openTabs: string[] = [];
 let active: string | null = null;
-const locks: Record<string, AgentKey> = {};
+// The files agents are editing: the phase (for its colour) and the agent itself (a team has several).
+const locks: Record<string, { phase: AgentKey; agent: string }> = {};
 const added: Record<string, Set<number>> = {};
 let ctxPath: string | null = null;
 
@@ -4415,7 +4547,7 @@ function fileNameHtml(filename: string): string {
 function treeRow(e: DirEntry, p: string, depth: number, decor: ReturnType<typeof gitDecor>, enter: boolean): string {
   const open = e.dir && expanded.has(p);
   const lock = locks[p];
-  const lockTag = lock ? `<span class="lock tint-${lock}">${agentsDef[lock].name}</span>` : '';
+  const lockTag = lock ? `<span class="lock tint-${lock.phase}" title="${escAttr(`${agentNameOf(lock.agent)} is editing this`)}">${agentsDef[lock.phase].name}</span>` : '';
   const g = e.dir ? (decor.dirs.has(p) && 'has-changes') || '' : decor.files.get(p) ?? '';
   const isIgnored = isIgnoredPath(p, decor.ignored);
   const gitTag = !e.dir && g && !lock ? `<span class="gst">${GIT_LETTER[g] ?? ''}</span>` : '';
@@ -4897,7 +5029,7 @@ function tabHtml(n: string): string {
   const b = buffers.get(n);
   const cls = ['tab', n === active ? 'on' : '', isDirty(b) ? 'dirty' : '', b?.diags?.length ? 'has-err' : '', seenTabs.has(n) ? '' : 'enter'].filter(Boolean).join(' ');
   seenTabs.add(n);
-  const dot = lock ? `<span class="dot tint-${lock}"></span>` : '';
+  const dot = lock ? `<span class="dot tint-${lock.phase}" title="${escAttr(`${agentNameOf(lock.agent)} is editing this`)}"></span>` : '';
   const f = gitState.files?.find(x => x.path === n);
   const st = f && statusOf(f);
   const gitTag = st ? `<span class="gst ${st.cls}" title="${st.title}">${st.letter}</span>` : '';
@@ -8092,7 +8224,7 @@ document.addEventListener('mousedown', e => {
       closeMenu();
       return;
     }
-    if (!target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, #agentPill, [data-act="git.more"]')) {
+    if (!target.closest('.menu, .menubar, #settingsBtn, #boxSettings, .avatars, .dd-btn, #chatHistory, #boxHistory, #boxModel, #boxFolder, [data-act="git.more"]')) {
       closeMenu();
     }
   }
@@ -8121,7 +8253,7 @@ document.addEventListener('keydown', e => {
   if (menuKeys(e)) return;
   if (e.key === 'Escape') {
     if (vibeOn) { exitVibe(); return; }
-    if (modalOpen()) { closeModal(); return; }
+    if (modalOpen()) { dismissModal(); return; }
     if (findOpen) { closeFind(); activeText()?.ta.focus(); return; }
   }
   if (modalOpen() || vibeOn || $('#ide').classList.contains('hidden')) return;
@@ -8395,10 +8527,10 @@ function bindSettings(m: HTMLElement): void {
     appState.agent = ag.id;
     const curTab = surfaceTabs['ide']?.find(t => t.id === activeTabId['ide']);
     if (curTab) curTab.agentId = ag.id;
-    saveApp(); renderAgentPill(); updateScmGenBtn();
+    saveApp(); renderAgentBar(); updateScmGenBtn();
     refreshSettings();
   });
-  if ($('#sEffort', pane)) seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentPill(); refreshSettings(); });
+  if ($('#sEffort', pane)) seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentBar(); refreshSettings(); });
   $$('[data-agent-install]', pane).forEach(b => b.onclick = async () => {
     const ag = appState.detect?.agents.find(a => a.id === b.dataset.agentInstall);
     if (!ag) return;
@@ -8432,7 +8564,7 @@ function bindSettings(m: HTMLElement): void {
   });
   on('sDiscordDetails', () => { appState.discordDetails = !appState.discordDetails; saveApp(); queueDiscord(); refreshSettings(); });
   // Sound: drag or scroll to set the level, one tick when it settles so you hear it.
-  // Near 50 the knob snaps to 50; pushing on out of the snap zone turns the snap off until the drag (or scroll) ends.
+  // Near 25 (the default) the knob snaps to 25; pushing on out of the snap zone turns the snap off until the drag (or scroll) ends.
   const vol = $<HTMLInputElement>('#sVolume', pane);
   if (vol) {
     vol.style.setProperty('--fill', `${vol.value}%`);
@@ -8445,17 +8577,18 @@ function bindSettings(m: HTMLElement): void {
       $('#sVolumeVal', pane).textContent = `${v}%`;
       void setIcon($('#sVolumeIco', pane), volumeIcon(v));
     };
-    const near = (v: number) => Math.abs(v - 50) <= SNAP;
+    const SNAP_AT = 25;
+    const near = (v: number) => Math.abs(v - SNAP_AT) <= SNAP;
     const settle = (raw: number) => {
       if (snapped && !near(raw)) { snapped = false; snapArmed = false; }
-      if (snapArmed && near(raw)) { snapped = true; raw = 50; }
+      if (snapArmed && near(raw)) { snapped = true; raw = SNAP_AT; }
       show(raw);
     };
     const rearm = () => { snapArmed = true; snapped = false; };
     vol.oninput = () => settle(+vol.value);
     vol.onchange = () => { sfx.play('tick'); rearm(); };
     // The speaker mutes, and a second press brings back the level it had.
-    let unmuteTo = 50;
+    let unmuteTo = SNAP_AT;
     on('sVolumeIco', () => {
       const cur = +vol.value;
       if (cur) unmuteTo = cur;
@@ -8466,8 +8599,8 @@ function bindSettings(m: HTMLElement): void {
       e.preventDefault();
       const cur = +vol.value;
       const next = clamp(cur + (e.deltaY < 0 || e.deltaX > 0 ? 1 : -1), 0, 100);
-      // A tick away from a snapped 50 is a push out of the snap: let it through.
-      if (snapped && cur === 50) { snapped = false; snapArmed = false; show(next); }
+      // A tick away from a snapped 25 is a push out of the snap: let it through.
+      if (snapped && cur === SNAP_AT) { snapped = false; snapArmed = false; show(next); }
       else settle(next);
       clearTimeout(wheelIdle);
       wheelIdle = window.setTimeout(() => { sfx.play('tick'); rearm(); }, 450);
@@ -8485,7 +8618,12 @@ function bindSettings(m: HTMLElement): void {
   on('sAddAcct', () => addAccount());
   on('sSignOut', () => background(signOut().then(refreshSettings)));
   // Help
-  $$('[data-set-cmd]', pane).forEach(b => b.onclick = () => { const c = b.dataset.setCmd ?? ''; closeModal(); run(c); });
+  // A command that opens a modal replaces Settings and leads back to it; setup and reload close Settings first.
+  $$('[data-set-cmd]', pane).forEach(b => b.onclick = () => {
+    const c = b.dataset.setCmd ?? '';
+    if (c === 'help.setup' || c === 'win.reload') closeModal();
+    run(c);
+  });
 }
 // Redraws the open pane when something changes elsewhere (Discord connects, a feed signs in, …).
 function refreshSettings(): void {
@@ -8682,6 +8820,8 @@ interface Run {
   announce: boolean;
 }
 let agentRun: Run | null = null;
+// The team member whose event is being handled; addMsg gives its lines its logo and name. Null outside team tabs.
+let labelAgent: string | null = null;
 let lastRunFiles: string[] = [];
 
 interface AgentTabState {
@@ -8691,25 +8831,73 @@ interface AgentTabState {
   panel: HTMLElement;
   runId: number | null;
   run: Run | null;
-  session: string | null;
-  sessionAgent?: string | null; // the agent that started `session`: another agent can't resume it
+  // One resumable session per agent: a session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
+  sessions: Record<string, string>;
   agentId: string;
   uiMode: string;
   promptDraft: string;
   attachments: ImageAttachment[];
   historyId?: string;
   unreadDone?: boolean;
+  lastTeamId?: string;
+  agentTeam?: AgentTeamState;
+  // While a team is planning who does what (claim pass, then the split card); `runId` is -1 meanwhile.
+  teamClaim?: TeamClaimState;
+  // Send is waiting for the mention parse, so a second Enter does not send the prompt twice.
+  parsing?: boolean;
+}
+
+interface TeamClaimState {
+  members: { agentId: string; task: string }[];
+  line: HTMLElement;          // the "Planning who does what" line
+  cancelled: boolean;         // Stop was pressed: the team is stopped as soon as its id is known
+  teamId?: string;
+  removed?: Set<string>;      // members taken off on the split card
+  cancel?: () => void;        // set while the split card is open: Stop does what its Cancel does
+}
+
+// A team of agents building in parallel inside one chat tab (the UI is built on this in the next tasks).
+interface AgentTeamState {
+  id: string;
+  runs: Map<number, Run>;
+  pending: number;
+  names: Record<string, string>;
+  stripEl: HTMLElement;
+  finished?: Set<number>;     // runs whose done has arrived
+  failed?: Set<string>;       // members that did not finish (error or stopped)
+  crossings?: Set<string>;    // one key per agent and path that crossed (see crossingKey)
+  stopped?: boolean;          // the person stopped the team
+}
+
+// The tab (and run) a run id belongs to: a tab's own single run, or one member of its agent team.
+function findTabForRun(runId: number): { tab: AgentTabState; run: Run } | null {
+  for (const sName of (['ide', 'box'] as WorkMode[])) {
+    for (const tab of surfaceTabs[sName]) {
+      const run = tab.runId === runId ? tab.run : tab.agentTeam?.runs.get(runId);
+      if (run) return { tab, run };
+    }
+  }
+  return null;
 }
 
 const surfaceTabs: Record<WorkMode, AgentTabState[]> = { ide: [], box: [] };
 const activeTabId: Record<WorkMode, string> = { ide: '', box: '' };
 const createdTabIds = new Set<string>();
 
+// A tab is busy while a run, a team's claim pass (runId -1) or any member of its team is still going.
+function tabBusy(t: AgentTabState): boolean {
+  return t.runId != null || (t.agentTeam?.pending ?? 0) > 0;
+}
 function hasAnyActiveRun(): boolean {
   for (const list of Object.values(surfaceTabs)) {
-    if (list.some(t => t.runId != null)) return true;
+    if (list.some(tabBusy)) return true;
   }
   return false;
+}
+function refreshTabBusy(tab: AgentTabState): void {
+  const s = SURFACES[tab.surfaceName];
+  if (tab.id === activeTabId[tab.surfaceName]) updateTabBusyState(s, tab);
+  renderAgentTabs(s);
 }
 
 function getActiveTab(s: Surface = surface): AgentTabState {
@@ -8740,8 +8928,7 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
     panel: document.createElement('div'),
     runId: null,
     run: null,
-    session: session ?? null,
-    sessionAgent: session ? appState.agent : null,
+    sessions: session && appState.agent ? { [appState.agent]: session } : {},
     agentId: appState.agent || 'antigravity',
     uiMode: 'build',
     promptDraft: '',
@@ -8818,7 +9005,7 @@ function renderAgentTabs(s: Surface): void {
 
   list.forEach(t => {
     const isActive = t.id === curId;
-    const isRunning = t.runId != null;
+    const isRunning = tabBusy(t);
     let el = tabsList.querySelector<HTMLElement>(`[data-agent-tab="${t.id}"]`);
 
     if (!el) {
@@ -8898,10 +9085,11 @@ function switchAgentTab(s: Surface, tid: string): void {
   if (s.name === 'ide' && next.agentId && appState.agent !== next.agentId) {
     appState.agent = next.agentId;
     saveApp();
-    renderAgentPill();
+    renderAgentBar();
   }
 
   s.prompt.value = next.promptDraft || '';
+  mentionWarning(s);
   s.mode.value = 'build';
   attachmentsMap[s.name] = next.attachments || [];
   renderAttachments(s);
@@ -8918,9 +9106,8 @@ function closeAgentTab(s: Surface, tid: string): void {
   if (idx === -1) return;
   const tab = surfaceTabs[s.name][idx];
   archiveChatTab(s, tab);
-  if (tab.runId != null) {
-    background(api.agent.stop(tab.runId));
-  }
+  if (tabBusy(tab)) stopAgent(tab);
+  else if (tab.agentTeam || tab.lastTeamId) dropAgentTeam(tab); // its snapshots go with it
 
   const tabsList = s.name === 'box' ? $('#boxAgentTabsList') : $('#agentTabsList');
   const tabEl = tabsList?.querySelector<HTMLElement>(`[data-agent-tab="${tid}"]`);
@@ -8956,6 +9143,7 @@ function closeAgentTab(s: Surface, tid: string): void {
         tab.panel.classList.remove('active');
         nextTab.panel.classList.add('active');
         s.prompt.value = nextTab.promptDraft || '';
+        mentionWarning(s);
         s.mode.value = 'build';
         attachmentsMap[s.name] = nextTab.attachments || [];
         renderAttachments(s);
@@ -8998,7 +9186,7 @@ function closeAgentTab(s: Surface, tid: string): void {
 
 function updateTabBusyState(s: Surface, tab?: AgentTabState): void {
   const t = tab || getActiveTab(s);
-  const on = t.runId != null;
+  const on = tabBusy(t);
   s.send.classList.toggle('stop', on);
   void setIcon(s.send, on ? 'stop' : 'send');
   const span = $('span', s.send);
@@ -9035,6 +9223,12 @@ function addMsg(html: string, tab?: AgentTabState): HTMLElement {
   const d = document.createElement('div');
   d.innerHTML = html;
   const el = d.firstElementChild as HTMLElement;
+  if (labelAgent) {
+    el.dataset.agent = labelAgent;
+    // A tool line's first child is its icon, so the badge goes in front of it instead.
+    const head = el.classList.contains('tool-line') ? el : el.firstElementChild ?? el;
+    head.insertAdjacentHTML('afterbegin', agentBadge(labelAgent));
+  }
   const thinking = t.panel.querySelector('.thinking');
   if (thinking) {
     t.panel.insertBefore(el, thinking);
@@ -9063,7 +9257,9 @@ function agentMsg(k: AgentKey, html: string, tab?: AgentTabState): HTMLElement {
   const t = tab || getActiveTab(msgSurface);
   const { name, letter, tint } = speaker(k, SURFACES[t.surfaceName]);
   sfx.play('answer');
-  return addMsg(`<div class="msg"><div class="meta">${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> ${clockTime()}</div><div class="body">${html}</div></div>`, t);
+  // In a team the agent's badge (added by addMsg) names the speaker instead.
+  const who = labelAgent ? '' : `${brandMark('avatar mini', tint, letter)}<b>${esc(name)}</b> `;
+  return addMsg(`<div class="msg"><div class="meta">${who}${clockTime()}</div><div class="body">${html}</div></div>`, t);
 }
 
 function userMsg(text: string, attachments?: AgentAttachment[], tab?: AgentTabState): void {
@@ -9084,7 +9280,7 @@ function userMsg(text: string, attachments?: AgentAttachment[], tab?: AgentTabSt
     }).join('');
     imgHtml = `<div class="msg-attachments">${items}</div>`;
   }
-  const bodyText = text ? `<div>${esc(text).replaceAll('\n', '<br>')}</div>` : '';
+  const bodyText = text ? `<div>${(msgSurface.name === 'ide' ? mentionHtml(text) : esc(text)).replaceAll('\n', '<br>')}</div>` : '';
   addMsg(`<div class="msg user"><div class="meta"><b>${esc(user?.name ?? 'You')}</b> ${clockTime()}</div><div class="body">${bodyText}${imgHtml}</div></div>`, t);
 }
 
@@ -9205,10 +9401,11 @@ function toolLine(kind: string, label: string, tab?: AgentTabState): void {
 // The open chat is kept per project folder (and once for Breeze Box) so a reload brings it back.
 const chatScope = (s: Surface) => (s.name === 'box' ? 'box' : rootInfo?.root ?? '');
 const chatKey = (s: Surface = msgSurface) => `breeze.chat:${chatScope(s)}`;
-const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${chatScope(s)}:${appState.agent ?? ''}`;
+const agentSessionKey = (s: Surface = msgSurface, agent: string | null = appState.agent) => `breeze.agentSession:${chatScope(s)}:${agent ?? ''}`;
 
 /* ----- Chat history: "New chat" files the current conversation away; the clock button brings one back ----- */
-interface ChatEntry { id: string; title: string; at: number; html: string; agent: string | null; session: string | null; }
+// `sessions` is the current shape; an older entry has `session` (+ `agent`) instead, and openChat turns that into `sessions`.
+interface ChatEntry { id: string; title: string; at: number; html: string; agent: string | null; session: string | null; sessions?: Record<string, string>; }
 const historyKey = (s: Surface) => `breeze.history:${chatScope(s)}`;
 const chatIdKey = (s: Surface) => `breeze.chatId:${chatScope(s)}`;
 const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
@@ -9218,13 +9415,13 @@ const chatHistory = (s: Surface) => store.get<ChatEntry[]>(historyKey(s), []);
 function archiveChatTab(s: Surface, tab: AgentTabState): void {
   if (s.name === 'ide' && !rootInfo) return;
   if (tab.panel.querySelector('.empty') && !tab.panel.querySelector('.msg')) return;
-  const html = [...tab.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+  const html = [...tab.panel.children].filter(c => !c.classList.contains('thinking') && !c.classList.contains('team-strip')).map(c => c.outerHTML).join('');
   if (!html?.includes('class="msg')) return;
   if (!tab.historyId) tab.historyId = newChatId();
   const id = tab.historyId;
   const first = tab.panel.querySelector('.msg.user .body')?.textContent ?? tab.title ?? 'Chat';
   const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || tab.title || 'Chat';
-  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: tab.agentId || appState.agent, session: tab.session ?? null };
+  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: tab.agentId || appState.agent, session: tab.sessions[tab.agentId] ?? null, sessions: { ...tab.sessions } };
   let bytes = 0;
   const list = [entry, ...chatHistory(s).filter(e => e.id !== id)].filter(e => (bytes += e.html.length) < HISTORY_BYTES).slice(0, HISTORY_MAX);
   store.set(historyKey(s), list);
@@ -9239,7 +9436,7 @@ function archiveChat(s: Surface): void {
 function chatHtml(s: Surface): string {
   const t = getActiveTab(s);
   if (t.panel.querySelector('.empty')) return '';
-  return [...t.panel.children].filter(c => !c.classList.contains('thinking')).map(c => c.outerHTML).join('');
+  return [...t.panel.children].filter(c => !c.classList.contains('thinking') && !c.classList.contains('team-strip')).map(c => c.outerHTML).join('');
 }
 let chatTimer: TimeoutId | undefined;
 function saveChat(tab?: AgentTabState): void {
@@ -9293,10 +9490,11 @@ function openChat(s: Surface, e: ChatEntry): void {
   const tab = isCurEmpty ? cur : createAgentTab(s, e.title);
   tab.title = e.title;
   tab.historyId = e.id;
-  tab.session = (e.session && e.agent === appState.agent) ? e.session : null;
-  tab.sessionAgent = tab.session ? e.agent : null;
+  // An old entry kept one `session` with the `agent` that started it.
+  tab.sessions = e.sessions ? { ...e.sessions } : (e.session && e.agent ? { [e.agent]: e.session } : {});
   setSavedHtml(tab.panel, e.html);
   $$('[data-live]', tab.panel).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
+  $$('.team-claiming', tab.panel).forEach(el => el.classList.add('settled')); // saved mid-claim: stop its spinners
   switchAgentTab(s, tab.id);
   resetTeam();
   s.prompt.focus();
@@ -9557,10 +9755,128 @@ async function handleAgentDroppedFiles(dt: DataTransfer, s: Surface, tab?: Agent
   }
 }
 
+/* ----- "@" mentions in the agents panel's prompt: a menu of installed agents, and a warning for one that is not installed ----- */
+const MENTION_AT_CARET = /(^|\s)@([\w-]*)$/;
+let mentionList: { items: MenuItem[]; ids: string } | null = null;
+
+const mentionOpen = (): boolean => !!mentionList && openMenuIdx !== -1 && menuItems === mentionList.items;
+function closeMention(): void {
+  const open = mentionOpen();
+  mentionList = null;
+  if (open) closeMenu();
+}
+// Replaces the "@word" before the caret with "@<Short> ".
+function pickMention(a: DetectedAgent): void {
+  const ta = SURFACES.ide.prompt;
+  const caret = ta.selectionStart ?? ta.value.length;
+  const m = MENTION_AT_CARET.exec(ta.value.slice(0, caret));
+  const start = m ? caret - m[2].length - 1 : caret;
+  ta.setRangeText(`@${agentShortName(a)} `, start, caret, 'end');
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function updateMentionMenu(): void {
+  const ta = SURFACES.ide.prompt;
+  const m = MENTION_AT_CARET.exec(ta.value.slice(0, ta.selectionStart ?? 0));
+  const word = m ? m[2].toLowerCase() : '';
+  const matches = m ? (appState.detect?.agents ?? []).filter(a => a.found && agentMentionNames(a).some(n => n.startsWith(word))) : [];
+  if (!matches.length) { closeMention(); return; }
+  const ids = matches.map(a => a.id).join(',');
+  if (mentionOpen() && mentionList?.ids === ids) return; // the same agents are already listed
+  const items: MenuItem[] = matches.map(a => ({ label: agentShortName(a), icon: brandMark('menu-ico', a.id, a.name[0]), run: () => pickMention(a) }));
+  mentionList = { items, ids };
+  const r = ta.getBoundingClientRect();
+  popupMenu(r.left, r.top, items, () => { if (mentionList?.items === items) mentionList = null; }, ta);
+  const menu = document.querySelector<HTMLElement>('#menuRoot .menu');
+  if (menu) { // above the prompt, where the text being typed stays visible
+    menu.classList.add('up');
+    menu.style.top = `${Math.max(8, r.top - menu.offsetHeight - 6)}px`;
+  }
+  kbIdx = -1;
+  moveKbSelection(true);
+}
+// The menu is open: Up, Down, Enter, Tab and Escape belong to it. Registered before the send handler below, so Enter picks instead of sending.
+SURFACES.ide.prompt.addEventListener('keydown', e => {
+  if (!mentionOpen() || e.isComposing) return;
+  const own = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { own(); moveKbSelection(e.key === 'ArrowDown'); }
+  else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { own(); if (kbIdx >= 0) activateMenuItem(menuItems[kbIdx]); }
+  else if (e.key === 'Escape') { own(); closeMention(); }
+});
+SURFACES.ide.prompt.addEventListener('input', () => { mentionWarning(SURFACES.ide); updateMentionMenu(); });
+SURFACES.ide.prompt.addEventListener('keyup', e => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) updateMentionMenu(); });
+SURFACES.ide.prompt.addEventListener('click', updateMentionMenu);
+SURFACES.ide.prompt.addEventListener('blur', closeMention);
+
+// "@Codex" for an agent Breeze knows but that is not installed. Any other "@word" is plain text.
+function uninstalledMention(text: string): string | null {
+  const names = (appState.detect?.agents ?? []).flatMap(a => agentMentionNames(a).map(name => ({ name, a }))).sort((x, y) => y.name.length - x.name.length);
+  const re = /(^|\s)@/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const rest = text.slice(m.index + m[1].length + 1).toLowerCase();
+    const hit = names.find(n => rest.startsWith(n.name) && !/[\w-]/.test(rest[n.name.length] ?? ''));
+    if (hit && !hit.a.found) return `@${agentShortName(hit.a)} isn't installed`;
+  }
+  return null;
+}
+// Where each "@Agent" for an installed agent sits in `text`, as [start, end) pairs.
+function mentionRanges(text: string): [number, number][] {
+  const names = (appState.detect?.agents ?? []).filter(a => a.found).flatMap(agentMentionNames).sort((x, y) => y.length - x.length);
+  const out: [number, number][] = [];
+  if (!names.length) return out;
+  const re = /(^|\s)@/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const at = m.index + m[1].length;
+    const rest = text.slice(at + 1).toLowerCase();
+    const hit = names.find(n => rest.startsWith(n) && !/[\w-]/.test(rest[n.length] ?? ''));
+    if (hit) out.push([at, at + 1 + hit.length]);
+  }
+  return out;
+}
+// `text` escaped, with its mentions of installed agents wrapped in <span class="mention">.
+function mentionHtml(text: string): string {
+  let html = '';
+  let from = 0;
+  for (const [a, b] of mentionRanges(text)) {
+    html += `${esc(text.slice(from, a))}<span class="mention">${esc(text.slice(a, b))}</span>`;
+    from = b;
+  }
+  return html + esc(text.slice(from));
+}
+// The prompt's text is drawn by a layer behind it (the textarea's own text is transparent), so mentions can be blue.
+const promptHl = $('#promptHl');
+function syncPromptHl(): void {
+  const ta = SURFACES.ide.prompt;
+  // A trailing newline needs a character after it, or the layer is a line short.
+  promptHl.innerHTML = mentionHtml(ta.value) + (ta.value.endsWith('\n') ? ' ' : '');
+  promptHl.style.right = `${ta.offsetWidth - ta.clientWidth}px`; // clear of its scroll bar, if it shows one
+  promptHl.scrollTop = ta.scrollTop;
+}
+SURFACES.ide.prompt.addEventListener('scroll', () => { promptHl.scrollTop = SURFACES.ide.prompt.scrollTop; });
+new ResizeObserver(syncPromptHl).observe(SURFACES.ide.prompt);
+
+function mentionWarning(s: Surface): void {
+  if (s.name === 'ide') syncPromptHl();
+  const warn = s.name === 'ide' ? uninstalledMention(s.prompt.value) : null;
+  const anchor = s.prompt.closest<HTMLElement>('.prompt-field') ?? s.prompt;
+  let el = anchor.parentElement?.querySelector<HTMLElement>(':scope > .mention-warn') ?? null;
+  if (!el) {
+    if (!warn) return;
+    el = document.createElement('div');
+    el.className = 'mention-warn';
+    el.setAttribute('role', 'status');
+    anchor.insertAdjacentElement('afterend', el);
+  }
+  el.textContent = warn ?? '';
+  el.classList.toggle('hidden', !warn);
+}
+
 for (const s of Object.values(SURFACES)) {
   s.send.onclick = () => {
     const tab = getActiveTab(s);
-    if (tab.runId != null) stopAgent(tab);
+    if (tabBusy(tab)) stopAgent(tab);
     else void sendPrompt();
   };
   s.prompt.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } });
@@ -9644,6 +9960,21 @@ commands['agent.stop'] = () => stopAgent();
 
 function stopAgent(targetTab?: AgentTabState): void {
   const tab = targetTab || getActiveTab(surface);
+  const team = tab.agentTeam;
+  if (team && team.pending > 0) {
+    team.stopped = true;
+    background(api.team.stop(team.id));
+    return;
+  }
+  const claim = tab.teamClaim;
+  if (claim) {
+    if (claim.cancel) { claim.cancel(); return; } // the split card is open: same as its Cancel
+    if (claim.cancelled) return;
+    claim.cancelled = true;
+    if (claim.teamId) background(api.team.stop(claim.teamId)); // the team is starting
+    else setClaimLabel(claim.line, 'Stopping…'); // the claim pass has no team id yet: it is stopped when it returns
+    return;
+  }
   if (tab.runId != null) background(api.agent.stop(tab.runId));
 }
 
@@ -9655,19 +9986,35 @@ async function sendPrompt(): Promise<void> {
   const text = s.prompt.value.trim();
   const attachments = [...(attachmentsMap[s.name] || [])];
   const tab = getActiveTab(s);
-  if ((!text && !attachments.length) || tab.runId != null) return;
+  if ((!text && !attachments.length) || tabBusy(tab) || tab.parsing) return;
   const agent = selectedAgent();
   if (!agent) { openAgentPicker(); return; }
   if (s.name === 'ide' && !rootInfo) { toast('Open a folder first, so the agent knows what to work on'); return; }
 
+  // @mentions split an IDE prompt between agents. Breeze Box sends "@Codex" as plain text to its agent.
+  let parsed: TeamParse | null = null;
+  if (s.name === 'ide' && text.includes('@')) {
+    tab.parsing = true;
+    try { parsed = await api.team.parse(text); } catch { parsed = null; } finally { tab.parsing = false; }
+    if (tabBusy(tab)) return;
+    // Only an agent Breeze knows but that isn't installed stops the send; "@types/node" and the like are plain text.
+    const missing = parsed && uninstalledAgent(parsed.unknown);
+    if (missing) { toast(`${agentShortName(missing)} isn't installed. Install it from Settings → Agents`); return; }
+  }
+  const onScreen = getActiveTab(s) === tab; // the parse is async: the person may have switched tabs meanwhile
+
   msgSurface = s;
   sfx.play('send');
   const uiMode = 'build'; // no mode picker any more: the agent works with full tools and decides how to answer
-  s.prompt.value = '';
+  if (onScreen) {
+    s.prompt.value = '';
+    mentionWarning(s);
+    attachmentsMap[s.name] = [];
+    renderAttachments(s);
+  }
   tab.promptDraft = '';
-  attachmentsMap[s.name] = [];
   tab.attachments = [];
-  renderAttachments(s);
+  dropAgentTeam(tab);
 
   if (tab.panel.querySelector('.empty')) tab.panel.innerHTML = '';
 
@@ -9685,17 +10032,404 @@ async function sendPrompt(): Promise<void> {
   renderAgents();
   userMsg(text, attachments, tab);
 
-  let agentPrompt = text;
-  if (attachments.length) {
-    const fileHeaders = attachments.map(a => {
-      const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
-      if (kind === 'folder') return `[Attached folder: ${a.path || a.fileRel || a.name}]`;
-      if (kind === 'file') return `[Attached file: ${a.path || a.fileRel || a.name}]`;
-      return `[Attached image: ${a.fileRel || a.name}]`;
-    }).join('\n');
-    agentPrompt = fileHeaders + (text ? `\n\n${text}` : '\nPlease inspect the attached files/folders.');
+  const headers = attachmentHeaders(attachments);
+  const tasks = parsed?.tasks ?? [];
+  if (parsed && tasks.length >= 2) {
+    await startAgentTeam(tab, { ...parsed, shared: [headers, parsed.shared].filter(Boolean).join('\n\n') });
+    return;
   }
-  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', agentPrompt, uiMode, tab, true);
+  if (parsed && tasks.length === 1) {
+    const body = [parsed.shared, tasks[0].text].filter(Boolean).join('\n\n') || text;
+    await startAgentRun(tasks[0].agentId, MODES[uiMode] ?? 'plan', withAttachments(headers, body), uiMode, tab, true);
+    return;
+  }
+  await startAgentRun(agent.id, MODES[uiMode] ?? 'plan', withAttachments(headers, text), uiMode, tab, true);
+}
+
+function attachmentHeaders(attachments: AgentAttachment[]): string {
+  return attachments.map(a => {
+    const kind = a.kind || (a.dataUrl || (a.fileUrl && IMAGE_FILE.test(a.name)) ? 'image' : 'file');
+    if (kind === 'folder') return `[Attached folder: ${a.path || a.fileRel || a.name}]`;
+    if (kind === 'file') return `[Attached file: ${a.path || a.fileRel || a.name}]`;
+    return `[Attached image: ${a.fileRel || a.name}]`;
+  }).join('\n');
+}
+function withAttachments(headers: string, text: string): string {
+  if (!headers) return text;
+  return headers + (text ? `\n\n${text}` : '\nPlease inspect the attached files/folders.');
+}
+
+// The first word of a parse's `unknown` that names an agent Breeze knows but this computer doesn't have.
+function uninstalledAgent(words: string[]): DetectedAgent | null {
+  const agents = appState.detect?.agents ?? [];
+  for (const w of words) {
+    const a = agents.find(x => !x.found && agentMentionNames(x).includes(w.toLowerCase()));
+    if (a) return a;
+  }
+  return null;
+}
+
+// A new prompt ends the tab's last team: main drops it (and its snapshots), so the old summary's Undo says so.
+function dropAgentTeam(tab: AgentTabState): void {
+  const old = tab.agentTeam; // still here only when every member is done and its team-done has not come
+  const id = old?.id ?? tab.lastTeamId;
+  tab.agentTeam = undefined;
+  tab.lastTeamId = undefined;
+  tab.panel.querySelector(':scope > .team-strip')?.remove();
+  if (id) background(api.team.stop(id));
+}
+
+/* ----- Agent teams: two or more @mentioned agents split one prompt and build side by side ----- */
+function setClaimLabel(line: HTMLElement, text: string): void {
+  const lbl = line.querySelector<HTMLElement>('.lbl');
+  if (lbl) lbl.textContent = text;
+}
+function settleClaimLine(line: HTMLElement, text: string): void {
+  line.classList.add('settled');
+  setClaimLabel(line, text);
+}
+// The claim step is over (cancelled, failed, or handed to the build): the tab is free again unless a run took it.
+function endTeamClaim(tab: AgentTabState, claim: TeamClaimState): void {
+  if (tab.teamClaim !== claim) return;
+  tab.teamClaim = undefined;
+  if (tab.runId === -1) { tab.runId = null; tab.run = null; }
+  refreshTabBusy(tab);
+}
+
+async function startAgentTeam(tab: AgentTabState, parsed: TeamParse): Promise<void> {
+  const members = parsed.tasks.map(t => ({ agentId: t.agentId, task: t.text }));
+  const line = addMsg(`<div class="team-claiming" role="status">${members.map(m => `<span class="team-claim-member">${agentBadge(m.agentId)}</span>`).join('')}<span class="lbl">Planning who does what</span></div>`, tab);
+  const claimState: TeamClaimState = { members, line, cancelled: false };
+  tab.teamClaim = claimState;
+  tab.runId = -1; // busy: Send turns into Stop
+  tab.run = null;
+  refreshTabBusy(tab);
+  try {
+    await runAgentTeam(tab, parsed, claimState);
+  } catch (e) {
+    // Something unexpected broke the team flow: never leave the tab busy with nothing running.
+    if (tab.teamClaim === claimState) {
+      endTeamClaim(tab, claimState);
+      if (claimState.teamId) background(api.team.stop(claimState.teamId));
+    }
+    if (!line.classList.contains('settled')) settleClaimLine(line, 'Couldn’t plan who does what');
+    errorCard(errMsg(e), undefined, tab);
+  }
+}
+
+async function runAgentTeam(tab: AgentTabState, parsed: TeamParse, claimState: TeamClaimState): Promise<void> {
+  const { members, line } = claimState;
+  let claim: TeamClaimResult;
+  try {
+    claim = await api.team.claim({ shared: parsed.shared, members: members.map(m => ({ ...m, session: tab.sessions[m.agentId] ?? null })) });
+  } catch (e) {
+    endTeamClaim(tab, claimState);
+    if (claimState.cancelled) { settleClaimLine(line, 'Cancelled'); return; }
+    settleClaimLine(line, 'Couldn’t plan who does what');
+    errorCard(errMsg(e), undefined, tab);
+    return;
+  }
+  claimState.teamId = claim.teamId; // from here on, a stop or an unexpected error can stop the team
+  const s = SURFACES[tab.surfaceName];
+  for (const [agentId, id] of Object.entries(claim.sessions ?? {})) {
+    tab.sessions[agentId] = id;
+    store.set(agentSessionKey(s, agentId), id);
+  }
+  if (claimState.cancelled) {
+    background(api.team.stop(claim.teamId));
+    settleClaimLine(line, 'Cancelled');
+    endTeamClaim(tab, claimState);
+    return;
+  }
+  settleClaimLine(line, 'Planned who does what');
+  saveChat(tab);
+
+  const owners = await splitCard(tab, claim);
+  if (!owners) return; // Cancel: the card stopped the team and freed the tab
+
+  const removed = claimState.removed ?? new Set<string>();
+  const keep = members.filter(m => !removed.has(m.agentId));
+  if (keep.length < 2) {
+    // One agent left: it runs on its own, as if it had been the only one mentioned.
+    background(api.team.stop(claim.teamId));
+    endTeamClaim(tab, claimState);
+    const m = keep[0];
+    if (m) await startAgentRun(m.agentId, 'build', [parsed.shared, m.task].filter(Boolean).join('\n\n'), 'build', tab, true);
+    return;
+  }
+
+  let ids: Record<string, number>;
+  try {
+    ids = await api.team.start({ teamId: claim.teamId, owners, exclude: [...removed] }); // removed members never start
+  } catch (e) {
+    const cancelled = claimState.cancelled;
+    endTeamClaim(tab, claimState);
+    background(api.team.stop(claim.teamId));
+    if (cancelled) addMsg('<div class="handoff">Stopped by you</div>', tab);
+    else errorCard(errMsg(e), undefined, tab);
+    return;
+  }
+
+  const runs = new Map<number, Run>();
+  const names: Record<string, string> = {};
+  for (const m of keep) {
+    const id = ids[m.agentId];
+    if (typeof id !== 'number') continue;
+    runs.set(id, { id, tabId: tab.id, surfaceName: tab.surfaceName, agent: m.agentId, mode: 'build', uiMode: 'build', phase: 'builder', tools: 0, files: new Set(), plan: null, lastText: '', replied: false, announce: false });
+    names[m.agentId] = agentNameOf(m.agentId);
+  }
+  const shown = [...runs.values()];
+  tab.panel.querySelector(':scope > .team-strip')?.remove();
+  const stripEl = document.createElement('div');
+  stripEl.className = 'team-strip';
+  stripEl.setAttribute('role', 'status');
+  stripEl.innerHTML = shown.map(r => `<span class="team-chip working" data-team-chip="${escAttr(r.agent)}">${agentBadge(r.agent)}<span class="team-chip-state">working</span></span>`).join('');
+  tab.panel.prepend(stripEl);
+
+  const agentTeam: AgentTeamState = {
+    id: claim.teamId, runs, pending: runs.size, names, stripEl,
+    finished: new Set(), failed: new Set(), crossings: new Set(), stopped: claimState.cancelled,
+  };
+  tab.agentTeam = agentTeam;
+  tab.teamClaim = undefined;
+  const first = shown[0] ?? null;
+  tab.runId = first?.id ?? null;
+  tab.run = first;
+  agentRun = first;
+  refreshTabBusy(tab);
+  if (!runs.size) { errorCard('The team did not start.', undefined, tab); return; }
+
+  agentsDef.builder.used = 0;
+  setAgent('builder', 'working', 'Working as a team', 0);
+  const who = shown.map(r => names[r.agent]);
+  showThinking(`${who.slice(0, -1).join(', ')} and ${who[who.length - 1]} are working`, 'builder', tab);
+  // Events that came in before the run ids did; other runs' early events stay queued for their own runs.
+  for (let i = 0; i < earlyEvents.length;) {
+    const [runId, ev] = earlyEvents[i];
+    const run = runs.get(runId);
+    if (run && tab.agentTeam === agentTeam) { earlyEvents.splice(i, 1); handleAgentEvent(run, ev, tab); }
+    else i++;
+  }
+}
+
+// One column per member and a row per clash. Resolves with the owners on Start, null on Cancel.
+function splitCard(tab: AgentTabState, claim: TeamClaimResult): Promise<Record<string, string> | null> {
+  const c = tab.teamClaim;
+  const members = c?.members ?? Object.keys(claim.claims).map(agentId => ({ agentId, task: '' }));
+  const removed = new Set<string>();
+  if (c) c.removed = removed;
+  const oneLine = (t: string) => t.replaceAll(/\s+/g, ' ').trim();
+  const order = members.map(m => m.agentId);
+  const cols = members.map(m => {
+    const paths = claim.claims[m.agentId] ?? [];
+    let body: string;
+    if (claim.failed.includes(m.agentId)) {
+      body = `<p class="split-failed">Couldn't list its files. It will own files it touches first.</p><button type="button" class="link-btn" data-remove="${escAttr(m.agentId)}">Remove</button>`;
+    } else if (paths.length) {
+      body = `<ul class="split-paths">${paths.map(p => `<li><code>${esc(p)}</code></li>`).join('')}</ul>`;
+    } else {
+      body = '<p class="split-none">No files listed</p>';
+    }
+    const task = oneLine(m.task);
+    return `<div class="split-col" data-col="${escAttr(m.agentId)}">${agentBadge(m.agentId)}<div class="split-task" title="${escAttr(task)}">${esc(task || 'No task')}</div>${body}</div>`;
+  }).join('');
+  // The first-mentioned agent is picked by default.
+  const clashes = claim.clashes.map(k => ({ path: k.path, agents: order.filter(a => k.agents.includes(a)) })).filter(k => k.agents.length);
+  const rows = clashes.map((k, i) => `<div class="split-clash" data-clash="${i}"><code>${esc(k.path)}</code><div class="seg" role="radiogroup" aria-label="${escAttr(`Who owns ${k.path}`)}">${k.agents.map((a, j) => `<button type="button" role="radio" class="${j ? '' : 'on'}" aria-checked="${j ? 'false' : 'true'}" data-pick="${escAttr(a)}">${esc(agentNameOf(a))}</button>`).join('')}</div></div>`).join('');
+  const clashHtml = rows ? `<div class="split-clashes"><p>More than one agent wants these. Pick who owns each:</p>${rows}</div>` : '';
+  const el = addMsg(`<div class="card team-split"><h5>${svgIcon('columns', 14)} Who does what</h5><div class="split-cols">${cols}</div>${clashHtml}<div class="row" data-live><button class="btn btn-primary btn-sm" data-split="start">Start</button><button class="btn btn-sm" data-split="cancel">Cancel</button></div></div>`, tab);
+
+  $$<HTMLButtonElement>('.seg button', el).forEach(b => b.onclick = () => {
+    for (const o of $$<HTMLButtonElement>('button', b.parentElement!)) {
+      o.classList.toggle('on', o === b);
+      o.setAttribute('aria-checked', String(o === b));
+    }
+  });
+  const removeLinks = () => $$<HTMLButtonElement>('[data-remove]', el);
+  removeLinks().forEach(b => b.onclick = () => {
+    const id = b.dataset.remove ?? '';
+    removed.add(id);
+    el.querySelector(`[data-col="${CSS.escape(id)}"]`)?.classList.add('removed');
+    b.outerHTML = '<span class="split-removed">Removed</span>';
+    // Someone has to do the work: the last member left can't be removed.
+    if (members.length - removed.size <= 1) removeLinks().forEach(x => x.remove());
+    saveChat(tab);
+  });
+
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (owners: Record<string, string> | null, label: string) => {
+      if (settled) return;
+      settled = true;
+      if (c) c.cancel = undefined;
+      el.querySelector('[data-live]')?.replaceWith(Object.assign(document.createElement('div'), { className: 'resolved', textContent: label }));
+      $$<HTMLButtonElement>('button', el).forEach(b => { b.disabled = true; });
+      removeLinks().forEach(x => x.remove());
+      saveChat(tab);
+      resolve(owners);
+    };
+    const cancel = () => {
+      background(api.team.stop(claim.teamId));
+      if (c) endTeamClaim(tab, c);
+      else refreshTabBusy(tab);
+      finish(null, '✕ Cancelled');
+    };
+    if (c) c.cancel = cancel;
+    $<HTMLButtonElement>('[data-split="cancel"]', el).onclick = cancel;
+    $<HTMLButtonElement>('[data-split="start"]', el).onclick = () => {
+      // Every claimed path goes to its claimer (first claim wins), then each clash to the agent picked for it.
+      const owners = new Map<string, string>();
+      for (const m of members) {
+        if (removed.has(m.agentId)) continue;
+        for (const p of claim.claims[m.agentId] ?? []) if (!owners.has(p)) owners.set(p, m.agentId);
+      }
+      clashes.forEach((k, i) => {
+        const pick = el.querySelector<HTMLElement>(`[data-clash="${i}"] button.on`)?.dataset.pick;
+        if (pick && !removed.has(pick)) owners.set(k.path, pick);
+      });
+      sfx.play('approve');
+      finish(Object.fromEntries(owners), '✓ Started');
+    };
+  });
+}
+
+// The key for a crossing in AgentTeamState.crossings.
+function crossingKey(agent: string, path: string): string {
+  return `${agent}|${path}`;
+}
+
+function crossingCard(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  const team = tab.agentTeam;
+  if (!team) return;
+  const who = ev.agent ?? r.agent;
+  const name = team.names[who] ?? agentNameOf(who);
+  const owner = ev.owner ? team.names[ev.owner] ?? agentNameOf(ev.owner) : 'a teammate';
+  const path = ev.path ?? '';
+  team.crossings?.add(crossingKey(who, path));
+  const at = `<code>${esc(path)}</code> (${esc(owner)}'s)`;
+  let head: string;
+  if (ev.blocked) head = `${esc(name)} tried to edit ${at} and was stopped.`;
+  else if (ev.error) head = `${esc(name)} tried to edit ${at}.`; // it was not put back: the line below says why
+  else head = `${esc(name)} tried to edit ${at}. Breeze put it back.`;
+  const failed = ev.error ? `<p class="crossing-error">${esc(`Breeze couldn't put it back: ${ev.error}`)}</p><div class="row" data-live><button class="btn btn-sm" data-crossing-undo>Undo</button></div>` : '';
+  sfx.play('tool');
+  const el = addMsg(`<div class="card crossing"><h5>${svgIcon('alert', 14)} Crossing</h5><p>${head}</p>${failed}</div>`, tab);
+  const undo = el.querySelector<HTMLButtonElement>('[data-crossing-undo]');
+  if (undo) undo.onclick = () => undoTeamFile(team.id, path, undo, tab);
+}
+
+// Puts one file back from the team's snapshot. A finished (dropped) team rejects, and the toast says so.
+function undoTeamFile(teamId: string, path: string, btn: HTMLButtonElement, tab: AgentTabState): void {
+  const live = btn.closest<HTMLElement>('[data-live]');
+  btn.disabled = true;
+  api.team.undo({ teamId, path }).then(() => {
+    live?.replaceWith(Object.assign(document.createElement('div'), { className: 'resolved', textContent: '✓ Undone' }));
+    const b = buffers.get(path);
+    if (b?.kind === 'text' && !holdsUserEdits(b)) void reloadText(b);
+    renderTree(); queueGitRefresh();
+    saveChat(tab);
+  }, e => {
+    btn.disabled = false;
+    toast(errMsg(e));
+  });
+}
+
+function teamSummary(tab: AgentTabState, team: AgentTeamState, ev: AgentEvent): void {
+  const shown = [...team.runs.values()];
+  const crossed = team.crossings ?? new Set<string>();
+  const memberRows = shown.map(r => {
+    const files = [...r.files].filter(p => !crossed.has(crossingKey(r.agent, p))); // a crossing was put back
+    let what: string;
+    if (team.failed?.has(r.agent)) what = '<span class="ts-unfinished">not finished</span>';
+    else if (files.length) what = files.map(p => `<code>${esc(p)}</code>`).join('');
+    else what = '<span class="ts-none">No files changed</span>';
+    return `<div class="ts-member">${agentBadge(r.agent)}<div class="ts-files">${what}</div></div>`;
+  }).join('');
+  const crossings = `<p class="ts-crossings">${crossed.size ? plural(crossed.size, 'crossing') : 'No crossings'}</p>`;
+  const notes = Object.entries(ev.notes ?? {}).flatMap(([from, to]) => Object.entries(to ?? {}).map(([toName, text]) =>
+    `<li>${esc(`${team.names[from] ?? agentNameOf(from)} → ${toName}: ${text}`).replaceAll('\n', '<br>')}</li>`));
+  const notesHtml = notes.length ? `<ul class="ts-notes">${notes.join('')}</ul>` : '';
+  const changed = (ev.changed ?? []).map(p => `<div class="ts-changed" data-path="${escAttr(p)}"><code>${esc(p)}</code><div class="row" data-live><button class="btn btn-sm" data-ts="undo">Undo</button><button class="btn btn-sm" data-ts="keep">Keep</button></div></div>`).join('');
+  const changedHtml = changed ? `<div class="ts-changes"><p>These files changed, but no agent said it edited them:</p>${changed}</div>` : '';
+  const skipped = ev.skipped?.length ? `<p class="ts-skipped">Not protected (too large): ${ev.skipped.map(p => `<code>${esc(p)}</code>`).join(', ')}</p>` : '';
+  const error = ev.error ? `<p class="ts-error">${esc(`Breeze couldn't check for other changes: ${ev.error}`)}</p>` : '';
+  const trouble = !!team.failed?.size || !!team.stopped;
+  let title = 'Team finished';
+  if (team.stopped) title = 'Team stopped';
+  else if (trouble) title = 'Team finished, with problems';
+  const el = addMsg(`<div class="card team-summary${trouble ? ' trouble' : ''}"><h5>${svgIcon(trouble ? 'alert' : 'check', 14)} ${title}</h5><div class="ts-members">${memberRows}</div>${crossings}${notesHtml}${changedHtml}${skipped}${error}</div>`, tab);
+  $$<HTMLElement>('.ts-changed', el).forEach(row => {
+    const path = row.dataset.path ?? '';
+    const undo = row.querySelector<HTMLButtonElement>('[data-ts="undo"]');
+    const keep = row.querySelector<HTMLButtonElement>('[data-ts="keep"]');
+    if (undo) undo.onclick = () => undoTeamFile(team.id, path, undo, tab);
+    if (keep) keep.onclick = () => {
+      row.querySelector('[data-live]')?.replaceWith(Object.assign(document.createElement('div'), { className: 'resolved', textContent: '✓ Kept' }));
+      saveChat(tab);
+    };
+  });
+}
+
+// One member's done. The tab stays busy (and its locks and thinking line stay) until every member is done.
+function finishTeamMember(r: Run, ev: AgentEvent, tab: AgentTabState, team: AgentTeamState): void {
+  const finished = team.finished ??= new Set();
+  if (finished.has(r.id)) return;
+  finished.add(r.id);
+  if (agentRun?.id === r.id) agentRun = null;
+  const ok = !!ev.ok && !ev.stopped;
+  if (!ok) (team.failed ??= new Set()).add(r.agent);
+  const chip = team.stripEl.querySelector<HTMLElement>(`[data-team-chip="${CSS.escape(r.agent)}"]`);
+  if (chip) {
+    chip.classList.remove('working');
+    chip.classList.add(ok ? 'done' : 'failed');
+    const state = chip.querySelector('.team-chip-state');
+    if (state) state.textContent = ok ? 'done' : ev.stopped ? 'stopped' : 'failed';
+  }
+  for (const [p, l] of Object.entries(locks)) if (l.agent === r.agent) delete locks[p];
+  renderTree(); renderTabs();
+  queueGitRefresh();
+  team.pending = Math.max(0, team.pending - 1);
+  if (team.pending > 0) return;
+
+  // Every member is done. The summary comes with team-done; the tab is free now either way.
+  if (tab.agentTeam === team) { tab.runId = null; tab.run = null; }
+  hideThinking(tab);
+  for (const k of Object.keys(locks)) delete locks[k];
+  renderTree(); renderTabs();
+  refreshTabBusy(tab);
+  const all = [...team.runs.values()];
+  lastRunFiles = [...new Set(all.flatMap(x => [...x.files]))];
+  const tools = all.reduce((n, x) => n + x.tools, 0);
+  const allOk = !team.failed?.size && !team.stopped;
+  const label = labelAgent;
+  labelAgent = null; // these lines are the team's, not the last member's
+  if (team.stopped) {
+    addMsg('<div class="handoff">Stopped by you</div>', tab);
+    setAgent('builder', 'idle', 'Stopped', tools);
+  } else if (!allOk) {
+    setAgent('builder', 'idle', 'Stopped with an error', tools);
+  } else {
+    setAgent('builder', 'done', lastRunFiles.length ? `Changed ${plural(lastRunFiles.length, 'file')}` : 'Answered', tools);
+    sfx.play('success');
+  }
+  labelAgent = label;
+  if (!hasAnyActiveRun()) vibeDone(allOk);
+  const s = SURFACES[tab.surfaceName];
+  s.prompt.placeholder = 'Describe what you want to build';
+  if (lastRunFiles.length && running) void reloadPreview();
+}
+
+// team-done comes once on every member's run: the first one shows the summary and ends the team.
+function onTeamDone(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  const team = tab.agentTeam;
+  if (!team || !team.runs.has(r.id) || (ev.teamId && ev.teamId !== team.id)) return;
+  // Main sends it after every member's done; should one be missing, that member did not finish.
+  for (const run of team.runs.values()) if (!team.finished?.has(run.id)) finishTeamMember(run, { t: 'done', ok: false }, tab, team);
+  teamSummary(tab, team, ev);
+  tab.lastTeamId = team.id;
+  tab.agentTeam = undefined;
+  if (tab.runId != null && team.runs.has(tab.runId)) { tab.runId = null; tab.run = null; }
+  refreshTabBusy(tab);
 }
 
 async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, uiMode: string, tab: AgentTabState, announce = false): Promise<void> {
@@ -9707,9 +10441,8 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
 
   try {
     const box = tab.surfaceName === 'box';
-    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
-    if (tab.sessionAgent !== agentId) tab.session = null;
-    const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.session, box });
+    // Each agent resumes only its own session (a Codex thread id means nothing to Claude Code).
+    const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.sessions[agentId] ?? null, box });
     const run: Run = {
       id,
       tabId: tab.id,
@@ -9755,7 +10488,7 @@ function errorCard(text: string, hint?: string, tab?: AgentTabState): void {
 
 function onAgentFile(r: Run, path: string): void {
   r.files.add(path);
-  locks[path] = r.phase;
+  locks[path] = { phase: r.phase, agent: r.agent };
   renderTree(); renderTabs();
   queueGitRefresh();
   if (r.surfaceName === 'ide') background(openAgentFile(path));
@@ -9787,11 +10520,10 @@ function onFirstReply(r: Run, tab: AgentTabState): void {
 }
 
 const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab: AgentTabState) => void>> = {
-  session: (_r, ev, tab) => {
+  session: (r, ev, tab) => {
     if (ev.id) {
-      tab.session = ev.id;
-      tab.sessionAgent = tab.agentId;
-      store.set(agentSessionKey(SURFACES[tab.surfaceName]), ev.id);
+      tab.sessions[r.agent] = ev.id;
+      store.set(agentSessionKey(SURFACES[tab.surfaceName], r.agent), ev.id);
     }
   },
   text: (r, ev, tab) => {
@@ -9841,23 +10573,28 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
   },
   error: (r, ev, tab) => onAgentError(r, ev, tab),
   done: (r, ev, tab) => finishRun(r, ev, tab),
+  crossing: (r, ev, tab) => crossingCard(r, ev, tab),
+  'team-done': (r, ev, tab) => onTeamDone(r, ev, tab),
 };
 
 function handleAgentEvent(r: Run, ev: AgentEvent, tab: AgentTabState): void {
-  if (!r.replied && ev.t !== 'session' && ev.t !== 'done') onFirstReply(r, tab);
-  AGENT_EVENTS[ev.t]?.(r, ev, tab);
+  const team = tab.agentTeam?.runs.has(r.id) ? tab.agentTeam : undefined;
+  if (!r.replied && ev.t !== 'session' && ev.t !== 'done' && ev.t !== 'team-done') onFirstReply(r, tab);
+  const prev = labelAgent;
+  labelAgent = team && ev.t !== 'team-done' ? r.agent : null;
+  try {
+    AGENT_EVENTS[ev.t]?.(r, ev, tab);
+  } finally {
+    labelAgent = prev;
+  }
 }
 
 const earlyEvents: [number, AgentEvent][] = [];
 api.agent.onEvent((runId, ev) => {
-  let foundTab: AgentTabState | undefined;
-  for (const sName of (['ide', 'box'] as WorkMode[])) {
-    const t = surfaceTabs[sName].find(x => x.runId === runId);
-    if (t) { foundTab = t; break; }
-  }
-  if (foundTab?.run) {
-    handleAgentEvent(foundTab.run, ev, foundTab);
-  } else if (earlyEvents.length < 200) {
+  const found = findTabForRun(runId);
+  if (found) {
+    handleAgentEvent(found.run, ev, found.tab);
+  } else if (ev.t !== 'team-done' && earlyEvents.length < 200) { // a team-done nobody is waiting for: already handled, or the tab moved on
     earlyEvents.push([runId, ev]);
   }
 });
@@ -9896,6 +10633,7 @@ function showPlan(r: Run, tab: AgentTabState): void {
 }
 
 function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
+  if (tab.agentTeam?.runs.has(r.id)) { finishTeamMember(r, ev, tab, tab.agentTeam); return; }
   tab.runId = null;
   tab.run = null;
   if (agentRun?.id === r.id) agentRun = null;
@@ -10921,7 +11659,7 @@ function enterMode(mode: WorkMode): void {
   if (mode === 'ide') { showIde(); return; }
   swapScreen('#box');
   useSurface('box');
-  renderUser(); renderAgentPill(); renderBoxFolder();
+  renderUser(); renderAgentBar(); renderBoxFolder();
   // Box lists every agent Breeze found, so look for them if that hasn't happened yet.
   if (!appState.detect) detectTools().catch(() => toast('Could not look for agents on this computer'));
   if (!SURFACES.box.chat.children.length) restoreChat(SURFACES.box);
@@ -10954,7 +11692,7 @@ function boxAgentItems(): MenuItem[] {
       run: () => {
         appState.agent = ag.id;
         saveApp();
-        renderAgentPill();
+        renderAgentBar();
         if (SURFACES.box.chat.querySelector('.empty')) emptyChat(SURFACES.box);
         toast(`Breeze Box now uses ${ag.name}`);
       },
@@ -11220,15 +11958,21 @@ function staggerModal(m: HTMLElement): void {
   const kids = [...m.children];
   staggerIn(kids.length === 1 ? kids[0].children : kids);
 }
+// A modal opened from Settings (or from a modal that was) leads back there: it gets a "Settings" back button,
+// and dismissing it (Esc, its close or cancel button, a click outside) reopens Settings on the same page.
+let modalBackToSettings = false;
 function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () => void, place: 'center' | 'top' = 'center'): void {
+  const back = !html.includes('settings-modal') && (!!settingsRoot() || modalBackToSettings);
   closeModal();
   $$('#modalRoot .scrim.closing').forEach(x => x.remove());
   const top = place === 'top';
-  $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`);
+  const backBtn = back ? `<button type="button" class="modal-back" data-back aria-label="Back to Settings">${svgIcon('chevronLeft', 14)}<span>Settings</span></button>` : '';
+  $('#modalRoot').insertAdjacentHTML('beforeend', `<div class="scrim ${top ? 'top' : ''}"><div class="modal ${top ? 'wide' : ''}" role="dialog" aria-modal="true">${backBtn}${html}</div></div>`);
   const m = $('#modalRoot .scrim:not(.closing) .modal');
   modalOnClose = onClose ?? null;
-  $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) closeModal(); };
-  $$('[data-close]', m).forEach(b => b.onclick = closeModal);
+  modalBackToSettings = back;
+  $('#modalRoot .scrim:not(.closing)').onmousedown = e => { if ((e.target as HTMLElement).classList.contains('scrim')) dismissModal(); };
+  $$('[data-close], [data-back]', m).forEach(b => b.onclick = dismissModal);
   const owner = popOwner();
   if (owner) growFrom(m, owner);
   bind?.(m);
@@ -11236,11 +11980,18 @@ function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () =
 }
 function closeModal(): void {
   const scrim = $('#modalRoot .scrim:not(.closing)');
+  modalBackToSettings = false;
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
   setTimeout(() => scrim.remove(), scrim.querySelector('.settings-shell') ? 460 : 380);
   const cb = modalOnClose; modalOnClose = null; cb?.();
+}
+// Closing without acting on the modal: one opened from Settings goes back there.
+function dismissModal(): void {
+  const back = modalBackToSettings;
+  closeModal();
+  if (back) openSettings($('#settingsBtn'));
 }
 function bindToasts(root: ParentNode = document): void {
   $$('[data-toast]', root).forEach(b => b.onclick = () => toast(b.dataset.toast ?? ''));
@@ -11322,7 +12073,7 @@ function initTooltip(): void {
     }
 
     // Never show tooltips on agents tab, agent pill, or agent tab items
-    if (target.closest('#agentTabsBar, #boxAgentTabsBar, #agentPill, #agentCount, #tglAgents, .agent-tab, .agent-tabs-list')) {
+    if (target.closest('#agentTabsBar, #boxAgentTabsBar, .agent-bar, #agentCount, #tglAgents, .agent-tab, .agent-tabs-list')) {
       if (target.hasAttribute('title')) target.removeAttribute('title');
       hideTooltip();
       return;

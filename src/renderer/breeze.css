@@ -718,7 +718,6 @@ button {
 .ob-dots span.on {
   width: 20px;
   background: var(--blue);
-  box-shadow: 0 0 10px rgba(0, 94, 255, .6);
 }
 
 .signin-btns {
@@ -813,9 +812,13 @@ button {
   font: inherit;
 }
 
-.input:focus {
+/* Text boxes stay flat when clicked into: no ring, glow or coloured edge; the caret shows where you type. */
+.input:focus,
+input:not([type="checkbox"], [type="radio"], [type="range"]):focus-visible,
+textarea:focus-visible {
   outline: none;
-  border-color: var(--blue);
+  border-color: var(--line);
+  box-shadow: none;
 }
 
 .pill {
@@ -965,7 +968,7 @@ button {
   line-height: 1.2;
 }
 
-/* Animated active underline with smooth sweep, gradient flow, and ambient glow */
+/* Animated active underline with smooth sweep and gradient flow */
 .agent-opt .get .get-label::after {
   content: "";
   position: absolute;
@@ -979,7 +982,6 @@ button {
   transform: scaleX(0);
   transform-origin: left;
   opacity: 0;
-  box-shadow: 0 0 8px rgba(122, 169, 255, 0.55);
   transition: transform .26s cubic-bezier(.16, 1, .3, 1),
               opacity .2s ease;
 }
@@ -1013,7 +1015,6 @@ button {
   transform: scaleX(0);
   transform-origin: left;
   opacity: 0;
-  box-shadow: 0 0 8px rgba(122, 169, 255, 0.55);
   transition: transform .26s cubic-bezier(.16, 1, .3, 1),
               opacity .2s ease;
 }
@@ -1181,7 +1182,7 @@ button {
   align-items: center;
   gap: 28px;
   width: 100%;
-  padding: 4px 12px 4px 26px;
+  padding: 3px 12px 3px 26px;
   border: none;
   border-radius: 5px;
   background: none;
@@ -1194,6 +1195,17 @@ button {
 .menu-item.kb {
   background: var(--blue);
   color: #fff;
+}
+
+/* A little space between rows, so two lit rows never run together. */
+.menu-item + .menu-item {
+  margin-top: 2px;
+}
+
+/* The pointer wins over the keyboard: only the row under it is lit. */
+.menu:has(.menu-item:hover:not(:disabled)) .menu-item.kb:not(:hover) {
+  background: none;
+  color: #cccccc;
 }
 
 .menu-item:disabled {
@@ -2120,7 +2132,6 @@ svg.ico-svg:active {
   margin-top: 1px;
   border-radius: 1px;
   background: #7aa9ff;
-  box-shadow: 0 0 8px rgba(122, 169, 255, .8);
   pointer-events: none;
 }
 
@@ -2417,7 +2428,6 @@ svg.ico-svg:active {
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--ok);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, .2);
 }
 
 .preview-frame {
@@ -2520,8 +2530,9 @@ svg.ico-svg:active {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 3px 0 9px;
-  height: 22px;
+  --tab-h: 22px;
+  padding: 0 var(--tab-x-gap) 0 9px;
+  height: var(--tab-h);
   border-radius: 5px;
   background: transparent;
   color: var(--text-3);
@@ -2654,7 +2665,6 @@ svg.ico-svg:active {
 .term-tab.busy .term-tab-dot {
   background: var(--c-builder);
   opacity: 1;
-  box-shadow: 0 0 6px var(--c-builder);
   animation: pulseDot 1.4s infinite alternate;
 }
 
@@ -2667,9 +2677,7 @@ svg.ico-svg:active {
 }
 
 .term-tab-close {
-  /* Mirrors the agent tab X */
-  width: 18px;
-  height: 18px;
+  /* Mirrors the agent tab X; its size comes from the shared tab X rule below the agent tabs. */
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
@@ -2692,24 +2700,6 @@ svg.ico-svg:active {
 .term-tab-close .tab-close-icon {
   display: block;
   pointer-events: none;
-}
-
-.term-tab:hover .term-tab-close,
-.term-tab.active .term-tab-close {
-  opacity: .7;
-  transform: scale(1);
-}
-
-.term-tab .term-tab-close:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  transform: scale(1.05);
-}
-
-.term-tab .term-tab-close:active {
-  background: rgba(255, 255, 255, 0.12);
-  transform: scale(0.92);
 }
 
 .term-new-btn {
@@ -2971,7 +2961,7 @@ body.resizing-h .term-body {
 .agent-cards {
   display: grid;
   gap: 6px;
-  padding: 0 10px 10px;
+  padding: 10px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -3245,6 +3235,47 @@ body.resizing-h .term-body {
   resize: none;
   outline: none;
   min-height: 40px;
+}
+
+.prompt-field {
+  position: relative;
+}
+
+.prompt-field textarea,
+.prompt-hl {
+  padding: 2px;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
+.prompt-field textarea {
+  position: relative;
+  display: block;
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.prompt-field textarea::placeholder {
+  color: var(--text-3);
+}
+
+.prompt-hl {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+.mention {
+  color: #7aa9ff;
 }
 
 .composer textarea:focus,
@@ -3621,6 +3652,26 @@ body.resizing-h .term-body {
 }
 
 /* ---------- modal ---------- */
+/* "‹ Settings" at the top of a modal opened from Settings. */
+.modal-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: -6px 0 10px -6px;
+  padding: 3px 8px 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  transition: background .15s ease, color .15s ease;
+}
+
+.modal-back:hover {
+  background: var(--bg-3);
+  color: var(--text);
+}
+
 .scrim {
   position: fixed;
   inset: 0;
@@ -3632,18 +3683,10 @@ body.resizing-h .term-body {
   animation: fade .35s cubic-bezier(.16, 1, .3, 1);
 }
 
-.scrim.closing {
-  animation: fadeOut .32s cubic-bezier(.16, 1, .3, 1) forwards;
-  pointer-events: none;
-}
-
-.scrim.closing .modal {
-  animation: modalRollUp .3s cubic-bezier(.4, 0, .6, 1) 40ms forwards;
-}
-
 /* Fading the whole scrim would fade the panel with it and hide the roll-up, so only the dim and blur clear away. */
-.scrim.closing:has(.settings-shell) {
+.scrim.closing {
   animation: scrimClear .36s cubic-bezier(.4, 0, .2, 1) forwards;
+  pointer-events: none;
 }
 
 @keyframes scrimClear {
@@ -3653,8 +3696,8 @@ body.resizing-h .term-body {
   }
 }
 
-/* Settings closes with its opening played backwards: the parts leave last-in first-out, then the panel rolls up. */
-.scrim.closing .modal.settings-shell {
+/* A modal closes with its opening played backwards: the parts leave last-in first-out, then the panel rolls up. */
+.scrim.closing .modal {
   animation: settingsRoll .36s cubic-bezier(.55, 0, .25, 1) both, settingsFade .36s both;
 }
 
@@ -3715,17 +3758,6 @@ body.resizing-h .term-body {
   }
   to {
     clip-path: inset(0 0 0 0 round 16px);
-  }
-}
-
-@keyframes modalRollUp {
-  from {
-    clip-path: inset(0 0 0 0 round 16px);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(6px) scale(.98);
-    clip-path: inset(0 0 calc(100% - 48px) 0 round 16px);
   }
 }
 
@@ -3948,16 +3980,6 @@ body.vibing .ide {
   color: #fcd34d;
 }
 
-.vibe-ready .btn-primary {
-  animation: glow 1.6s ease-in-out infinite;
-}
-
-@keyframes glow {
-  50% {
-    box-shadow: 0 0 0 6px rgba(0, 94, 255, .28);
-  }
-}
-
 /* ---------- onboarding: vibe feeds ---------- */
 .social-grid {
   display: grid;
@@ -4119,7 +4141,6 @@ body.vibing .ide {
   object-fit: contain;
   opacity: 0;
   transform: translateY(18px);
-  filter: drop-shadow(0 10px 40px rgba(0, 94, 255, .45));
   animation: splashLogo .8s cubic-bezier(.2, .8, .2, 1) .15s forwards;
 }
 
@@ -4325,10 +4346,6 @@ body.vibing .ide {
   opacity: .8;
 }
 
-.btn-primary:hover:not(:disabled) {
-  box-shadow: 0 4px 18px rgba(0, 94, 255, .35);
-}
-
 .btn:disabled {
   opacity: .5;
   cursor: default;
@@ -4338,10 +4355,6 @@ body.vibing .ide {
 .composer-box,
 .select {
   transition: border-color .15s, box-shadow .2s;
-}
-
-.input:focus {
-  box-shadow: 0 0 0 3px rgba(0, 94, 255, .18);
 }
 
 .tab::after {
@@ -4664,12 +4677,12 @@ body.vibing .ide {
   flex: 1;
 }
 
-/* Source Control stays flat: the focused message box only lightens its edge (no blue ring or halo), and the
+/* Source Control stays flat: the focused message box keeps its edge (no ring or halo), and the
    commit button has no blue glow under it. */
 .commit-box textarea:focus,
 .commit-box textarea:focus-visible {
   outline: none;
-  border-color: #4a4a54;
+  border-color: var(--line);
   box-shadow: none;
 }
 
@@ -5297,10 +5310,6 @@ body.vibing .ide {
   border-color: var(--err);
 }
 
-#send.stop:hover {
-  box-shadow: 0 4px 18px rgba(239, 68, 68, .35);
-}
-
 .msg .body pre {
   margin: 6px 0;
   padding: 8px 10px;
@@ -5324,7 +5333,7 @@ body.vibing .ide {
   display: flex;
   gap: 8px;
   align-items: baseline;
-  padding: 0 4px 0 6px;
+  padding: 0 4px 0 0;
   color: var(--text-3);
   font-size: 12px;
 }
@@ -5622,7 +5631,6 @@ body.vibing .ide {
 .mode-card.on {
   border-color: var(--blue);
   background: var(--blue-soft);
-  box-shadow: 0 0 0 3px rgba(0, 94, 255, .18), 0 8px 20px -6px rgba(0, 94, 255, .2);
 }
 
 .mode-card .nm {
@@ -5688,7 +5696,6 @@ body.vibing .ide {
 .project-card:focus-within {
   border-color: #3a3a42;
   background: #1a1a1f;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, .04);
 }
 
 .project-card .seg button {
@@ -6170,10 +6177,6 @@ body.vibing .box {
   text-align: center;
   letter-spacing: 0;
   animation: pop .25s cubic-bezier(.3, 1.6, .5, 1);
-}
-
-.agent-cards {
-  padding-top: 2px;
 }
 
 .agent.enter {
@@ -6958,7 +6961,7 @@ body:is(.resizing, .resizing-h) .sash-line.on {
 
 .drop-over {
   outline: none !important;
-  box-shadow: inset 0 0 0 1.5px var(--blue), inset 0 0 18px rgba(0, 94, 255, 0.22), 0 0 12px rgba(0, 94, 255, 0.25) !important;
+  box-shadow: inset 0 0 0 1.5px var(--blue) !important;
 }
 
 /*drag and drop file & rearrange*/
@@ -6981,7 +6984,6 @@ body:is(.resizing, .resizing-h) .sash-line.on {
   right: 8px;
   height: 2px;
   background: var(--blue);
-  box-shadow: 0 0 8px var(--blue);
   border-radius: 2px;
   z-index: 10;
   pointer-events: none;
@@ -7001,7 +7003,6 @@ body:is(.resizing, .resizing-h) .sash-line.on {
   height: 6px;
   border-radius: 50%;
   background: var(--blue);
-  box-shadow: 0 0 6px var(--blue);
   z-index: 11;
   pointer-events: none;
   animation: dropDotIn .14s cubic-bezier(.175, .885, .32, 1.275);
@@ -7206,12 +7207,11 @@ button.pill:active, .pill-btn:active {
   transform: none !important;
 }
 
-#agentPill:hover,
+.agent-chip:hover,
 .pill.blue:hover {
   background: #fff !important;
   color: #000 !important;
   border-color: #fff !important;
-  box-shadow: 0 0 14px rgba(255, 255, 255, .35) !important;
   transform: none !important;
 }
 
@@ -7238,7 +7238,7 @@ button.pill:active, .pill-btn:active {
 }
 
 
-#agentPill:active,
+.agent-chip:active,
 .pill.blue:active {
   background: #e5e5e7 !important;
   color: #000 !important;
@@ -7357,7 +7357,6 @@ button.pill:active, .pill-btn:active {
 
 .agent-tab.agent-drop-over {
   background: var(--blue-soft) !important;
-  box-shadow: 0 0 20px rgba(0, 94, 255, 0.45), inset 0 0 12px rgba(0, 94, 255, 0.3) !important;
   outline: none !important;
   transform: scale(1.03) translateY(-1px);
   transition: background .4s ease, box-shadow .6s ease, transform .4s ease !important;
@@ -7366,7 +7365,6 @@ button.pill:active, .pill-btn:active {
 .agent-tab-new.agent-drop-over {
   background: var(--blue-soft) !important;
   color: var(--blue) !important;
-  box-shadow: 0 0 20px rgba(0, 94, 255, 0.45), inset 0 0 12px rgba(0, 94, 255, 0.3) !important;
   outline: none !important;
   transform: scale(1.04);
   transition: background .4s ease, box-shadow .6s ease, transform .4s ease !important;
@@ -7443,7 +7441,6 @@ body.layout-animating #previewPane {
     background: var(--blue-soft);
     outline: 2px solid var(--blue);
     outline-offset: -1px;
-    box-shadow: 0 0 14px rgba(0, 94, 255, 0.45);
     transform: scale(1.02);
   }
   50% {
@@ -7480,11 +7477,72 @@ body.layout-animating #previewPane {
   padding: 4px 10px 1px 12px;
 }
 
-#agentPill {
+/* The agents panel header: a title, the agent bar (it takes the room that is left), then the icon buttons. */
+.agent-head-title {
+  flex: 0 0 auto;
+}
+
+.agent-head-tools {
+  flex: 1 1 0;
+  min-width: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.agent-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.agent-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--text);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 3px 6px 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition: all .15s ease;
+}
+
+.agent-chip.on {
+  color: #7aa9ff;
+  border-color: rgba(0, 94, 255, .45);
+  background: var(--blue-soft);
+}
+
+.agent-chip.chip-choose,
+.agent-chip.chip-rest {
+  padding-right: 9px;
+}
+
+.agent-chip .chip-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 1px;
+  border-radius: 4px;
+  opacity: .7;
+}
+
+.agent-chip .chip-more:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, .28);
 }
 
 .pill-logo {
@@ -7494,16 +7552,24 @@ body.layout-animating #previewPane {
   pointer-events: none;
 }
 
-#agentPill.agent-swap {
+.agent-chip.agent-swap {
   overflow: hidden;
 }
 
-#agentPill.agent-swap .pill-logo {
+.agent-chip.agent-swap .pill-logo {
   animation: agentLogoIn .34s cubic-bezier(.34, 1.56, .64, 1) both;
 }
 
-#agentPill.agent-swap > span {
+.agent-chip.agent-swap .chip-name {
   animation: agentNameIn .26s cubic-bezier(.16, 1, .3, 1) .03s both;
+}
+
+/* Under the prompt, when it names an agent that is not installed. */
+.mention-warn {
+  padding: 2px 2px 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--err);
 }
 
 @keyframes agentLogoIn {
@@ -7569,7 +7635,8 @@ body.layout-animating #previewPane {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  --tab-h: 26px;
+  height: var(--tab-h);
   border-radius: 6px;
   font-size: 11.5px;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -7611,7 +7678,7 @@ body.layout-animating #previewPane {
 
 .agent-tab.closable {
   min-width: 72px;
-  padding: 0 6px 0 10px;
+  padding: 0 var(--tab-x-gap) 0 10px;
 }
 
 .agent-tab.active {
@@ -7726,7 +7793,7 @@ body.layout-animating #previewPane {
   pointer-events: none;
 }
 
-/* One chat left: the X folds away like the lone terminal tab's (width and scale), rather than vanishing. */
+/* One chat left: the X folds away like the lone terminal tab's (width and scale). */
 .agent-tab .tab-close {
   transition: opacity .15s cubic-bezier(.16, 1, .3, 1),
               transform .15s cubic-bezier(.16, 1, .3, 1),
@@ -7765,6 +7832,46 @@ body.layout-animating #previewPane {
   transform: scale(0.92);
 }
 
+/* ---------- the X on chat and terminal tabs: one rule for both ---------- */
+/* The X is 8/13 of the tab's height (16px in a 26px chat tab), and the tab's right padding leaves the same gap
+   beside it as above and below it, so it keeps one proportion in every tab. */
+.agent-tab,
+.term-tab {
+  --tab-x: calc(var(--tab-h) * 8 / 13);
+  --tab-x-gap: calc((var(--tab-h) - var(--tab-x)) / 2 - 1px); /* less the tab's 1px border */
+}
+
+.agent-tab .tab-close,
+.term-tab .term-tab-close {
+  width: var(--tab-x);
+  height: var(--tab-x);
+}
+
+.agent-tab .tab-close .tab-close-icon,
+.term-tab .term-tab-close .tab-close-icon {
+  width: 62.5%;
+  height: 62.5%;
+}
+
+.agent-tab.closable:hover .tab-close,
+.agent-tab.closable.active .tab-close,
+.term-tab:hover .term-tab-close,
+.term-tab.active .term-tab-close {
+  opacity: .75;
+  transform: none;
+}
+
+.agent-tab.closable .tab-close:hover,
+.term-tab .term-tab-close:hover {
+  opacity: 1;
+  transform: none;
+}
+
+.agent-tab.closable .tab-close:active,
+.term-tab .term-tab-close:active {
+  transform: scale(.92);
+}
+
 /* Status indicator: elegant breathing ring instead of neon drop shadow */
 .agent-tab .tab-status {
   width: 6px;
@@ -7777,22 +7884,18 @@ body.layout-animating #previewPane {
 .agent-tab.running .tab-status {
   display: inline-block;
   background: var(--blue);
-  box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.6);
   animation: tabDotBreathe 1.6s cubic-bezier(0.24, 0, 0.38, 1) infinite;
 }
 
 @keyframes tabDotBreathe {
   0% {
     transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.6);
   }
   70% {
     transform: scale(1);
-    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0);
   }
   100% {
     transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
   }
 }
 
@@ -7816,17 +7919,21 @@ body.layout-animating #previewPane {
   flex-shrink: 0;
 }
 
-/* Agent tab panels inside chat and box-chat */
+/* Agent tab panels inside chat and box-chat. They grow with their messages and never shrink to the chat's
+   height, or the messages spill out of them and the room kept below the newest one is lost. */
 .chat > .agent-tab-panel {
   display: none;
   flex-direction: column;
   gap: 10px;
   width: 100%;
-  flex: 1;
+  flex: 1 0 auto;
 }
 .chat > .agent-tab-panel.active {
   display: flex;
   min-height: 100%;
+}
+.chat > .agent-tab-panel > :last-child {
+  margin-bottom: 12px;
 }
 
 .box-chat > .agent-tab-panel {
@@ -7834,7 +7941,7 @@ body.layout-animating #previewPane {
   flex-direction: column;
   gap: 12px;
   width: 100%;
-  flex: 1;
+  flex: 1 0 auto;
 }
 .box-chat > .agent-tab-panel.active {
   display: flex;
@@ -8274,9 +8381,15 @@ body.layout-animating #previewPane {
   height: 4px;
   margin: 0;
   border-radius: 1.5px;
-  background: linear-gradient(to right, var(--blue) var(--fill, 50%), var(--bg-3) var(--fill, 50%));
+  background: linear-gradient(to right, var(--blue) var(--fill, 25%), var(--bg-3) var(--fill, 25%));
   appearance: none;
   cursor: pointer;
+}
+
+/* No focus box around the slider: the knob moving is the feedback. */
+.set-volume input[type=range]:focus,
+.set-volume input[type=range]:focus-visible {
+  outline: none;
 }
 
 .set-volume input[type=range]::-webkit-slider-thumb {
@@ -8394,7 +8507,6 @@ body.layout-animating #previewPane {
 .set-agent.on:hover:not(:disabled) {
   background: rgba(0, 94, 255, .13);
   border-color: rgba(122, 169, 255, .75);
-  box-shadow: 0 0 0 3px rgba(0, 94, 255, .14);
 }
 
 @keyframes agentCheckIn {
@@ -8936,7 +9048,8 @@ body.layout-animating #previewPane {
 }
 
 /* The blue hover row would swallow Antigravity's blue logo, so it turns to the white one there. */
-.menu-item:is(:hover:not(:disabled), .kb) .menu-ico.tint-antigravity .brand-img {
+.menu-item:hover:not(:disabled) .menu-ico.tint-antigravity .brand-img,
+.menu:not(:has(.menu-item:hover:not(:disabled))) .menu-item.kb .menu-ico.tint-antigravity .brand-img {
   content: url("../../assets/icons/antigravity_white.png");
 }
 
@@ -8945,4 +9058,352 @@ body.layout-animating #previewPane {
   grid-column: 1 / -1;
   padding: 20px 0;
   text-align: center;
+}
+
+/* ================= Agent teams: several @mentioned agents in one chat ================= */
+/* An agent's logo and short name, in front of each of its lines in a team chat. */
+.agent-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.agent-tag b {
+  font-weight: 600;
+}
+
+.agent-tag-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--tint, var(--bg-3));
+  color: #000;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.msg .meta .agent-tag,
+.card h5 .agent-tag {
+  margin-right: 2px;
+}
+
+.tool-line .agent-tag {
+  align-self: center;
+  color: var(--text-2);
+}
+
+/* "Planning who does what": each member's logo has a ring turning around it until the claim pass is back. */
+.team-claiming {
+  align-self: center;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 11.5px;
+  animation: rise .22s cubic-bezier(.2, .8, .2, 1);
+}
+
+.team-claim-member {
+  display: inline-flex;
+}
+
+.team-claiming:not(.settled) .lbl {
+  background: linear-gradient(90deg, var(--text-3) 0%, var(--text) 45%, var(--text-3) 90%) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+
+.team-claiming:not(.settled) .agent-tag {
+  animation: claimPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes claimPulse {
+  50% { opacity: .55; }
+}
+
+/* The members' status, pinned to the top of the chat while they build. */
+.team-strip {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
+}
+
+.team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-2);
+  font-size: 11px;
+}
+
+.team-chip-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+
+.team-chip.working .team-chip-state::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--line);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin .9s linear infinite;
+}
+
+.team-chip.done {
+  border-color: rgba(34, 197, 94, .35);
+}
+
+.team-chip.done .team-chip-state {
+  color: var(--ok);
+}
+
+.team-chip.done .team-chip-state::before {
+  content: "✓";
+}
+
+.team-chip.failed {
+  border-color: rgba(239, 68, 68, .45);
+  background: rgba(239, 68, 68, .08);
+}
+
+.team-chip.failed .team-chip-state {
+  color: var(--err);
+}
+
+.card.team-split code,
+.card.crossing code,
+.card.team-summary code {
+  font: 11.5px var(--font-code);
+  background: var(--bg-3);
+  padding: 1px 4px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+/* The split card: who does what, and who owns a path more than one agent claimed. */
+.card.team-split {
+  border-color: rgba(0, 94, 255, .45);
+  background: linear-gradient(180deg, rgba(0, 94, 255, .1), rgba(0, 94, 255, .02));
+}
+
+.split-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.split-col {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-1);
+}
+
+.split-col.removed {
+  opacity: .45;
+}
+
+.split-task {
+  margin: 6px 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.split-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 150px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.card p.split-failed {
+  margin: 0 0 6px;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.card p.split-none {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #7aa9ff;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.split-removed {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.split-clashes {
+  margin-bottom: 10px;
+}
+
+.split-clash {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.split-clash code {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.split-clash .seg button {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* A crossing: an agent edited a teammate's file. */
+.card.crossing {
+  border-color: rgba(245, 158, 11, .45);
+  background: rgba(245, 158, 11, .06);
+}
+
+.card.crossing p {
+  margin: 0;
+  color: var(--text);
+}
+
+.card.crossing p.crossing-error {
+  margin: 6px 0 10px;
+  color: #fecaca;
+}
+
+/* The team's summary, when every member is done. */
+.card.team-summary {
+  border-color: rgba(34, 197, 94, .35);
+  background: rgba(34, 197, 94, .05);
+}
+
+.card.team-summary.trouble {
+  border-color: rgba(245, 158, 11, .45);
+  background: rgba(245, 158, 11, .05);
+}
+
+.ts-members {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.ts-member {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ts-member .agent-tag {
+  min-width: 90px;
+  padding-top: 2px;
+}
+
+.ts-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.ts-unfinished {
+  color: var(--err);
+}
+
+.ts-none {
+  color: var(--text-3);
+}
+
+.card p.ts-crossings,
+.card p.ts-skipped,
+.card p.ts-error {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.card p.ts-error {
+  color: #fecaca;
+}
+
+.ts-notes {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.ts-changes {
+  margin-bottom: 8px;
+}
+
+.ts-changes p {
+  margin-bottom: 6px;
+}
+
+.ts-changed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ts-changed code {
+  flex: 1 1 140px;
+  min-width: 0;
 }
