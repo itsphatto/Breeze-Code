@@ -1263,38 +1263,42 @@ export class AntigravityAgentService extends EventEmitter {
    * Fetches models supported by Antigravity CLI directly via 'agy models',
    * with fallback to standard Antigravity models.
    */
+  public static readonly DEFAULT_MODELS: readonly string[] = [
+    'claude-sonnet-4-6',
+    'gemini-3.8-flash-high',
+    'claude-opus-4-6-thinking',
+    'gemini-3.8-flash-medium',
+    'gemini-3.8-flash-low',
+    'gpt-oss-120b-medium',
+  ];
+
+  // Model ids from the output of 'agy models', or the defaults when it lists none.
+  private static parseModels(out: string): string[] {
+    const parsed = out.split(/\r?\n/)
+      .map((l) => l.trim().split(/\s+/)[0])
+      .filter((m) => m && !m.startsWith('Fetching') && !m.startsWith('Usage') && !m.startsWith('Error'));
+    return parsed.length > 0 ? parsed : [...AntigravityAgentService.DEFAULT_MODELS];
+  }
+
   public static getAvailableModels(customBin?: string): string[] {
-    const defaultModels = [
-      'claude-sonnet-4-6',
-      'gemini-3.8-flash-high',
-      'claude-opus-4-6-thinking',
-      'gemini-3.8-flash-medium',
-      'gemini-3.8-flash-low',
-      'gpt-oss-120b-medium',
-    ];
-
     const bin = customBin || AntigravityAgentService.findExecutable();
-    if (!bin) return defaultModels;
-
+    if (!bin) return [...AntigravityAgentService.DEFAULT_MODELS];
     try {
-      const out = execFileSync(bin, ['models'], {
-        encoding: 'utf8',
-        timeout: 4000,
-        windowsHide: true,
-      });
-      const lines = out.split(/\r?\n/);
-      const parsed = lines
-        .map((l) => l.trim().split(/\s+/)[0])
-        .filter((m) => m && !m.startsWith('Fetching') && !m.startsWith('Usage') && !m.startsWith('Error'));
-
-      if (parsed.length > 0) {
-        return parsed;
-      }
+      return AntigravityAgentService.parseModels(execFileSync(bin, ['models'], { encoding: 'utf8', timeout: 4000, windowsHide: true }));
     } catch {
-      // Fallback
+      return [...AntigravityAgentService.DEFAULT_MODELS];
     }
+  }
 
-    return defaultModels;
+  /** Like getAvailableModels, without blocking the process while the CLI runs. */
+  public static getAvailableModelsAsync(customBin?: string): Promise<string[]> {
+    const bin = customBin || AntigravityAgentService.findExecutable();
+    if (!bin) return Promise.resolve([...AntigravityAgentService.DEFAULT_MODELS]);
+    return new Promise((resolve) => {
+      execFile(bin, ['models'], { encoding: 'utf8', timeout: 4000, windowsHide: true }, (err, stdout) => {
+        resolve(err ? [...AntigravityAgentService.DEFAULT_MODELS] : AntigravityAgentService.parseModels(stdout));
+      });
+    });
   }
 
   /**

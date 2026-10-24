@@ -53,11 +53,11 @@ contextBridge.exposeInMainWorld('breeze', {
     runCommand: cmd => invoke('sys:runCommand', cmd),
     getPathForFile: file => {
       try {
-        if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        if (typeof webUtils?.getPathForFile === 'function') {
           return webUtils.getPathForFile(file);
         }
-      } catch {}
-      return (file && file.path) || '';
+      } catch { /* older Electron: fall back to file.path */ }
+      return file?.path || '';
     },
   },
   live: {

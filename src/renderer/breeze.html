@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: file: https://avatars.githubusercontent.com https://lh3.googleusercontent.com; frame-src 'self' breeze-preview:">
+    content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self' data:; img-src 'self' data: file: https://avatars.githubusercontent.com https://lh3.googleusercontent.com; frame-src 'self' breeze-preview:">
   <title>Breeze Code</title>
   <link rel="preload" href="../../assets/fonts/Inter-SemiBold.woff2" as="font" type="font/woff2">
   <link rel="preload" href="../../assets/fonts/Inter-Regular.woff2" as="font" type="font/woff2">
@@ -319,7 +319,7 @@
 
       <aside class="sidebar" id="sidebar" aria-label="Side bar">
         <div class="agent-fluid-blur" aria-hidden="true"></div>
-        <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
+        <canvas class="agent-fluid-canvas" aria-hidden="true" tabindex="-1"></canvas>
         <!-- Files -->
         <div data-panel="files" class="contents">
           <div class="side-head"><span>Explorer</span>
@@ -377,7 +377,7 @@
         <div class="work" id="work">
           <div class="pane" id="editorPane">
             <div class="agent-fluid-blur" aria-hidden="true"></div>
-            <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
+            <canvas class="agent-fluid-canvas" aria-hidden="true" tabindex="-1"></canvas>
             <div class="tabs" id="tabs"></div>
             <div class="editor-row" id="editorRow">
             <div class="editor" id="editor">
@@ -464,7 +464,7 @@
 
       <aside class="agents" id="agents" aria-label="Agents">
         <div class="agent-fluid-blur" aria-hidden="true"></div>
-        <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
+        <canvas class="agent-fluid-canvas" aria-hidden="true" tabindex="-1"></canvas>
         <div class="sash sash-v sash-left" data-sash="agents"></div>
         <div class="side-head"><span class="row gap-6">Agents<span class="head-count hidden" id="agentCount"></span></span><span class="row gap-6"><button class="pill blue pill-btn"
               id="agentPill">No agent</button><button class="icon-btn"
@@ -524,7 +524,7 @@
   <!-- ================= BREEZE BOX (chat only) ================= -->
   <div class="box hidden" id="box">
     <div class="agent-fluid-blur" aria-hidden="true"></div>
-    <canvas class="agent-fluid-canvas" aria-hidden="true"></canvas>
+    <canvas class="agent-fluid-canvas" aria-hidden="true" tabindex="-1"></canvas>
     <header class="titlebar box-bar">
       <span class="logo"><img src="../../assets/brand/BreezeBox.png" alt="Breeze Box"></span>
       <span class="spacer"></span>

@@ -162,6 +162,7 @@ const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 const dirName = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const forceReflow = (el: HTMLElement): number => el.offsetWidth;
 // IPC errors arrive as "Error invoking remote method 'x': Error: message" — keep only the message.
 const errMsg = (e: unknown): string => {
   const text = e instanceof Error ? e.message : String(e);
@@ -1012,8 +1013,8 @@ function syncSummaryText(s: SyncSummary): string {
 }
 
 // App settings that follow the account. A change is stamped when first seen, so the newer side wins.
-const SYNCED_KEYS = ['breeze.sound', 'breeze.volume', 'breeze.effort', 'breeze.layout'];
-const SYNCED_APP: (keyof AppState)[] = ['agent', 'mode', 'discord', 'discordDetails'];
+const SYNCED_KEYS = new Set(['breeze.sound', 'breeze.volume', 'breeze.effort', 'breeze.layout']);
+const SYNCED_APP = new Set<keyof AppState>(['agent', 'mode', 'discord', 'discordDetails']);
 function settingValues(): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const k of SYNCED_KEYS) { const v = store.get<unknown>(k, undefined); if (v !== undefined) values[k] = v; }
@@ -1035,8 +1036,8 @@ async function syncSettings(): Promise<void> {
   if (!r?.pulled || !r.settings || JSON.stringify(r.settings.values) === JSON.stringify(mine.values)) return;
   for (const [k, v] of Object.entries(r.settings.values)) {
     const key = k.slice(4) as keyof AppState;
-    if (k.startsWith('app.') && SYNCED_APP.includes(key)) (appState as unknown as Record<string, unknown>)[key] = v;
-    else if (SYNCED_KEYS.includes(k)) store.set(k, v);
+    if (k.startsWith('app.') && SYNCED_APP.has(key)) (appState as unknown as Record<string, unknown>)[key] = v;
+    else if (SYNCED_KEYS.has(k)) store.set(k, v);
   }
   saveApp();
   store.set('breeze.settingsSync', { print: JSON.stringify(settingValues()), updatedAt: r.settings.updatedAt });
@@ -1055,7 +1056,7 @@ async function runSync(mode: 'sync' | 'pull'): Promise<void> {
     if (!s) return;
     syncSeenRev = s.rev;
     $('#syncBtn').classList.remove('has-update');
-    const backed = s.backedUp.length ? ` · ${s.backedUp.length} local edit${s.backedUp.length > 1 ? 's' : ''} backed up` : '';
+    const backed = s.backedUp.length ? ` · ${plural(s.backedUp.length, 'local edit')} backed up` : '';
     toast(syncSummaryText(s) + backed);
     if (s.downloaded || s.removed || s.conflicts.length) await refreshTree();
     void refreshGit();
@@ -2577,59 +2578,57 @@ function sampleBorder(W: number, H: number, R: number, count: number): BorderSam
         nx = 1;
         ny = 0;
       }
+    } else if (s <= wStraight) {
+      bx = r + s;
+      by = 0;
+      nx = 0;
+      ny = 1;
+    } else if (s <= wStraight + cornerLen) {
+      const frac = (s - wStraight) / cornerLen;
+      const angle = -Math.PI / 2 + frac * (Math.PI / 2);
+      bx = W - r + Math.cos(angle) * r;
+      by = r + Math.sin(angle) * r;
+      nx = -Math.cos(angle);
+      ny = -Math.sin(angle);
+    } else if (s <= wStraight + cornerLen + hStraight) {
+      const dist = s - (wStraight + cornerLen);
+      bx = W;
+      by = r + dist;
+      nx = -1;
+      ny = 0;
+    } else if (s <= wStraight + 2 * cornerLen + hStraight) {
+      const frac = (s - (wStraight + cornerLen + hStraight)) / cornerLen;
+      const angle = frac * (Math.PI / 2);
+      bx = W - r + Math.cos(angle) * r;
+      by = H - r + Math.sin(angle) * r;
+      nx = -Math.cos(angle);
+      ny = -Math.sin(angle);
+    } else if (s <= 2 * wStraight + 2 * cornerLen + hStraight) {
+      const dist = s - (wStraight + 2 * cornerLen + hStraight);
+      bx = W - r - dist;
+      by = H;
+      nx = 0;
+      ny = -1;
+    } else if (s <= 2 * wStraight + 3 * cornerLen + hStraight) {
+      const frac = (s - (2 * wStraight + 2 * cornerLen + hStraight)) / cornerLen;
+      const angle = Math.PI / 2 + frac * (Math.PI / 2);
+      bx = r + Math.cos(angle) * r;
+      by = H - r + Math.sin(angle) * r;
+      nx = -Math.cos(angle);
+      ny = -Math.sin(angle);
+    } else if (s <= 2 * wStraight + 3 * cornerLen + 2 * hStraight) {
+      const dist = s - (2 * wStraight + 3 * cornerLen + hStraight);
+      bx = 0;
+      by = H - r - dist;
+      nx = 1;
+      ny = 0;
     } else {
-      if (s <= wStraight) {
-        bx = r + s;
-        by = 0;
-        nx = 0;
-        ny = 1;
-      } else if (s <= wStraight + cornerLen) {
-        const frac = (s - wStraight) / cornerLen;
-        const angle = -Math.PI / 2 + frac * (Math.PI / 2);
-        bx = W - r + Math.cos(angle) * r;
-        by = r + Math.sin(angle) * r;
-        nx = -Math.cos(angle);
-        ny = -Math.sin(angle);
-      } else if (s <= wStraight + cornerLen + hStraight) {
-        const dist = s - (wStraight + cornerLen);
-        bx = W;
-        by = r + dist;
-        nx = -1;
-        ny = 0;
-      } else if (s <= wStraight + 2 * cornerLen + hStraight) {
-        const frac = (s - (wStraight + cornerLen + hStraight)) / cornerLen;
-        const angle = frac * (Math.PI / 2);
-        bx = W - r + Math.cos(angle) * r;
-        by = H - r + Math.sin(angle) * r;
-        nx = -Math.cos(angle);
-        ny = -Math.sin(angle);
-      } else if (s <= 2 * wStraight + 2 * cornerLen + hStraight) {
-        const dist = s - (wStraight + 2 * cornerLen + hStraight);
-        bx = W - r - dist;
-        by = H;
-        nx = 0;
-        ny = -1;
-      } else if (s <= 2 * wStraight + 3 * cornerLen + hStraight) {
-        const frac = (s - (2 * wStraight + 2 * cornerLen + hStraight)) / cornerLen;
-        const angle = Math.PI / 2 + frac * (Math.PI / 2);
-        bx = r + Math.cos(angle) * r;
-        by = H - r + Math.sin(angle) * r;
-        nx = -Math.cos(angle);
-        ny = -Math.sin(angle);
-      } else if (s <= 2 * wStraight + 3 * cornerLen + 2 * hStraight) {
-        const dist = s - (2 * wStraight + 3 * cornerLen + hStraight);
-        bx = 0;
-        by = H - r - dist;
-        nx = 1;
-        ny = 0;
-      } else {
-        const frac = (s - (2 * wStraight + 3 * cornerLen + 2 * hStraight)) / cornerLen;
-        const angle = Math.PI + frac * (Math.PI / 2);
-        bx = r + Math.cos(angle) * r;
-        by = r + Math.sin(angle) * r;
-        nx = -Math.cos(angle);
-        ny = -Math.sin(angle);
-      }
+      const frac = (s - (2 * wStraight + 3 * cornerLen + 2 * hStraight)) / cornerLen;
+      const angle = Math.PI + frac * (Math.PI / 2);
+      bx = r + Math.cos(angle) * r;
+      by = r + Math.sin(angle) * r;
+      nx = -Math.cos(angle);
+      ny = -Math.sin(angle);
     }
 
     samples.push({ bx, by, nx, ny, s });
@@ -3174,8 +3173,8 @@ function startFluidCanvasLoop(state: FluidCanvasState): void {
     if (!state.active) {
       let maxEnergy = 0;
       if (state.energies) {
-        for (let i = 0; i < state.energies.length; i++) {
-          if (state.energies[i] > maxEnergy) maxEnergy = state.energies[i];
+        for (const energy of state.energies) {
+          if (energy > maxEnergy) maxEnergy = energy;
         }
       }
       const elapsed = performance.now() - (state.fadeStartTime ?? 0);
@@ -4717,7 +4716,7 @@ function renderTabs(): void {
       runBtn = `<button class="tab-run tab-preview" data-preview-file="1" title="Preview this page (F5)">${svgIcon('play', 12)}<span>Preview</span></button>`;
     }
     const splitTitle = splitPath ? 'Close Split' : 'Split Editor Right';
-    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitTitle} (Ctrl+\\)">${svgIcon('columns', 14)}</button>`;
+    const splitBtn = `<button class="icon-btn tab-split${splitPath ? ' on' : ''}" data-split="1" title="${splitTitle} ${String.raw`(Ctrl\)`}">${svgIcon('columns', 14)}</button>`;
     tabsEl.innerHTML = openTabs.map(tabHtml).join('') + runBtn + splitBtn;
   }
   placeTabInk();
@@ -5261,22 +5260,39 @@ function lineOfOffset(starts: number[], off: number): number {
 const OPENER: Record<string, string> = { '}': '{', ']': '[', ')': '(' };
 function bracketPairs(text: string): [number, number][] {
   const pairs: [number, number][] = [], stack: number[] = [];
-  for (let i = 0; i < text.length; i++) {
+  let i = 0;
+  while (i < text.length) {
     const c = text[i];
-    if (c === '/' && text[i + 1] === '/') { const nl = text.indexOf('\n', i); if (nl === -1) break; i = nl; continue; }
-    if (c === '/' && text[i + 1] === '*') { const e = text.indexOf('*/', i + 2); if (e === -1) break; i = e + 1; continue; }
+    if (c === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i);
+      if (nl === -1) {
+        break;
+      }
+      i = nl + 1;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      const e = text.indexOf('*/', i + 2);
+      if (e === -1) {
+        break;
+      }
+      i = e + 2;
+      continue;
+    }
     if (c === '"' || c === "'" || c === '`') {
       let j = i + 1;
       while (j < text.length && text[j] !== c && (c === '`' || text[j] !== '\n')) j += text[j] === '\\' ? 2 : 1;
-      i = j;
+      i = j + 1;
       continue;
     }
-    if (c === '{' || c === '[' || c === '(') stack.push(i);
-    else if (OPENER[c]) {
+    if (c === '{' || c === '[' || c === '(') {
+      stack.push(i);
+    } else if (OPENER[c]) {
       let at = stack.length - 1;
       while (at >= 0 && text[stack[at]] !== OPENER[c]) at--;
       if (at !== -1) { pairs.push([stack[at], i]); stack.length = at; }
     }
+    i++;
   }
   return pairs;
 }
@@ -5463,8 +5479,8 @@ const textTabs = () => openTabs.filter(p => buffers.get(p)?.kind === 'text');
 
 function openSplit(path: string | null = active, exact = false): void {
   // Split the file next to the open one when possible, so the two sides start out different.
-  const others = textTabs().filter(p => p !== active);
-  const target = exact || (path && path !== active) ? path : others[0] ?? path;
+  const other = textTabs().find(p => p !== active);
+  const target = exact || (path && path !== active) ? path : other ?? path;
   if (!target || buffers.get(target)?.kind !== 'text') { toast('Open a text file to split the editor'); return; }
   splitPath = target;
   const split = $('#split');
@@ -5740,7 +5756,7 @@ function editorKeys(e: KeyboardEvent): void {
   if (b && (e.ctrlKey || e.metaKey) && !e.altKey && (k === 'z' || k === 'y')) {
     const isUndo = k === 'z' && !e.shiftKey;
     if (isUndo) {
-      const topAction = actionUndoStack[actionUndoStack.length - 1];
+      const topAction = actionUndoStack.at(-1);
       const isRecentTreeAction = topAction && topAction.type.startsWith('tree-') &&
         ((topAction as any).timestamp ?? 0) > (lastUserTypeAt || 0);
       if (isRecentTreeAction) {
@@ -5761,8 +5777,8 @@ function editorKeys(e: KeyboardEvent): void {
       e.preventDefault();
       return;
     } else {
-      const topRedo = actionRedoStack[actionRedoStack.length - 1];
-      const isRecentTreeRedo = topRedo && topRedo.type.startsWith('tree-');
+      const topRedo = actionRedoStack.at(-1);
+      const isRecentTreeRedo = topRedo?.type.startsWith('tree-');
       if (isRecentTreeRedo) {
         e.preventDefault();
         void redoAppAction();
@@ -6291,15 +6307,13 @@ function renderTermTabs(): void {
   const liveIds = new Set(termSessions.map(s => s.id));
 
   // Collapse out tabs whose session is gone
-  let anyLeaving = false;
   for (const [tid, el] of existing) {
     if (liveIds.has(tid)) continue;
     existing.delete(tid);
     if (wasHidden) { el.remove(); continue; }
-    anyLeaving = true;
     el.classList.remove('enter');
     el.style.width = `${el.getBoundingClientRect().width}px`;
-    void el.offsetWidth;
+    forceReflow(el);
     el.classList.add('leaving');
     let done = false;
     const finish = () => { if (done) { return; } done = true; el.remove(); };
@@ -6335,7 +6349,7 @@ function renderTermTabs(): void {
     tabsContainer.classList.remove('hidden');
     $('#termTitleText')?.classList.add('hidden');
     tabsContainer.classList.toggle('solo', !many);
-    void tabsContainer.offsetWidth;
+    forceReflow(tabsContainer);
     tabsContainer.classList.remove('no-morph');
     return;
   }
@@ -6361,12 +6375,12 @@ function updateTermTabsTight(): void {
   el.classList.remove('tight');
   const overflow = el.scrollWidth > el.clientWidth + 1;
   el.classList.toggle('tight', overflow);
-  void el.offsetWidth;
+  forceReflow(el);
   el.classList.remove('no-morph');
   if (wasTight !== overflow) {
     // Re-run once the class change has settled so the transition plays from the right state
     el.classList.toggle('tight', wasTight);
-    void el.offsetWidth;
+    forceReflow(el);
     el.classList.toggle('tight', overflow);
   }
 }
@@ -6517,7 +6531,7 @@ function renderAnsiChunk(text: string, style: AnsiStyle): string {
     return highlightPlainCli(escaped);
   }
   const clsAttr = classes.length ? ` class="${classes.join(' ')}"` : '';
-  const styleAttr = styles.length ? ` style="${styles.join(';')}"` : '';
+  const styleAttr = styles.length ? ` data-style="${styles.join(';')}"` : '';
   return `<span${clsAttr}${styleAttr}>${escaped}</span>`;
 }
 
@@ -6654,11 +6668,29 @@ function termAppend(el: HTMLElement, session: TermSession = activeTermSession): 
   if (session === activeTermSession) scheduleTermScroll();
 }
 
+// The page's CSP doesn't allow style="" attributes, so HTML strings carry per-element styles as data-style and
+// they're applied through the CSSOM (which the CSP allows) right after the HTML goes in.
+function applyDataStyles(root: Element): void {
+  for (const el of root.querySelectorAll<HTMLElement | SVGElement>('[data-style]')) {
+    el.style.cssText += `;${el.dataset.style ?? ''}`;
+    delete el.dataset.style;
+  }
+}
+// Saved HTML (a chat from history) back into the page, keeping the inline styles it was saved with.
+function setSavedHtml(el: Element, html: string): void {
+  el.innerHTML = html.replaceAll(' style="', ' data-style="');
+  applyDataStyles(el);
+}
+// Terminal output with its ANSI colours (the 256-colour and true-colour ones arrive as data-style).
+function setAnsiHtml(el: HTMLElement, raw: string): void {
+  el.innerHTML = parseAnsiToHtml(raw);
+  applyDataStyles(el);
+}
 function termWrite(text: string, cls = '', session: TermSession = activeTermSession): HTMLElement {
   const target = session || activeTermSession;
   const span = document.createElement('span');
   if (cls) span.className = cls;
-  span.innerHTML = parseAnsiToHtml(text);
+  setAnsiHtml(span, text);
   if (target) target.pending = null; // anything written here ends the run's open line
   termAppend(span, target);
   return span;
@@ -6687,7 +6719,7 @@ function termLinked(text: string, session: TermSession = activeTermSession): voi
     if (r.start < at) continue;
     if (r.start > at) {
       const chunkSpan = document.createElement('span');
-      chunkSpan.innerHTML = parseAnsiToHtml(text.slice(at, r.start));
+      setAnsiHtml(chunkSpan, text.slice(at, r.start));
       span.append(chunkSpan);
     }
     const a = document.createElement('a');
@@ -6699,7 +6731,7 @@ function termLinked(text: string, session: TermSession = activeTermSession): voi
   }
   if (at < text.length) {
     const chunkSpan = document.createElement('span');
-    chunkSpan.innerHTML = parseAnsiToHtml(text.slice(at));
+    setAnsiHtml(chunkSpan, text.slice(at));
     span.append(chunkSpan);
   }
   termAppend(span, target);
@@ -6743,7 +6775,7 @@ function showRunErrors(refs: ErrorRef[]): void {
 }
 function killCommand(): void {
   const session = activeTermSession;
-  if (!session || session.proc == null) return;
+  if (session?.proc == null) return;
   background(api.term.kill(session.proc));
   termWrite('^C\n', '', session);
 }
@@ -7392,7 +7424,7 @@ function run(act: string): void {
 // Undo and redo in the code editor use its own history; everything else goes to the focused field.
 function editRole(role: string): void {
   const b = activeText();
-  const topAction = actionUndoStack[actionUndoStack.length - 1];
+  const topAction = actionUndoStack.at(-1);
   const isRecentTreeAction = topAction && topAction.type.startsWith('tree-') &&
     ((topAction as any).timestamp ?? 0) > (lastUserTypeAt || 0);
 
@@ -7417,8 +7449,8 @@ function editRole(role: string): void {
     }
   }
   if (role === 'redo') {
-    const topRedo = actionRedoStack[actionRedoStack.length - 1];
-    const isRecentTreeRedo = topRedo && topRedo.type.startsWith('tree-');
+    const topRedo = actionRedoStack.at(-1);
+    const isRecentTreeRedo = topRedo?.type.startsWith('tree-');
     if (isRecentTreeRedo) {
       void redoAppAction();
       return;
@@ -7714,7 +7746,7 @@ function menuHeaderHtml(u: User): string {
   return `<div class="menu-label">${avatarHtml(u, '')}<span class="who"><b>${esc(u.name)}</b><small>${esc(detail)}</small></span></div>`;
 }
 function menuItemHtml(it: MenuItem, i: number): string {
-  if (it.sep) return `<div class="menu-sep" style="--i:${i}"></div>`;
+  if (it.sep) return `<div class="menu-sep" data-style="--i:${i}"></div>`;
   if (it.header) return menuHeaderHtml(it.header);
   const cls = ['menu-item', it.checked?.() ? 'checked' : '', it.sub ? 'has-sub' : '', i === kbIdx ? 'kb' : ''].filter(Boolean).join(' ');
   const disabled = it.enabled && !it.enabled() ? ' disabled' : '';
@@ -7722,7 +7754,7 @@ function menuItemHtml(it: MenuItem, i: number): string {
   const popup = it.sub ? ' aria-haspopup="menu"' : '';
   const label = it.icon ? `<span class="mi-ico-label">${it.icon}<span>${esc(it.label ?? '')}</span></span>` : `<span>${esc(it.label ?? '')}</span>`;
   const del = it.remove ? holdDelHtml(it.label ?? '', 'data-mi-del', 'span') : '';
-  return `<button class="${cls}${it.remove ? ' has-del' : ''}" role="menuitem" data-mi="${i}" style="--i:${i}"${disabled}${popup}>${label}${key}${del}</button>`;
+  return `<button class="${cls}${it.remove ? ' has-del' : ''}" role="menuitem" data-mi="${i}" data-style="--i:${i}"${disabled}${popup}>${label}${key}${del}</button>`;
 }
 // Builds a menu element at (x, y), kept inside the window.
 function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTMLElement {
@@ -7730,6 +7762,7 @@ function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTML
   m.className = `${cls} stagger`;
   m.setAttribute('role', 'menu');
   m.innerHTML = items.map((it, i) => menuItemHtml(it, i)).join('');
+  applyDataStyles(m);
   $('#menuRoot').append(m);
   m.style.left = `${Math.max(8, Math.min(x, innerWidth - m.offsetWidth - 8))}px`;
   m.style.top = `${Math.max(8, Math.min(y, innerHeight - m.offsetHeight - 8))}px`;
@@ -7854,7 +7887,7 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (el?.classList.contains('ta')) {
-      const topAction = actionUndoStack[actionUndoStack.length - 1];
+      const topAction = actionUndoStack.at(-1);
       const isRecentTreeAction = topAction && topAction.type.startsWith('tree-') &&
         ((topAction as any).timestamp ?? 0) > (lastUserTypeAt || 0);
       if (isRecentTreeAction) {
@@ -7889,8 +7922,8 @@ document.addEventListener('keydown', e => {
       return;
     }
     if (el?.classList.contains('ta')) {
-      const topRedo = actionRedoStack[actionRedoStack.length - 1];
-      const isRecentTreeRedo = topRedo && topRedo.type.startsWith('tree-');
+      const topRedo = actionRedoStack.at(-1);
+      const isRecentTreeRedo = topRedo?.type.startsWith('tree-');
       if (isRecentTreeRedo) {
         e.preventDefault();
         e.stopPropagation();
@@ -8016,7 +8049,7 @@ function settingsBody(tab: SettingsTab): string {
       ${accountHtml()}
       <h5>Preferences</h5>
       ${settingRow('Workspace', 'Full editor, or chat only.', segHtml('sMode', [['ide', 'Breeze Code'], ['box', 'Breeze Box']], appState.mode))}
-      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="1" value="${sfx.volume}" aria-label="Sound volume" style="--fill:${sfx.volume}%"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
+      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="1" value="${sfx.volume}" aria-label="Sound volume"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
       <h5>Layout</h5>
       ${settingRow('Side bar', 'Ctrl+B', switchHtml('sSide', layout.sideOpen, 'Side bar'))}
       ${settingRow('Agents panel', 'Ctrl+Alt+B', switchHtml('sAgents', layout.agentsOpen, 'Agents panel'))}
@@ -8154,6 +8187,7 @@ function bindSettings(m: HTMLElement): void {
   // Near 50 the knob snaps to 50; pushing on out of the snap zone turns the snap off until the drag (or scroll) ends.
   const vol = $<HTMLInputElement>('#sVolume', pane);
   if (vol) {
+    vol.style.setProperty('--fill', `${vol.value}%`);
     const SNAP = 3;
     let snapArmed = true, snapped = false, wheelIdle = 0;
     const show = (v: number) => {
@@ -8226,7 +8260,7 @@ function openSettings(gear: HTMLElement, tab?: SettingsTab): void {
       const pane = $('.set-pane', root);
       if (pane) {
         pane.style.animation = 'none';
-        void pane.offsetHeight;
+        forceReflow(pane);
         pane.style.animation = '';
       }
       bindSettings(root);
@@ -8268,7 +8302,7 @@ function showShortcuts(): void {
         ? all.filter(s => s.label.toLowerCase().includes(q) || s.key.toLowerCase().includes(q))
         : all;
       if (!filtered.length) {
-        list.innerHTML = '<div class="side-note" style="grid-column: 1 / -1; text-align: center; padding: 20px 0;">No matching shortcuts</div>';
+        list.innerHTML = '<div class="side-note keys-empty">No matching shortcuts</div>';
       } else {
         list.innerHTML = filtered.map(s => `<span>${esc(s.label)}</span><kbd>${esc(s.key)}</kbd>`).join('');
       }
@@ -8458,7 +8492,7 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
   };
   tab.panel.className = 'agent-tab-panel';
   if (initialHtml) {
-    tab.panel.innerHTML = initialHtml;
+    setSavedHtml(tab.panel, initialHtml);
   } else if (s.name === 'box') {
     const agent = selectedAgent();
     const who = agent ? `Breeze Box talks to ${esc(agent.name)}. Pick another agent below.` : 'Pick an agent below to start.';
@@ -8988,7 +9022,7 @@ function openChat(s: Surface, e: ChatEntry): void {
   tab.historyId = e.id;
   tab.session = (e.session && e.agent === appState.agent) ? e.session : null;
   tab.sessionAgent = tab.session ? e.agent : null;
-  tab.panel.innerHTML = e.html;
+  setSavedHtml(tab.panel, e.html);
   $$('[data-live]', tab.panel).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
   switchAgentTab(s, tab.id);
   resetTeam();
@@ -9516,7 +9550,7 @@ const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab
     const cmd = ev.command;
     let actionHtml = '';
     if (url) {
-      actionHtml = '<div class="row" style="margin-top:8px;"><button class="btn btn-primary btnAgentAuth">Sign in with Google</button></div>';
+      actionHtml = '<div class="row mt-8"><button class="btn btn-primary btnAgentAuth">Sign in with Google</button></div>';
     } else if (cmd) {
       actionHtml = `<p class="sub">Run <code>${esc(cmd)}</code> to sign in</p>`;
     }
@@ -9637,20 +9671,21 @@ function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
 
 /* ----- Custom dropdowns: every select.select gets a button that opens Breeze's own menu ----- */
 // The native <select> stays in the page (hidden) so code and forms keep reading its value.
+function updateDropdownLabel(sel: HTMLSelectElement, btn: HTMLElement): void {
+  const text = sel.selectedOptions[0]?.text || sel.value || '';
+  if (sel.id === 'agentModelSelect') {
+    const eff = currentEffort();
+    btn.innerHTML = `<span class="dd-val">${esc(text)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+    btn.title = `${text} (${eff} effort)`;
+    return;
+  }
+  btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
+  btn.title = text;
+}
 function openDropdown(sel: HTMLSelectElement, btn: HTMLElement): void {
   if (btn.classList.contains('open') || (justClosedTrigger === btn && Date.now() - justClosedAt < 350)) { closeMenu(); return; }
   closeMenu();
-  const label = () => {
-    const text = sel.selectedOptions[0]?.text || sel.value || '';
-    if (sel.id === 'agentModelSelect') {
-      const eff = currentEffort();
-      btn.innerHTML = `<span class="dd-val">${esc(text)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-      btn.title = `${text} (${eff} effort)`;
-      return;
-    }
-    btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-    btn.title = text;
-  };
+  const label = () => updateDropdownLabel(sel, btn);
   const a = sel.id === 'agentModelSelect' ? selectedAgent() : null;
   const items: MenuItem[] = (a?.found && a.models?.length)
     ? modelMenuItems(a, () => {
@@ -9697,17 +9732,7 @@ function enhanceSelect(sel: HTMLSelectElement): void {
   sel.tabIndex = -1;
   sel.setAttribute('aria-hidden', 'true');
   sel.after(btn);
-  const label = () => {
-    const text = sel.selectedOptions[0]?.text || sel.value || '';
-    if (sel.id === 'agentModelSelect') {
-      const eff = currentEffort();
-      btn.innerHTML = `<span class="dd-val">${esc(text)}<small class="dd-eff"> · ${esc(eff)}</small></span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-      btn.title = `${text} (${eff} effort)`;
-      return;
-    }
-    btn.innerHTML = `<span class="dd-val">${esc(text)}</span><svg class="dd-chev" width="10" height="10"><use href="#i-chev"/></svg>`;
-    btn.title = text;
-  };
+  const label = () => updateDropdownLabel(sel, btn);
   label();
   sel.addEventListener('change', label);
   btn.onclick = () => openDropdown(sel, btn);
@@ -9916,7 +9941,7 @@ async function generateCommitMsg(): Promise<void> {
     return;
   }
   let activeAg = currentActiveAgent();
-  if (!activeAg || !activeAg.found) {
+  if (!activeAg?.found) {
     activeAg = appState.detect?.agents?.find(a => a.found) || null;
   }
   const isStaged = currentFiles.some(f => f.x !== ' ' && f.x !== '?');
@@ -10280,8 +10305,8 @@ function detailGraphSvg(r: GraphRow, X: (i: number) => number): string {
 }
 function commitDetailWrapHtml(r: GraphRow, width: number, X: (i: number) => number, d?: GitCommitDetail): string {
   return `<div class="commit-detail-row" data-detail-hash="${r.c.hash}">
-    <div class="detail-graph-col" style="width:${width}px;flex-shrink:0;align-self:stretch;display:flex;min-height:100%;">
-      <svg class="detail-graph" width="${width}" viewBox="0 0 ${width} 100" preserveAspectRatio="none" style="width:${width}px;flex:1 1 100%;align-self:stretch;height:100%;min-height:100%;display:block;overflow:visible;pointer-events:none;">${detailGraphSvg(r, X)}</svg>
+    <div class="detail-graph-col">
+      <svg class="detail-graph" width="${width}" viewBox="0 0 ${width} 100" preserveAspectRatio="none">${detailGraphSvg(r, X)}</svg>
     </div>
     ${commitDetailHtml(r.c, d)}
   </div>`;
