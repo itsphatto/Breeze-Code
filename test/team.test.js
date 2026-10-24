@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
-const { cleanRel, parseClaim, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief } = require('../src/main/team');
+const { cleanRel, parseClaim, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief, snapshot, addToSnapshot, restore, changedSince } = require('../src/main/team');
 
 /* ----- Claims and ownership ----- */
 test('parseClaim reads the last json block', () => {
@@ -111,4 +113,66 @@ test("buildBrief lists own and teammates' paths", () => {
   const none = buildBrief(team.members[0], team, {});
   assert.ok(none.includes('You own: any file no teammate owns'));
   assert.ok(!none.includes('Do not edit'));
+});
+
+/* ----- Snapshots ----- */
+function tempProject(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'breeze-team-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+const put = (root, rel, data) => {
+  fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+  fs.writeFileSync(path.join(root, rel), data);
+};
+
+test('snapshot expands folders and records absent files', async t => {
+  const root = tempProject(t);
+  put(root, 'web/a.js', 'a');
+  put(root, 'web/sub/b.js', 'b');
+  put(root, 'web/node_modules/dep/index.js', 'x');
+  const snap = await snapshot(root, ['web/', 'new.js']);
+  assert.deepEqual([...snap.files.keys()].sort(), ['new.js', 'web/a.js', 'web/sub/b.js']);
+  assert.equal(snap.files.get('new.js'), null);
+  assert.equal(snap.files.get('web/a.js').toString(), 'a');
+});
+
+test('restore undoes a modify, a create and a delete', async t => {
+  const root = tempProject(t);
+  put(root, 'web/a.js', 'a');
+  put(root, 'web/sub/b.js', 'b');
+  const snap = await snapshot(root, ['web/', 'new.js']);
+  put(root, 'web/a.js', 'changed');
+  put(root, 'new.js', 'created');
+  fs.rmSync(path.join(root, 'web/sub'), { recursive: true });
+  const changed = await changedSince(root, snap);
+  assert.deepEqual(changed.sort(), ['new.js', 'web/a.js', 'web/sub/b.js']);
+  for (const rel of changed) await restore(root, rel, snap);
+  assert.deepEqual(await changedSince(root, snap), []);
+  assert.equal(fs.existsSync(path.join(root, 'new.js')), false);
+  assert.equal(fs.readFileSync(path.join(root, 'web/sub/b.js'), 'utf8'), 'b');
+});
+
+test('addToSnapshot records a file once, before it changes', async t => {
+  const root = tempProject(t);
+  put(root, 'x.js', 'one');
+  const snap = await snapshot(root, []);
+  await addToSnapshot(snap, root, 'x.js');
+  put(root, 'x.js', 'two');
+  await addToSnapshot(snap, root, 'x.js'); // already seen: the first content stays
+  assert.equal(snap.files.get('x.js').toString(), 'one');
+  assert.deepEqual(await changedSince(root, snap), ['x.js']);
+  await restore(root, 'x.js', snap);
+  assert.equal(fs.readFileSync(path.join(root, 'x.js'), 'utf8'), 'one');
+  await restore(root, 'unknown.js', snap); // no entry: nothing happens
+});
+
+test('snapshot skips large files', async t => {
+  const root = tempProject(t);
+  put(root, 'big.bin', Buffer.alloc(2 * 1024 * 1024 + 1));
+  put(root, 'ok.txt', 'ok');
+  const snap = await snapshot(root, ['big.bin', 'ok.txt']);
+  assert.deepEqual(snap.skipped, ['big.bin']);
+  assert.equal(snap.files.has('big.bin'), false);
+  assert.equal(snap.files.has('ok.txt'), true);
 });

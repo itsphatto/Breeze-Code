@@ -2,6 +2,7 @@
 // The pure parts live here (claims, ownership, prompts, snapshots) with no Electron, so test/team.test.js can cover them.
 // Paths are relative to the project, use "/", and folders end in "/".
 
+const fs = require('node:fs/promises');
 const path = require('node:path');
 const { blockedRel } = require('./guard');
 
@@ -148,4 +149,79 @@ function buildBrief(member, team, owners) {
   ].join('\n');
 }
 
-module.exports = { cleanRel, parseClaim, covers, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief };
+/* ----- Snapshots ----- */
+// Before an agent builds, its files are copied into memory so a failed or cancelled run can be undone.
+// `files` maps rel -> Buffer, or null for a file that did not exist yet.
+const MAX_FILE = 2 * 1024 * 1024;
+const SKIP_DIRS = new Set(['.git', 'node_modules']);
+const absOf = (root, rel) => path.join(root, ...rel.split('/'));
+const missing = err => err.code === 'ENOENT' || err.code === 'ENOTDIR';
+
+// What `abs` holds now: { data: Buffer | null } (null when absent), { big: true }, or {} for a folder or link.
+async function readEntry(abs) {
+  let st;
+  try { st = await fs.lstat(abs); } catch (err) { if (missing(err)) return { data: null }; throw err; }
+  if (!st.isFile()) return {};
+  if (st.size > MAX_FILE) return { big: true };
+  try { return { data: await fs.readFile(abs) }; } catch (err) { if (missing(err)) return { data: null }; throw err; }
+}
+
+async function record(snap, root, rel) {
+  if (snap.files.has(rel)) return;
+  const { data, big } = await readEntry(absOf(root, rel));
+  if (big) { if (!snap.skipped.includes(rel)) snap.skipped.push(rel); }
+  else if (data !== undefined) snap.files.set(rel, data);
+}
+
+async function recordFolder(snap, root, rel) {
+  let entries;
+  try { entries = await fs.readdir(absOf(root, rel), { withFileTypes: true }); } catch (err) { if (missing(err)) return; throw err; }
+  for (const e of entries) {
+    const child = `${rel}/${e.name}`;
+    if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) await recordFolder(snap, root, child); }
+    else if (e.isFile()) await record(snap, root, child);
+  }
+}
+
+// `paths` are project-relative; a folder (or a path that is one) expands to the files in it.
+async function snapshot(root, paths) {
+  const snap = { files: new Map(), skipped: [] };
+  for (const p of paths) {
+    const rel = p.replace(/\/+$/, '');
+    let isDir = p.endsWith('/');
+    if (!isDir) { try { isDir = (await fs.lstat(absOf(root, rel))).isDirectory(); } catch { /* absent: recorded as null */ } }
+    if (isDir) await recordFolder(snap, root, rel);
+    else await record(snap, root, rel);
+  }
+  return snap;
+}
+
+// A file an agent is about to touch that the snapshot did not cover (first touch). Only the first call counts.
+const addToSnapshot = (snap, root, rel) => record(snap, root, rel);
+
+// Put `rel` back as the snapshot has it. Not in the snapshot: nothing to do.
+async function restore(root, rel, snap) {
+  if (!snap.files.has(rel)) return;
+  const data = snap.files.get(rel);
+  const abs = absOf(root, rel);
+  if (data === null) return fs.rm(abs, { force: true });
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  await fs.writeFile(abs, data);
+}
+
+// The snapshot entries whose content, or existence, is not what it was.
+async function changedSince(root, snap) {
+  const changed = [];
+  for (const [rel, before] of snap.files) {
+    const { data, big } = await readEntry(absOf(root, rel));
+    const now = data ?? null; // a folder or link in its place counts as absent
+    if (big || (before === null) !== (now === null) || (before && !before.equals(now))) changed.push(rel);
+  }
+  return changed;
+}
+
+module.exports = {
+  cleanRel, parseClaim, covers, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor,
+  claimPrompt, buildBrief,
+  snapshot, addToSnapshot, restore, changedSince,
+};
