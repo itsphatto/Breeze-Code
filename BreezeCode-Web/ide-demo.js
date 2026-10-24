@@ -404,7 +404,7 @@ h1 {
       </section>
       <aside class="bz-agents" aria-label="Agents">
         <div class="bz-side-head"><span>Agents</span><span class="bz-head-actions" style="opacity:1">
-          <button class="bz-pill blue" data-act="agent.pick" aria-haspopup="menu" id="bzAgentPill"><img src="${ASSETS}agents/claude.svg" alt="" width="14" height="14">Claude Code</button>
+          <button class="bz-pill blue" data-act="agent.pick" aria-haspopup="menu" id="bzAgentPill"><img src="${ASSETS}agents/claude.svg" alt="" width="14" height="14">Claude Code CLI</button>
           <button class="bz-icon-btn" data-act="chat.new" title="New chat">${icon('plus', 14)}</button>
           <button class="bz-icon-btn flip" data-act="view.toggleAgents" title="Hide Agents">${icon('chev', 14)}</button>
         </span></div>
@@ -1321,8 +1321,8 @@ h1 {
   termPrint('Breeze Code terminal · this one runs in your browser.\nType <span class="cmd">help</span> to see what it can do.\n');
 
   /* ================= Agents ================= */
-  const AGENTS = ['Claude Code', 'Codex', 'Antigravity', 'Ollama · qwen2.5-coder'];
-  const AGENT_LOGOS = { 'Claude Code': 'claude.svg', Codex: 'codex.png', Antigravity: 'antigravity.png', 'Ollama · qwen2.5-coder': 'ollama.svg' };
+  const AGENTS = ['Claude Code CLI', 'Codex', 'Antigravity', 'Ollama · qwen2.5-coder'];
+  const AGENT_LOGOS = { 'Claude Code CLI': 'claude.svg', Codex: 'codex.png', Antigravity: 'antigravity.png', 'Ollama · qwen2.5-coder': 'ollama.svg' };
   let agentName = AGENTS[0];
   const agentLogo = () => `<img src="${ASSETS}agents/${AGENT_LOGOS[agentName]}" alt="">`;
   let busy = false;

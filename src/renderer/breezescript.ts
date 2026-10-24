@@ -34,7 +34,7 @@ interface Diag { line: number; col: number; len: number; msg: string; }
 type SyntaxResult = { ok: true } | (Diag & { eof?: boolean }) | null;
 interface RootInfo { root: string; name: string; }
 interface SearchHit { path: string; line: number; col: number; text: string; }
-interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; }
+interface DetectedAgent { id: string; name: string; vendor: string; url: string; found: boolean; path: string | null; version: string | null; api?: boolean; models?: string[]; install?: string | null; }
 interface Accounts { accounts: User[]; active: string | null; }
 // Workspace sync (main.js + sync.js). A failure comes back as { error, code } instead of throwing.
 interface SyncFail { error: string; code: string | null; }
@@ -50,6 +50,7 @@ interface DiscordActivity { details?: string; state?: string; start?: number; }
 interface LiveStatus { available: boolean; running: boolean; url: string; }
 
 interface BreezeApi {
+  version?: string;
   fs: {
     openFolder(): Promise<RootInfo | null>;
     createFolder(): Promise<RootInfo | null>;
@@ -120,6 +121,7 @@ interface BreezeApi {
     start(provider: string): Promise<{ started?: boolean; error?: string }>;
     cancel(): Promise<void>;
     signOut(): Promise<User | null>;
+    remove(id: string): Promise<User | null>;
     onEvent(cb: (ev: AuthEvent) => void): () => void;
   };
   sync: {
@@ -131,7 +133,9 @@ interface BreezeApi {
   // Social feeds for Vibe Mode. The desktop app signs in through its own browser window and lays the feed over #vibeFrame.
   vibe: {
     status(): Promise<Record<string, boolean>>;
-    connect(id: string): Promise<boolean>;
+    connect(id: string, bounds: Rect): Promise<boolean>;
+    connectBounds(bounds: Rect): Promise<void>;
+    connectClose(): Promise<void>;
     disconnect(id: string): Promise<void>;
     show(id: string, bounds: Rect): Promise<void>;
     bounds(bounds: Rect): Promise<void>;
@@ -398,6 +402,7 @@ async function demoEdit(role: string): Promise<void> {
   el.dispatchEvent(new Event('input'));
 }
 
+let demoConnectDone: (() => void) | null = null;
 function demoApi(): BreezeApi {
   const files = new Map(Object.entries(DEMO_FILES));
   const binary = new Set(['assets/beans.jpg']);
@@ -522,8 +527,8 @@ function demoApi(): BreezeApi {
           demo: true, platform: 'browser',
           agents: [
             { id: 'antigravity', name: 'Antigravity', vendor: 'Google DeepMind', url: 'https://antigravity.google/', found: false, path: null, version: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'claude-opus-4-6-thinking', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gpt-oss-120b-medium'] },
-            { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null },
-            { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', url: 'https://claude.com/claude-code', found: false, path: null, version: 'default', models: ['default', 'opus', 'sonnet', 'haiku'] },
+            { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null, install: 'npm install -g @openai/codex' },
+            { id: 'claude', name: 'Claude Code CLI', vendor: 'Anthropic', url: 'https://claude.com/claude-code', found: false, path: null, version: 'default', models: ['default', 'opus', 'sonnet', 'haiku'], install: 'npm install -g @anthropic-ai/claude-code' },
             { id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
@@ -635,6 +640,11 @@ function demoApi(): BreezeApi {
         current = accounts[0] ?? null;
         return current;
       },
+      async remove(id) {
+        accounts = accounts.filter(a => accountKey(a) !== id);
+        if (current && accountKey(current) === id) current = accounts[0] ?? null;
+        return current;
+      },
       onEvent(cb) { authListeners.push(cb); return () => { }; },
     },
     // Browser preview: "connecting" opens the site in a new tab; the feed itself only plays in the desktop app.
@@ -644,8 +654,11 @@ function demoApi(): BreezeApi {
         const site = SOCIAL_SITES.find(s => s.id === id);
         if (site) window.open(site.url, '_blank', 'noopener');
         store.set('breeze.demoVibe', { ...feeds(), [id]: true });
-        return true;
+        // The desktop app resolves when the sign-in view is closed; the preview waits for the close button too.
+        return new Promise<boolean>(resolve => { demoConnectDone = () => resolve(true); });
       },
+      async connectBounds() { /* no view in the browser */ },
+      async connectClose() { demoConnectDone?.(); demoConnectDone = null; },
       async disconnect(id) { store.set('breeze.demoVibe', { ...feeds(), [id]: false }); },
       async show() { /* placeholder only */ },
       async bounds() { /* placeholder only */ },
@@ -791,6 +804,7 @@ async function setIcon(host: Element, name: string): Promise<void> {
 
 const isDesktop = !!window.breeze;
 const api: BreezeApi = window.breeze ?? demoApi();
+const appVersion = api.version || '0.5.2';
 
 /* ================= App state (survives reloads) ================= */
 type WorkMode = 'ide' | 'box';
@@ -858,11 +872,23 @@ async function signOut(): Promise<void> {
   await refreshAccounts();
   toast(next ? `Signed out — now using ${next.name}` : 'Signed out');
 }
+// Forgets a remembered account; forgetting the active one moves to the next.
+async function removeAccount(a: User): Promise<void> {
+  const wasActive = accountKey(a) === accounts.active;
+  const next = await api.auth.remove(accountKey(a));
+  if (wasActive) setUser(next);
+  await refreshAccounts();
+  toast(`Removed ${a.email ?? a.name}`);
+}
+// The hold-to-delete trash button (same as the branch picker's), used for anything that's hard to undo.
+const holdDelHtml = (label: string, attrs = '', tag: 'button' | 'span' = 'button') =>
+  `<${tag} class="br-del" ${tag === 'span' ? 'role="button" tabindex="0" ' : ''}${attrs} title="Hold for 5 seconds to remove" aria-label="Hold for 5 seconds to remove ${escAttr(label)}">${svgIcon('trash', 14)}</${tag}>`;
 function accountItems(): MenuItem[] {
   const list: MenuItem[] = accounts.accounts.map(a => ({
     label: a.name, key: a.provider, checked: () => accountKey(a) === accounts.active, run: () => background(switchAccount(a)),
+    remove: () => background(removeAccount(a)),
   }));
-  return [...list, ...(list.length ? [{ sep: true }] : []), { label: 'Add account…', run: addAccount }];
+  return [...list, ...(list.length ? [{ sep: true }] : []), { label: 'Add account', run: addAccount }];
 }
 // Clicking your picture: who you are, your other accounts (in a submenu) and signing out.
 function openAccountMenu(anchor: HTMLElement): void {
@@ -902,7 +928,7 @@ const SIGNIN_PANEL = `<div class="signin-btns" data-si="choices">
     <p class="signin-error hidden" data-si="error" role="alert"></p>
   </div>
   <div class="waiting hidden" data-si="wait">
-    <div class="spinner"></div><div data-si="msg">Waiting for your browser…</div>
+    <div class="spinner"></div><div data-si="msg">Waiting for your browser</div>
     <div class="device-code hidden" data-si="code"><span data-si="codeText"></span><button class="btn btn-sm" data-si="copy">Copy</button><button class="btn btn-sm" data-si="openPage">Open page ${svgIcon('external', 12)}</button></div>
     <button class="btn btn-sm" data-si="cancel">Cancel</button>
   </div>`;
@@ -921,7 +947,7 @@ function signinError(text: string): void {
 }
 async function startSignIn(provider: string): Promise<void> {
   signinView(true);
-  si('msg').textContent = `Opening ${provider} in your browser…`;
+  si('msg').textContent = `Opening ${provider} in your browser`;
   const r = await api.auth.start(provider).catch((e: unknown) => ({ error: errMsg(e) }) as { error?: string });
   if (r.error === 'not-configured') {
     signinError(`Looks like ${provider} login isn't hooked up yet! Grab a Client ID, add it to .env (or breeze.config.json — there's an example config to help), and give Breeze a restart. Or, skip it for now and jump right in.`);
@@ -950,7 +976,7 @@ api.auth.onEvent(ev => {
     si('code').classList.remove('hidden');
     si('openPage').onclick = () => background(api.sys.openExternal(ev.uri ?? 'https://github.com/login/device'));
   } else if (ev.t === 'waiting') {
-    si('msg').textContent = `Finish signing in with ${ev.provider} in your browser…`;
+    si('msg').textContent = `Finish signing in with ${ev.provider} in your browser`;
   } else if (ev.t === 'done' && ev.user) {
     setUser(ev.user);
     signinView(false);
@@ -1023,7 +1049,7 @@ async function runSync(mode: 'sync' | 'pull'): Promise<void> {
   if (syncing) return;
   syncing = true;
   setSyncBusy(true);
-  toast(mode === 'pull' ? 'Getting the latest from the cloud…' : 'Syncing…');
+  toast(mode === 'pull' ? 'Getting the latest from the cloud' : 'Syncing');
   try {
     const s = syncOk(await api.sync.run(mode));
     if (!s) return;
@@ -1076,7 +1102,7 @@ async function openCloudWorkspaces(auto = false): Promise<void> {
     <div class="row end spaced"><button class="btn" data-close>${auto ? 'Later' : 'Close'}</button></div>`, m => {
     $$<HTMLElement>('[data-ws]', m).forEach(b => b.onclick = () => background((async () => {
       closeModal();
-      toast('Downloading workspace…');
+      toast('Downloading workspace');
       const r = syncOk(await api.sync.clone(b.dataset.ws ?? ''));
       if (!r) return;
       await loadWorkspace(r.info);
@@ -1111,8 +1137,8 @@ async function checkCloudNewer(): Promise<void> {
 function syncMenuItems(): MenuItem[] {
   return [
     { label: 'Sync Workspace', act: 'sync.run', enabled: () => !!rootInfo },
-    { label: 'Get Latest from Cloud…', act: 'sync.pull', enabled: () => !!rootInfo },
-    { label: 'Open Cloud Workspace…', act: 'sync.open' },
+    { label: 'Get Latest from Cloud', act: 'sync.pull', enabled: () => !!rootInfo },
+    { label: 'Open Cloud Workspace', act: 'sync.open' },
   ];
 }
 window.addEventListener('focus', () => background(checkCloudNewer()));
@@ -1127,9 +1153,9 @@ function feedCardHtml(s: SocialSite): string {
   const cls = ['social-card', connected ? 'connected' : '', s.id === appState.vibeSite ? 'on' : ''].filter(Boolean).join(' ');
   let sub = 'Not connected';
   if (connected) sub = 'Signed in';
-  const connectLabel = connected ? 'Disconnect' : 'Connect ' + svgIcon('external', 12);
+  const connectLabel = connected ? 'Disconnect' : 'Connect';
   return `<div class="${cls}" data-site="${s.id}" role="button" tabindex="0">
-    ${brandMark('mark', s.id, s.mark)}<span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span>
+    ${brandMark('mark', s.id, s.mark)}<span class="sc-text"><span class="nm">${esc(s.name)}</span><span class="sub">${sub}</span></span>
     <button class="btn btn-sm" data-connect="${s.id}">${connectLabel}</button></div>`;
 }
 async function renderFeedChoices(root: HTMLElement): Promise<void> {
@@ -1141,8 +1167,10 @@ async function renderFeedChoices(root: HTMLElement): Promise<void> {
     if (appState.vibeSite && stale.includes(appState.vibeSite)) appState.vibeSite = appState.vibeSites[0] ?? null;
     saveApp();
   }
+  let first = true;
   const draw = () => {
     root.innerHTML = SOCIAL_SITES.map(feedCardHtml).join('');
+    if (first) { first = false; staggerIn(root.children, 3); }
     $$('[data-site]', root).forEach(card => {
       const id = card.dataset.site ?? '';
       const pick = (onButton: boolean) => {
@@ -1156,6 +1184,34 @@ async function renderFeedChoices(root: HTMLElement): Promise<void> {
   };
   draw();
 }
+// Signing in to a feed: the app blurs behind a rounded frame and the site loads into it (a view laid over the
+// frame's body by the desktop app). Close, Esc or a click on the backdrop ends it.
+function connectFeed(site: SocialSite): Promise<boolean> {
+  const scrim = document.createElement('div');
+  scrim.className = 'feed-connect';
+  scrim.innerHTML = `<div class="feed-connect-frame" role="dialog" aria-label="Sign in to ${escAttr(site.name)}">
+      <div class="feed-connect-head">${brandMark('mark', site.id, site.mark)}<span>Sign in to ${esc(site.name)}</span>
+        <button class="btn btn-sm btn-primary" data-fc-done>Done</button></div>
+      <div class="feed-connect-body"><div class="spinner"></div></div></div>`;
+  document.body.append(scrim);
+  const body = $('.feed-connect-body', scrim);
+  const rect = (): Rect => { const r = body.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; };
+  const place = () => background(api.vibe.connectBounds(rect()));
+  addEventListener('resize', place);
+  const close = () => background(api.vibe.connectClose());
+  const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  $('[data-fc-done]', scrim).onclick = close;
+  scrim.onmousedown = e => { if (e.target === scrim) close(); };
+  // The view is placed once the frame has finished growing in, so it lands on the frame's final box.
+  const opened = new Promise<void>(r => setTimeout(r, 320));
+  return opened.then(() => api.vibe.connect(site.id, rect())).catch(() => false).finally(() => {
+    removeEventListener('resize', place);
+    document.removeEventListener('keydown', onKey, true);
+    scrim.classList.add('closing');
+    setTimeout(() => scrim.remove(), 260);
+  });
+}
 async function toggleFeed(id: string): Promise<void> {
   const site = siteById(id);
   if (!site) return;
@@ -1168,9 +1224,8 @@ async function toggleFeed(id: string): Promise<void> {
     toast(`${site.name} disconnected`);
     return;
   }
-  toast(`Sign in to ${site.name} in the window that opened, then close it`);
   // A feed only counts as connected once the site really has a sign-in; closing the window unsigned adds nothing.
-  signedIn[id] = await api.vibe.connect(id).catch(() => false);
+  signedIn[id] = await connectFeed(site);
   if (!signedIn[id]) { toast(`Couldn't confirm a ${site.name} sign-in, so it isn't connected. Try Connect again and sign in first.`); return; }
   appState.vibeSites = [...appState.vibeSites, id];
   appState.vibeSite = id;
@@ -1191,9 +1246,9 @@ let detecting: Promise<Detection> | null = null;
 
 function detectTools(force = false): Promise<Detection> {
   if (detecting !== null) return detecting;
-  $('#aiPill').className = 'pill'; $('#aiPill').textContent = 'Scanning…';
-  $('#toolsPill').className = 'pill'; $('#toolsPill').textContent = 'Scanning…';
-  if (!appState.detect) $('#agentList').innerHTML = '<div class="row text-3"><div class="spinner sm"></div>Checking this computer…</div>';
+  $('#aiPill').className = 'pill'; $('#aiPill').textContent = 'Scanning';
+  $('#toolsPill').className = 'pill'; $('#toolsPill').textContent = 'Scanning';
+  if (!appState.detect) $('#agentList').innerHTML = '<div class="row text-3"><div class="spinner sm"></div>Checking this computer</div>';
   detecting = api.sys.detect(force).then(d => {
     appState.detect = d;
     fixSelectedAgent();
@@ -1268,7 +1323,7 @@ function bindLocalLlm(root: HTMLElement, onChange: () => void): void {
     const key = $<HTMLInputElement>('[data-llm-key]', root);
     const save = async () => {
       const err = root.querySelector<HTMLElement>('.key-err');
-      connect.disabled = true; connect.textContent = 'Connecting…';
+      connect.disabled = true; connect.textContent = 'Connecting';
       try {
         const r = await api.llm.connect('', key.value);
         Object.assign(local() ?? {}, { found: true, path: r.url ?? null, version: r.model, models: r.models });
@@ -1374,7 +1429,7 @@ function renderDetection(): void {
       if (!cmd) return;
       b.classList.add('busy');
       const prev = b.textContent;
-      b.textContent = 'Running…';
+      b.textContent = 'Running';
       try {
         if (await api.sys.runCommand(cmd)) toast(`Launched terminal command: ${cmd}`);
         else toast(`Breeze can't run that command. Run it yourself: ${cmd}`);
@@ -1502,6 +1557,7 @@ function agentPillMenuItems(): MenuItem[] {
   for (const ag of appState.detect?.agents ?? []) {
     items.push({
       label: ag.name,
+      icon: brandMark('menu-ico', ag.id, ag.name[0]),
       checked: () => ag.id === appState.agent,
       enabled: () => ag.found,
       run: () => {
@@ -1515,7 +1571,7 @@ function agentPillMenuItems(): MenuItem[] {
       }
     });
   }
-  items.push({ sep: true }, { label: 'Manage agents…', run: openAgentPicker });
+  items.push({ sep: true }, { label: 'Manage agents', run: openAgentPicker });
   return items;
 }
 
@@ -1552,7 +1608,7 @@ function openAgentPicker(): void {
   openModal(`<h3>Choose your AI agent</h3><p class="sub">Installed coding agents are found automatically. A local LLM connects by its server address.</p>
     <div class="agent-list" id="pickList"></div>
     <div class="row between spaced"><button class="btn btn-sm btn-ghost" id="pickRescan">Scan again</button><button class="btn btn-primary" data-close>Done</button></div>`, m => {
-    const scanning = '<div class="text-3">Scanning…</div>';
+    const scanning = '<div class="text-3">Scanning</div>';
     const render = () => {
       if (!appState.detect) { $('#pickList', m).innerHTML = scanning; return; }
       $('#pickList', m).innerHTML = agentOptionsHtml(appState.detect);
@@ -1592,6 +1648,10 @@ $('#startBuilding').onclick = () => {
 // Switching between the onboarding, the IDE and Breeze Box: the old screen fades back, the new one rises in.
 let swapTimer: TimeoutId | undefined;
 let booted = false;
+// While the splash is up, startup work that fills the screen (git status, fonts, pictures) is collected here,
+// so the splash only lifts once the app looks finished instead of filling in after.
+let splashWaits: Promise<unknown>[] | null = [];
+const holdSplash = <T>(p: Promise<T>): Promise<T> => { splashWaits?.push(p.catch(() => undefined)); return p; };
 function swapScreen(to: string): void {
   const next = $(to);
   const screens = ['#onboard', '#ide', '#box'].map(id => $(id));
@@ -1660,6 +1720,8 @@ const LANGS: Record<string, [lexer: string, name: string]> = {
   cs: ['cs', 'C#'], csx: ['cs', 'C# Script'], csproj: ['html', 'C# Project'],
   png: ['', 'PNG Image'], jpg: ['', 'JPEG Image'], jpeg: ['', 'JPEG Image'], gif: ['', 'GIF Image'], webp: ['', 'WebP Image'],
   avif: ['', 'AVIF Image'], bmp: ['', 'Bitmap Image'], ico: ['', 'Icon'],
+  gitignore: ['ignore', 'Ignore'], dockerignore: ['ignore', 'Ignore'], npmignore: ['ignore', 'Ignore'],
+  prettierignore: ['ignore', 'Ignore'], eslintignore: ['ignore', 'Ignore'], vercelignore: ['ignore', 'Ignore'],
 };
 const extOf = (path: string) => { const n = baseName(path).toLowerCase(); return n.includes('.') ? n.slice(n.lastIndexOf('.') + 1) : ''; };
 function langOf(path: string): [lexer: string, name: string] {
@@ -1724,6 +1786,8 @@ const LEXERS: Record<string, RegExp> = {
     ['attr', either(/\*\*[^*\n]+\*\*/, /\[[^[\]\n]*\]\([^()\n]*\)/)],
   ]),
   html: lexer([['com', /<!--[\s\S]*?(?:-->|$)/], ['tagblock', /<[!/]?[A-Za-z][^>]*>?/]]),
+  // .gitignore and friends: # comments (only at the start of a line), ! negations and * / ** globs.
+  ignore: lexer([['com', /(?<=^|\n)[ \t]*#[^\n]*/], ['kw', /(?<=^|\n)!/], ['attr', /\*\*?|\?/]]),
 };
 const HTML_TAG = lexer([['tag', /^<[!/]?[\w:-]+|\/?>$/], ['str', /"[^"]*"?|'[^']*'?/], ['attr', /[^\s="'<>/]+/]]);
 
@@ -2695,6 +2759,9 @@ interface DotGridParams {
   t: number;
   maxEnergy: number;
 }
+// How round the glow band's inner edge is at corners, and how wide the hand-off between two edges' waves is.
+const CORNER_SOFT_R = 56;
+const CORNER_BLEND = 48;
 function drawFluidDotGrid(params: DotGridParams): void {
   const { ctx, w, h, rawR, gx, gy, t, maxEnergy } = params;
   if (maxEnergy <= 0.015) return;
@@ -2748,30 +2815,30 @@ function drawFluidDotGrid(params: DotGridParams): void {
       if (energy <= 0.02) continue;
 
       // Distance to border with exact rounded-corner calculation (fills out border gap)
-      const distToBorder = getDistToRoundedBorder(dotX, dotY, w, h, rawR);
-      if (distToBorder < 0) continue;
+      const trueDist = getDistToRoundedBorder(dotX, dotY, w, h, rawR);
+      if (trueDist < 0) continue;
+      // Deeper in, measure against a much rounder corner so the band's inner edge sweeps around corners
+      // in a soft curve instead of meeting at a sharp right angle.
+      const softDist = getDistToRoundedBorder(dotX, dotY, w, h, Math.max(rawR, CORNER_SOFT_R));
+      const deep = Math.min(1, trueDist / 20);
+      const distToBorder = Math.max(0, trueDist + (softDist - trueDist) * deep * deep * (3 - 2 * deep));
 
-      // Border perimeter coordinate measured along the nearest edge (clockwise from top-left),
-      // so wave crests stand straight out from the border instead of slanting diagonally
+      // Border perimeter coordinate measured along the nearer horizontal and the nearer vertical edge
+      // (clockwise from top-left), so wave crests stand straight out from the border.
       const dTop = dotY, dRight = w - dotX, dBottom = h - dotY, dLeft = dotX;
-      const dMin = Math.min(dTop, dRight, dBottom, dLeft);
-      let u: number;
-      if (Math.abs(dMin - dTop) < 0.001) {
-        u = dotX;
-      } else if (Math.abs(dMin - dRight) < 0.001) {
-        u = w + dotY;
-      } else if (Math.abs(dMin - dBottom) < 0.001) {
-        u = w + h + (w - dotX);
-      } else {
-        u = 2 * w + h + (h - dotY);
-      }
-
-      // Multi-harmonic undulating wave terrain for organic mountain crests and valleys
-      const wave1 = Math.sin(k1 * u + t * 1.6);
-      const wave2 = Math.sin(k2 * u - t * 2.2 + 1.25);
-      const wave3 = Math.cos(k3 * u + t * 3.0 + 2.6);
-
-      const crestFactor = Math.max(0.3, 0.55 + 0.14 * wave1 + 0.09 * wave2 + 0.06 * wave3);
+      const uH = dTop <= dBottom ? dotX : w + h + (w - dotX);
+      const uV = dRight <= dLeft ? w + dotY : 2 * w + h + (h - dotY);
+      const crestAt = (u: number) => {
+        const wave1 = Math.sin(k1 * u + t * 1.6);
+        const wave2 = Math.sin(k2 * u - t * 2.2 + 1.25);
+        const wave3 = Math.cos(k3 * u + t * 3.0 + 2.6);
+        return Math.max(0.3, 0.55 + 0.14 * wave1 + 0.09 * wave2 + 0.06 * wave3);
+      };
+      // Blend the two edges' waves across the corner diagonal instead of switching at it, so there's no seam.
+      const blend = Math.max(0, Math.min(1, 0.5 + (Math.min(dLeft, dRight) - Math.min(dTop, dBottom)) / CORNER_BLEND));
+      const bs = blend * blend * (3 - 2 * blend);
+      const crestFactor = crestAt(uV) + (crestAt(uH) - crestAt(uV)) * bs;
+      const u = bs >= 0.5 ? uH : uV;
 
       // A minimal band: low crests that only ripple a little, matching the blur fade depth
       const maxAllowedDepth = Math.max(20, Math.min(60, Math.min(w, h) * 0.25));
@@ -3947,7 +4014,7 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   if (rootInfo) { flushSession(); resetWorkspace(); }
   rootInfo = info;
   loadTreeOrder();
-  background(loadNpmScripts());
+  background(holdSplash(loadNpmScripts()));
   $('#projectName').textContent = info.name;
   $('#projectName').title = info.root;
   document.title = `${info.name} — Breeze Code`;
@@ -3968,7 +4035,7 @@ async function loadWorkspace(info: RootInfo): Promise<void> {
   restoreChat(SURFACES.ide);
   renderBoxFolder();
   void refreshLiveShare();
-  void refreshGit();
+  void holdSplash(refreshGit());
   syncCheckedAt = 0; background(checkCloudNewer());
   term.cwd = await api.term.cwd(); renderPs();
 }
@@ -4310,14 +4377,14 @@ $('#tree').addEventListener('contextmenu', e => {
   const fileItems: MenuItem[] = p ? [
     ...(isDir ? [] : [{ label: 'Open in Split View', run: () => background(openFileInSplit(p)) }]),
     { sep: true },
-    { label: 'Rename…', key: 'F2', run: () => background(renameEntry(p)) },
+    { label: 'Rename', key: 'F2', run: () => background(renameEntry(p)) },
     { label: 'Delete', key: 'Delete', run: () => deleteEntry(p, isDir) },
     { sep: true },
     { label: 'Copy Relative Path', run: () => background(navigator.clipboard.writeText(p).then(() => toast('Path copied'))) },
   ] : [];
   popupMenu(e.clientX, e.clientY, [
-    { label: 'New File…', run: () => background(newEntry(dir, false)) },
-    { label: 'New Folder…', run: () => background(newEntry(dir, true)) },
+    { label: 'New File', run: () => background(newEntry(dir, false)) },
+    { label: 'New Folder', run: () => background(newEntry(dir, true)) },
     ...fileItems,
   ], () => { ctxPath = null; renderTree(); });
 });
@@ -5056,7 +5123,7 @@ function showImage(el: HTMLElement, b: EditorBuffer): void {
   if (el.dataset.img === b.url) return; // already showing it: keep its zoom and scroll
   el.dataset.img = b.url;
   el.innerHTML = `<div class="img-stage fit"><img src="${escAttr(b.url ?? '')}" alt="${escAttr(baseName(b.path))}" draggable="false"></div>
-    <div class="img-meta"><span class="img-dims">Loading…</span><span>${fmtSize(b.size)}</span><span class="img-zoom hidden"></span></div>`;
+    <div class="img-meta"><span class="img-dims">Loading</span><span>${fmtSize(b.size)}</span><span class="img-zoom hidden"></span></div>`;
   const stage = $('.img-stage', el), img = $<HTMLImageElement>('img', el), zoom = $('.img-zoom', el);
   const shrunk = () => img.naturalWidth > img.clientWidth + 1 || img.naturalHeight > img.clientHeight + 1;
   const hint = () => {
@@ -5883,7 +5950,7 @@ function quickOpen(): void {
   let all: string[] = [];
   let sel = 0;
   let shown: string[] = [];
-  openModal(`<input class="input w-full" id="qoIn" aria-label="Search files by name" placeholder="Search files by name" spellcheck="false"><div class="qo-list" id="qoList"><div class="side-note">Loading…</div></div>`, m => {
+  openModal(`<input class="input w-full" id="qoIn" aria-label="Search files by name" placeholder="Search files by name" spellcheck="false"><div class="qo-list" id="qoList"><div class="side-note">Loading</div></div>`, m => {
     const input = $<HTMLInputElement>('#qoIn', m);
     input.focus();
     const render = () => {
@@ -5918,7 +5985,7 @@ async function runSearch(): Promise<void> {
   const out = $('#searchResults');
   if (!rootInfo) { out.innerHTML = '<p class="side-note">Open a folder to search it.</p>'; return; }
   if (!q) { out.innerHTML = '<p class="side-note">Type and press Enter to search across files.</p>'; return; }
-  out.innerHTML = '<p class="side-note">Searching…</p>';
+  out.innerHTML = '<p class="side-note">Searching</p>';
   let hits: SearchHit[];
   try { hits = await api.fs.search(q, searchCase); } catch (e) { out.innerHTML = `<p class="side-note">${esc(errMsg(e))}</p>`; return; }
   if (!hits.length) { out.innerHTML = '<p class="side-note">No results.</p>'; return; }
@@ -7079,6 +7146,7 @@ function applyLayout(): void {
   store.set('breeze.layout', layout);
   syncScroll();
   updateActIndicator();
+  setTimeout(placeSashes); // after this script has set the sash layer up
 }
 window.addEventListener('resize', applyLayout);
 // Dragging below a threshold collapses the panel; dragging back out reopens it.
@@ -7088,15 +7156,67 @@ const SASH_DRAG: Record<SashKind, (start: Layout, dx: number, dy: number) => voi
   preview: (start, dx) => { const w = start.preview - dx; layout.previewOpen = w >= 140; if (layout.previewOpen) layout.preview = clamp(w, 220, $('#work').clientWidth - 220); },
   term: (start, _dx, dy) => { const h = start.term - dy; layout.termOpen = h >= 60; if (layout.termOpen) layout.term = clamp(h, 80, innerHeight - 220); },
 };
+// Sashes sit in the middle of the gap between two cards: both the grab area and the line it lights.
+// The cards clip their contents, so the sashes are lifted out into one fixed layer and placed from their card's box.
+const sashLine = document.body.appendChild(document.createElement('div'));
+sashLine.className = 'sash-line';
+const sashLayer = document.body.appendChild(document.createElement('div'));
+sashLayer.className = 'sash-layer';
+const sashCards = new Map<HTMLElement, HTMLElement>();
+$$<HTMLElement>('[data-sash]').forEach(sash => { sashCards.set(sash, sash.parentElement as HTMLElement); sashLayer.append(sash); });
+const SASH_GRAB = 8;
+// Where a sash's gap is: [left, top, width, height] of the gap's centre line, or null while its card isn't shown.
+function sashGap(sash: HTMLElement): [number, number, number, number] | null {
+  const cardEl = sashCards.get(sash);
+  if (!cardEl?.offsetParent) return null;
+  const kind = sash.dataset.sash;
+  if (kind === 'term' && !cardEl.classList.contains('open')) return null;
+  const card = cardEl.getBoundingClientRect();
+  const half = (Number.parseFloat(getComputedStyle($('#main')).getPropertyValue('--gap')) || 6) / 2;
+  return kind === 'term'
+    ? [card.left, card.top - half, card.width, 0]
+    : [kind === 'side' ? card.right + half : card.left - half, card.top, 0, card.height];
+}
+function placeSashes(): void {
+  for (const sash of sashCards.keys()) {
+    const g = sashGap(sash);
+    sash.hidden = !g;
+    if (!g) continue;
+    const [x, y, w, h] = g;
+    const box = w ? [x, y - SASH_GRAB / 2, w, SASH_GRAB] : [x - SASH_GRAB / 2, y, SASH_GRAB, h];
+    Object.assign(sash.style, { left: `${box[0]}px`, top: `${box[1]}px`, width: `${box[2]}px`, height: `${box[3]}px` });
+  }
+}
+const sashWatch = new ResizeObserver(() => placeSashes());
+new Set(sashCards.values()).forEach(c => sashWatch.observe(c));
+[document.body, $('#main'), $('#work')].forEach(el => sashWatch.observe(el));
+// Panels slide when they open, close or reset; settle the sashes once the slide ends.
+[$('#main'), $('#work')].forEach(el => el.addEventListener('transitionend', e => { if (e.target === el) placeSashes(); }));
+placeSashes();
+addEventListener('load', placeSashes);
+// The app's intro scales the whole window in; boxes measured mid-intro are off, so settle again when it ends.
+$('#ide').addEventListener('animationend', e => { if (e.target === e.currentTarget) placeSashes(); });
+$('#main').addEventListener('pointerenter', placeSashes); // a cheap re-check whenever the pointer comes back to the panels
+void document.fonts.ready.then(placeSashes);
+function placeSashLine(sash: HTMLElement | null): void {
+  sashLine.classList.toggle('on', !!sash);
+  const g = sash && sashGap(sash);
+  if (!g) return;
+  const [x, y, w, h] = g;
+  const box = w ? [x, y - 1, w, 2] : [x - 1, y, 2, h];
+  Object.assign(sashLine.style, { left: `${box[0]}px`, top: `${box[1]}px`, width: `${box[2]}px`, height: `${box[3]}px` });
+}
 function startSashDrag(sash: HTMLElement, kind: SashKind, e: PointerEvent): void {
   const sx = e.clientX, sy = e.clientY, start = { ...layout };
   if (kind === 'preview') start.preview = $('#previewPane').getBoundingClientRect().width;
   document.body.classList.add(kind === 'term' ? 'resizing-h' : 'resizing');
   sash.classList.add('active');
-  const move = (ev: PointerEvent) => { SASH_DRAG[kind](start, ev.clientX - sx, ev.clientY - sy); applyLayout(); };
-  const up = () => {
+  placeSashLine(sash);
+  const move = (ev: PointerEvent) => { SASH_DRAG[kind](start, ev.clientX - sx, ev.clientY - sy); applyLayout(); placeSashes(); placeSashLine(sash); };
+  const up = (ev: PointerEvent) => {
     removeEventListener('pointermove', move); removeEventListener('pointerup', up);
     document.body.classList.remove('resizing', 'resizing-h'); sash.classList.remove('active');
+    placeSashLine((ev.target as HTMLElement)?.closest?.<HTMLElement>('[data-sash]') === sash ? sash : null);
     if (layout.side !== start.side || layout.agents !== start.agents || layout.preview !== start.preview || layout.term !== start.term || layout.sideOpen !== start.sideOpen || layout.agentsOpen !== start.agentsOpen || layout.previewOpen !== start.previewOpen || layout.termOpen !== start.termOpen) {
       pushAppAction({ type: 'layout', prev: start, next: { ...layout } });
     }
@@ -7110,6 +7230,8 @@ $$<HTMLElement>('[data-sash]').forEach(sash => {
     e.preventDefault();
     startSashDrag(sash, kind, e);
   });
+  sash.addEventListener('pointerenter', () => { if (!document.querySelector('.sash.active')) { placeSashes(); placeSashLine(sash); } });
+  sash.addEventListener('pointerleave', () => { if (!sash.classList.contains('active')) placeSashLine(null); });
   sash.addEventListener('dblclick', () => {
     const prev = { ...layout };
     layout[kind] = DEFAULT_LAYOUT[kind];
@@ -7123,7 +7245,7 @@ $('#tglAgents').onclick = () => run('view.toggleAgents');
 
 /* ================= Commands, menu bar & shortcuts ================= */
 interface MenuItem {
-  label?: string; act?: string; run?: () => void; key?: string; sep?: boolean; checked?: () => boolean; enabled?: () => boolean; native?: boolean;
+  label?: string; icon?: string; remove?: () => void; act?: string; run?: () => void; key?: string; sep?: boolean; checked?: () => boolean; enabled?: () => boolean; native?: boolean;
   header?: User;              // a "who is signed in" row
   sub?: () => MenuItem[];     // opens a submenu on hover
   subClass?: string;          // custom css class for submenu
@@ -7369,11 +7491,11 @@ interface Menu { name: string; items: MenuItem[]; }
 const MENUS: Menu[] = [
   {
     name: 'File', items: [
-      { label: 'New File…', act: 'file.newFile', key: 'Ctrl+N' },
-      { label: 'New Folder…', act: 'file.newFolder' },
+      { label: 'New File', act: 'file.newFile', key: 'Ctrl+N' },
+      { label: 'New Folder', act: 'file.newFolder' },
       { sep: true },
-      { label: 'Open Folder…', act: 'file.openFolder', key: 'Ctrl+O' },
-      { label: 'Open Recent…', act: 'file.openRecent' },
+      { label: 'Open Folder', act: 'file.openFolder', key: 'Ctrl+O' },
+      { label: 'Open Recent', act: 'file.openRecent' },
       { sep: true },
       { label: 'Save', act: 'file.save', key: 'Ctrl+S', enabled: hasFile },
       { label: 'Save All', act: 'file.saveAll', key: 'Ctrl+Alt+S', enabled: () => [...buffers.values()].some(isDirty) },
@@ -7428,8 +7550,8 @@ const MENUS: Menu[] = [
   },
   {
     name: 'Go', items: [
-      { label: 'Go to File…', act: 'go.file', key: 'Ctrl+P' },
-      { label: 'Go to Line…', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
+      { label: 'Go to File', act: 'go.file', key: 'Ctrl+P' },
+      { label: 'Go to Line', act: 'go.line', key: 'Ctrl+G', enabled: hasFile },
       { label: 'Next Problem', act: 'go.nextProblem', key: 'F8', enabled: hasFile },
       { sep: true },
       { label: 'Next Editor', act: 'go.nextEditor', key: 'Ctrl+Tab' },
@@ -7460,14 +7582,14 @@ const MENUS: Menu[] = [
       { label: 'Settings', act: 'settings.open', key: 'Ctrl+,' },
       { label: 'Keyboard Shortcuts', act: 'help.keys' },
       { label: 'Run Setup Again', act: 'help.setup' },
-      { label: 'Vibe Mode Feeds…', act: 'vibe.feeds' },
+      { label: 'Vibe Mode Feeds', act: 'vibe.feeds' },
       { label: 'Sound Effects', act: 'sound.toggle', checked: () => sfx.on },
       { sep: true },
       { label: 'Breeze Code', act: 'mode.ide', checked: () => appState.mode === 'ide' },
       { label: 'Breeze Box', act: 'mode.box', checked: () => appState.mode === 'box' },
       { sep: true },
       { label: 'Sync Workspace', act: 'sync.run', enabled: () => !!user && !!rootInfo },
-      { label: 'Open Cloud Workspace…', act: 'sync.open', enabled: () => !!user },
+      { label: 'Open Cloud Workspace', act: 'sync.open', enabled: () => !!user },
       { sep: true },
       { label: 'Add Account', act: 'account.signIn' },
       { label: 'Sign Out', act: 'account.signOut', enabled: () => !!user },
@@ -7592,18 +7714,20 @@ function menuHeaderHtml(u: User): string {
   return `<div class="menu-label">${avatarHtml(u, '')}<span class="who"><b>${esc(u.name)}</b><small>${esc(detail)}</small></span></div>`;
 }
 function menuItemHtml(it: MenuItem, i: number): string {
-  if (it.sep) return '<div class="menu-sep"></div>';
+  if (it.sep) return `<div class="menu-sep" style="--i:${i}"></div>`;
   if (it.header) return menuHeaderHtml(it.header);
   const cls = ['menu-item', it.checked?.() ? 'checked' : '', it.sub ? 'has-sub' : '', i === kbIdx ? 'kb' : ''].filter(Boolean).join(' ');
   const disabled = it.enabled && !it.enabled() ? ' disabled' : '';
   const key = it.key ? `<span class="key">${esc(it.key)}</span>` : '';
   const popup = it.sub ? ' aria-haspopup="menu"' : '';
-  return `<button class="${cls}" role="menuitem" data-mi="${i}"${disabled}${popup}><span>${esc(it.label ?? '')}</span>${key}</button>`;
+  const label = it.icon ? `<span class="mi-ico-label">${it.icon}<span>${esc(it.label ?? '')}</span></span>` : `<span>${esc(it.label ?? '')}</span>`;
+  const del = it.remove ? holdDelHtml(it.label ?? '', 'data-mi-del', 'span') : '';
+  return `<button class="${cls}${it.remove ? ' has-del' : ''}" role="menuitem" data-mi="${i}" style="--i:${i}"${disabled}${popup}>${label}${key}${del}</button>`;
 }
 // Builds a menu element at (x, y), kept inside the window.
 function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTMLElement {
   const m = document.createElement('div');
-  m.className = cls;
+  m.className = `${cls} stagger`;
   m.setAttribute('role', 'menu');
   m.innerHTML = items.map((it, i) => menuItemHtml(it, i)).join('');
   $('#menuRoot').append(m);
@@ -7613,6 +7737,8 @@ function renderMenu(x: number, y: number, items: MenuItem[], cls = 'menu'): HTML
     const it = items[Number(b.dataset.mi)];
     b.onmousedown = e => e.preventDefault(); // keep focus (and the selection) in the editor
     b.onclick = () => (it.sub ? openSubmenu(b, it) : activateMenuItem(it));
+    const del = b.querySelector<HTMLElement>('[data-mi-del]');
+    if (del && it.remove) { const remove = it.remove; holdToDelete(del, () => { closeMenu(); remove(); }); }
     if (cls === 'menu') b.onmouseenter = () => (it.sub ? openSubmenu(b, it) : closeSubmenu());
   });
   return m;
@@ -7668,8 +7794,9 @@ function closeMenu(): void {
   if (!leaving.length) root.innerHTML = '';
   for (const m of leaving) {
     m.classList.add('closing');
-    m.addEventListener('animationend', () => m.remove(), { once: true });
-    setTimeout(() => m.remove(), 250);
+    // Item animations bubble up too; only the menu's own exit ends it.
+    m.addEventListener('animationend', e => { if (e.target === m) m.remove(); });
+    setTimeout(() => m.remove(), 320);
   }
   $$('[data-menu]').forEach(b => b.classList.remove('open'));
   const cb = menuOnClose; menuOnClose = null; cb?.();
@@ -7822,14 +7949,11 @@ const SETTINGS_TABS: [SettingsTab, string, string][] = [
 const AGENT_ORDER = ['claude', 'codex', 'antigravity', 'ollama'];
 const agentRank = (a: DetectedAgent) => (a.found ? 0 : 100) + (AGENT_ORDER.indexOf(a.id) + 1 || AGENT_ORDER.length + 1);
 let settingsTab: SettingsTab = 'general';
+let justSwitched = false;
 const settingsRoot = () => document.querySelector<HTMLElement>('#modalRoot .scrim:not(.closing) .settings-modal');
-// The liquid switch (styles under "liquid on/off switch" in breeze.css): a track with the knob's hole knocked out,
-// and the knob itself, which turns into a lens over a gooey copy of the track while pressed.
+// The on/off switch (styles under "on/off switch" in breeze.css): a rounded track and a square knob that stretches as it slides.
 const switchHtml = (id: string, on: boolean, label: string) =>
-  `<button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}" aria-label="${escAttr(label)}">`
-  + '<span class="lt-knockout"><span class="lt-indicator"><span class="lt-mask"></span></span></span>'
-  + '<span class="lt-liquid"><span class="lt-shadow"></span><span class="lt-wrapper"><span class="lt-liquids">'
-  + '<span class="lt-liquid-shadow"></span><span class="lt-track"></span></span></span><span class="lt-cover"></span></span></button>';
+  `<button class="switch ${on ? 'on' : ''}" id="${id}" role="switch" aria-checked="${on}" aria-label="${escAttr(label)}"><span class="sw-knob"></span></button>`;
 
 // Tap a switch to flip it, or drag the knob: it follows the pointer and lands on the nearer side.
 // A drag that ends on the side it started from swallows the click, so it changes nothing.
@@ -7860,8 +7984,9 @@ const switchHtml = (id: string, on: boolean, label: string) =>
     if (!drag.moved && Math.abs(dx) < 3) return;
     drag.moved = true;
     drag.el.dataset.dragging = 'true';
-    // The knob travels 40% of the switch's width.
-    drag.el.style.setProperty('--complete', String(clamp(drag.from + dx / (drag.el.clientWidth * .4) * 100, 0, 100)));
+    // The knob travels the switch's width less its height (one knob plus the padding on both sides).
+    const travel = Math.max(1, drag.el.clientWidth - drag.el.clientHeight);
+    drag.el.style.setProperty('--complete', String(clamp(drag.from + dx / travel * 100, 0, 100)));
   });
   document.addEventListener('pointerup', end);
   document.addEventListener('pointercancel', end);
@@ -7879,9 +8004,9 @@ const segHtml = (id: string, opts: [string, string][], cur: string) =>
 // The account card sits at the top of General.
 function accountHtml(): string {
   const others = accounts.accounts.map(a => `<div class="set-row"><div class="set-text"><div class="set-title">${esc(a.name)}</div><div class="set-sub">${esc(a.email ?? a.provider)}</div></div>
-      <div class="set-ctl">${accountKey(a) === accounts.active ? '<span class="pill blue">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}</div></div>`).join('');
+      <div class="set-ctl set-acct-ctl">${accountKey(a) === accounts.active ? '<span class="pill ok set-active">Active</span>' : `<button class="btn btn-sm" data-switch-acct="${escAttr(accountKey(a))}">Switch</button>`}${holdDelHtml(a.email ?? a.name, `data-remove-acct="${escAttr(accountKey(a))}"`)}</div></div>`).join('');
   return `<div class="set-user">${avatarHtml(user, user?.name ?? 'Not signed in')}<div class="set-user-text"><div class="set-title">${user ? esc(user.name) : 'Not signed in'}</div><div class="set-sub">${user ? esc(user.provider) : 'Sign in to sync your name and picture.'}</div></div>
-      <div class="set-user-actions"><button class="btn btn-sm" id="sAddAcct">Add account…</button>${user ? '<button class="btn btn-sm" id="sSignOut">Sign out</button>' : ''}</div></div>
+      <div class="set-user-actions"><button class="btn btn-sm" id="sAddAcct">Add account</button>${user ? '<button class="btn btn-sm btn-danger" id="sSignOut">Sign out</button>' : ''}</div></div>
     ${others ? `<h5>Accounts</h5>${others}` : ''}`;
 }
 
@@ -7891,7 +8016,7 @@ function settingsBody(tab: SettingsTab): string {
       ${accountHtml()}
       <h5>Preferences</h5>
       ${settingRow('Workspace', 'Full editor, or chat only.', segHtml('sMode', [['ide', 'Breeze Code'], ['box', 'Breeze Box']], appState.mode))}
-      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="5" value="${sfx.volume}" aria-label="Sound volume" style="--fill:${sfx.volume}%"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
+      ${settingRow('Sound', 'Clicks, typing ticks and agent chimes.', `<div class="set-volume">${svgIcon('volume', 14)}<input type="range" id="sVolume" min="0" max="100" step="1" value="${sfx.volume}" aria-label="Sound volume" style="--fill:${sfx.volume}%"><span class="set-volume-val" id="sVolumeVal">${sfx.volume}%</span></div>`)}
       <h5>Layout</h5>
       ${settingRow('Side bar', 'Ctrl+B', switchHtml('sSide', layout.sideOpen, 'Side bar'))}
       ${settingRow('Agents panel', 'Ctrl+Alt+B', switchHtml('sAgents', layout.agentsOpen, 'Agents panel'))}
@@ -7901,17 +8026,20 @@ function settingsBody(tab: SettingsTab): string {
     case 'agents': {
       const agents = [...appState.detect?.agents ?? []].sort((a, b) => agentRank(a) - agentRank(b));
       const list = agents.length
-        ? agents.map(a => `<button class="set-agent ${a.id === appState.agent ? 'on' : ''}" data-agent-pick="${a.id}" ${a.found ? '' : 'disabled'} title="${escAttr(a.name)} (${escAttr(a.found ? a.version ?? a.vendor : 'not set up')} )">
-            ${brandMark('set-agent-mark', a.id, a.name[0])}<span class="nm">${esc(a.name)}</span><span class="set-sub">${a.found ? esc(a.version ?? a.vendor) : 'not set up'}</span></button>`).join('')
+        ? agents.map(a => a.found
+          ? `<button class="set-agent ${a.id === appState.agent ? 'on' : ''}" data-agent-pick="${a.id}" title="${escAttr(a.name)}">${brandMark('set-agent-mark', a.id, a.name[0])}<span class="nm">${esc(a.name)}</span></button>`
+          // Not installed: the card stays, dimmed, with an Install button that runs the install command in a terminal.
+          : `<div class="set-agent missing" title="${escAttr(a.name)} is not installed">${brandMark('set-agent-mark', a.id, a.name[0])}<span class="nm">${esc(a.name)}</span>
+              <button class="btn btn-sm btn-primary set-agent-install" data-agent-install="${a.id}">Install</button></div>`).join('')
         : '<p class="set-sub">No agents found yet. Scan again or run setup.</p>';
       return `<h4>Agents</h4>
         <div class="set-agents">${list}</div>
-        ${settingRow('Manage agents', 'Install, sign in and pick models.', '<button class="btn btn-sm" id="sAgentPicker">Open…</button>')}
+        ${settingRow('Manage agents', 'Install, sign in and pick models.', '<button class="btn btn-sm" id="sAgentPicker">Open</button>')}
         ${settingRow('Scan again', 'Look for newly installed tools.', '<button class="btn btn-sm" id="sRescan">Scan</button>')}`;
     }
     case 'vibe': return `<h4>Vibe Code Mode</h4>
       ${settingRow('Vibe Code Mode', 'Play your feed while agents work.', switchHtml('sVibe', appState.vibeArmed, 'Vibe Code Mode'))}
-      <h5>Feed</h5><p class="set-sub mb-12">Connect a site to sign in. Click a connected card to make it the one that plays.</p>
+      <h5>Feed</h5>
       <div class="social-grid" id="sFeeds"></div>`;
     case 'discord': {
       const a = discordActivity();
@@ -7920,18 +8048,17 @@ function settingsBody(tab: SettingsTab): string {
         ${settingRow('Rich presence', `Status: ${status}${discordState.why ? ` · ${esc(discordState.why)}` : ''}`, switchHtml('sDiscord', appState.discord, 'Discord presence'))}
         ${settingRow('Show project and file names', 'Names can include client or employer names.', switchHtml('sDiscordDetails', appState.discordDetails, 'Show project and file names'))}
         <h5>Friends will see</h5>
-        <div class="setup-card"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
+        <div class="setup-card discord-preview"><b>Breeze Code</b><div class="text-2">${esc(a.details ?? '')}</div><div class="text-2">${esc(a.state ?? '')}</div><div class="text-3 fs-12">elapsed time</div></div>
         <p class="set-sub">The Discord app must be running on this computer.</p>`;
     }
     case 'help': {
-      const where = isDesktop ? 'Desktop app' : 'Browser preview';
       const engine = /Electron\/[\d.]+|Chrome\/[\d.]+/.exec(navigator.userAgent)?.[0] ?? '';
       return `<h4>Help & About</h4>
       ${settingRow('Keyboard shortcuts', '', '<button class="btn btn-sm" data-set-cmd="help.keys">Show</button>')}
       ${settingRow('Run setup again', 'Pick your agent and workspace again.', '<button class="btn btn-sm" data-set-cmd="help.setup">Start</button>')}
       ${settingRow('Developer tools', 'Ctrl+Shift+I', '<button class="btn btn-sm" data-set-cmd="win.devtools">Toggle</button>')}
       ${settingRow('Reload window', 'Ctrl+R', '<button class="btn btn-sm" data-set-cmd="win.reload">Reload</button>')}
-      ${settingRow('About Breeze Code', `Smooth as a breeze · ${where}${engine ? ` · ${esc(engine)}` : ''}`, '<span class="pill blue">v0.5.0</span>')}`;
+      ${settingRow('About Breeze Code', `${engine ? `${esc(engine)} · ` : ''}v${esc(appVersion)}`, '')}`;
     }
   }
 }
@@ -7942,12 +8069,31 @@ function bindSettings(m: HTMLElement): void {
   const prevSwitch = new Map<string, string>();
   pane.querySelectorAll<HTMLElement>('.switch').forEach(s => prevSwitch.set(s.id, getComputedStyle(s).getPropertyValue('--complete')));
   pane.innerHTML = settingsBody(settingsTab);
+  // A new section's rows come in one after another; redraws of the same section (a switch flipped) just appear.
+  if (pane.dataset.tab !== settingsTab) {
+    pane.dataset.tab = settingsTab;
+    staggerIn(pane.children);
+    staggerIn(pane.querySelectorAll('.set-agents > *'), 2);
+  }
+  // Just switched accounts: the account card turns over to the new one and Active pops onto its row.
+  if (justSwitched) {
+    justSwitched = false;
+    $('.set-user', pane)?.animate(
+      [{ opacity: 0, transform: 'translateY(8px) scale(.98)', filter: 'blur(3px)' }, { opacity: 1, transform: 'none', filter: 'none' }],
+      { duration: 380, easing: 'cubic-bezier(.32, .72, 0, 1)' });
+    $('.set-active', pane)?.animate(
+      [{ opacity: 0, transform: 'scale(.6)' }, { opacity: 1, transform: 'scale(1.08)', offset: .6 }, { transform: 'scale(1)' }],
+      { duration: 420, delay: 120, easing: 'cubic-bezier(.32, .72, 0, 1)', fill: 'backwards' });
+    $$('[data-switch-acct]', pane).forEach(b => b.animate([{ opacity: 0, transform: 'scale(.9)' }, { opacity: 1, transform: 'none' }], { duration: 300, delay: 120, easing: 'ease-out', fill: 'backwards' }));
+  }
+  // A CSS transition can't be relied on for a freshly built element (it never starts if its style was resolved
+  // already), so the slide from the old place is played as a Web Animation of --complete instead.
   pane.querySelectorAll<HTMLElement>('.switch').forEach(s => {
-    const was = prevSwitch.get(s.id);
-    if (!was) return;
-    s.style.setProperty('--complete', was);
-    void s.offsetWidth;
-    s.style.removeProperty('--complete');
+    const was = Number.parseFloat(prevSwitch.get(s.id) ?? '');
+    const to = s.classList.contains('on') ? 100 : 0;
+    if (Number.isNaN(was) || Math.abs(was - to) < .5 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    s.animate([{ '--complete': String(was) }, { '--complete': String(to) }],
+      { duration: 220 * Math.abs(to - was) / 100, easing: 'cubic-bezier(.65, 0, .35, 1)' });
   });
   $$('[data-set-tab]', m).forEach(b => b.classList.toggle('on', b.dataset.setTab === settingsTab));
   const on = (id: string, fn: (el: HTMLElement) => void) => { const el = $(`#${id}`, pane); if (el) el.onclick = () => fn(el); };
@@ -7972,9 +8118,21 @@ function bindSettings(m: HTMLElement): void {
     refreshSettings();
   });
   if ($('#sEffort', pane)) seg('sEffort', v => { setEffort(v as EffortLevel); renderAgentPill(); refreshSettings(); });
+  $$('[data-agent-install]', pane).forEach(b => b.onclick = async () => {
+    const ag = appState.detect?.agents.find(a => a.id === b.dataset.agentInstall);
+    if (!ag) return;
+    if (!ag.install) { background(api.sys.openExternal(ag.url)); return; }
+    (b as HTMLButtonElement).disabled = true;
+    b.textContent = 'Installing';
+    try {
+      if (await api.sys.runCommand(ag.install)) toast(`Installing ${ag.name} in a terminal. Scan again when it finishes.`);
+      else { toast(`Run this to install ${ag.name}: ${ag.install}`); background(api.sys.openExternal(ag.url)); }
+    } catch (err) { toast(`Couldn't start the install: ${errMsg(err)}`); }
+    finally { setTimeout(refreshSettings, 2500); }
+  });
   on('sAgentPicker', () => openAgentPicker());
   on('sRescan', el => {
-    el.textContent = 'Scanning…'; (el as HTMLButtonElement).disabled = true;
+    el.textContent = 'Scanning'; (el as HTMLButtonElement).disabled = true;
     detectTools(true).catch(() => { /* the agent card shows the error */ }).finally(refreshSettings);
   });
   // Vibe
@@ -7992,21 +8150,47 @@ function bindSettings(m: HTMLElement): void {
     void discordOn(appState.discordDetails).then(refreshSettings);
   });
   on('sDiscordDetails', () => { appState.discordDetails = !appState.discordDetails; saveApp(); queueDiscord(); refreshSettings(); });
-  // Sound: drag to set the level, one tick on release so you hear it.
+  // Sound: drag or scroll to set the level, one tick when it settles so you hear it.
+  // Near 50 the knob snaps to 50; pushing on out of the snap zone turns the snap off until the drag (or scroll) ends.
   const vol = $<HTMLInputElement>('#sVolume', pane);
   if (vol) {
-    vol.oninput = () => {
-      sfx.setVolume(+vol.value);
-      vol.style.setProperty('--fill', `${vol.value}%`);
-      $('#sVolumeVal', pane).textContent = `${vol.value}%`;
+    const SNAP = 3;
+    let snapArmed = true, snapped = false, wheelIdle = 0;
+    const show = (v: number) => {
+      vol.value = String(v);
+      sfx.setVolume(v);
+      vol.style.setProperty('--fill', `${v}%`);
+      $('#sVolumeVal', pane).textContent = `${v}%`;
     };
-    vol.onchange = () => sfx.play('tick');
+    const near = (v: number) => Math.abs(v - 50) <= SNAP;
+    const settle = (raw: number) => {
+      if (snapped && !near(raw)) { snapped = false; snapArmed = false; }
+      if (snapArmed && near(raw)) { snapped = true; raw = 50; }
+      show(raw);
+    };
+    const rearm = () => { snapArmed = true; snapped = false; };
+    vol.oninput = () => settle(+vol.value);
+    vol.onchange = () => { sfx.play('tick'); rearm(); };
+    vol.addEventListener('wheel', e => {
+      e.preventDefault();
+      const cur = +vol.value;
+      const next = clamp(cur + (e.deltaY < 0 || e.deltaX > 0 ? 1 : -1), 0, 100);
+      // A tick away from a snapped 50 is a push out of the snap: let it through.
+      if (snapped && cur === 50) { snapped = false; snapArmed = false; show(next); }
+      else settle(next);
+      clearTimeout(wheelIdle);
+      wheelIdle = window.setTimeout(() => { sfx.play('tick'); rearm(); }, 450);
+    }, { passive: false });
   }
   // Account
   $$('[data-switch-acct]', pane).forEach(b => b.onclick = () => {
     const a = accounts.accounts.find(x => accountKey(x) === b.dataset.switchAcct);
-    if (a) background(switchAccount(a).then(refreshSettings));
+    if (a) background(switchAccount(a).then(() => { justSwitched = true; refreshSettings(); }));
   });
+  $$('[data-remove-acct]', pane).forEach(b => holdToDelete(b, () => {
+    const a = accounts.accounts.find(x => accountKey(x) === b.dataset.removeAcct);
+    if (a) background(removeAccount(a).then(refreshSettings));
+  }));
   on('sAddAcct', () => addAccount());
   on('sSignOut', () => background(signOut().then(refreshSettings)));
   // Help
@@ -8026,8 +8210,8 @@ function openSettings(gear: HTMLElement, tab?: SettingsTab): void {
   gears.forEach(g => { g.classList.add('open'); g.setAttribute('aria-expanded', 'true'); });
   const nav = SETTINGS_TABS.map(([id, label, icon]) => {
     const iconHtml = icon.startsWith('img:')
-      ? '<img class="set-nav-img" src="../../assets/icons/' + icon.slice(4) + '" width="15" height="15" alt="" draggable="false">'
-      : svgIcon(icon, 15);
+      ? '<img class="set-nav-img" src="../../assets/icons/' + icon.slice(4) + '" width="17" height="17" alt="" draggable="false">'
+      : svgIcon(icon, 17);
     return '<button data-set-tab="' + id + '">' + iconHtml + '<span>' + esc(label) + '</span></button>';
   }).join('');
   openModal(`<div class="settings-modal" aria-label="Settings">
@@ -8072,7 +8256,7 @@ function showShortcuts(): void {
   );
 
   openModal(`<h3>Keyboard shortcuts</h3><p class="sub">Drag any panel edge to resize it; drag it closed to hide it.</p>
-    <input class="input w-full mb-12" id="shortcutSearch" placeholder="Search keyboard shortcuts…" spellcheck="false" autocomplete="off">
+    <input class="input w-full mb-12" id="shortcutSearch" placeholder="Search keyboard shortcuts" spellcheck="false" autocomplete="off">
     <div class="kbd-table" id="shortcutList"></div>
     <div class="row end"><button class="btn btn-primary" data-close>Close</button></div>`, m => {
     const input = $<HTMLInputElement>('#shortcutSearch', m);
@@ -8111,7 +8295,7 @@ const TEAM_LINE: Record<string, string> = {
   build: '1 agent on this: <b>Builder</b> makes the changes',
   plan: '2 agents on this: <b>Planner</b> writes a plan, then <b>Builder</b> builds it once you approve',
 };
-// Planner, Builder and Assistant wear the logo of the agent doing the work (Codex, Claude Code…).
+// Planner, Builder and Assistant wear the logo of the agent doing the work (Codex, Claude Code CLI…).
 function roleMark(k: AgentKey): { letter: string; tint: string } {
   const chosen = selectedAgent();
   if (!chosen) return { letter: agentsDef[k].letter, tint: agentsDef[k].tint };
@@ -8395,7 +8579,7 @@ function renderAgentTabs(s: Surface): void {
       }
       const statusSpan = el.querySelector<HTMLElement>('.tab-status');
       if (statusSpan) {
-        statusSpan.title = isRunning ? 'Working...' : '';
+        statusSpan.title = isRunning ? 'Working' : '';
       }
       tabsList.appendChild(el);
     }
@@ -9216,7 +9400,7 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
 
   try {
     const box = tab.surfaceName === 'box';
-    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
+    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code CLI).
     if (tab.sessionAgent !== agentId) tab.session = null;
     const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.session, box });
     const run: Run = {
@@ -9447,7 +9631,7 @@ function finishRun(r: Run, ev: AgentEvent, tab: AgentTabState): void {
   const review = r.files.size ? '<button class="btn btn-sm" data-live data-review>Review changes</button>' : '';
   const el = addMsg(`<div class="run-done"><span>✓ Done${summary}</span>${review}</div>`, tab);
   el.querySelector<HTMLElement>('[data-review]')?.addEventListener('click', () => showView('git', true));
-  s.prompt.placeholder = s.name === 'box' ? 'Ask Breeze anything…' : 'Describe what you want to build…';
+  s.prompt.placeholder = s.name === 'box' ? 'Ask Breeze anything' : 'Describe what you want to build';
   if (r.files.size && running) void reloadPreview();
 }
 
@@ -10064,13 +10248,14 @@ function layoutGraph(commits: GitCommit[]): GraphRow[] {
   });
 }
 const laneColor = (i: number) => LANE_COLORS[i % LANE_COLORS.length];
-function graphSvg(r: GraphRow, H: number, X: (i: number) => number): string {
-  const mid = H / 2;
+// The top row's lines start a pixel down so their round caps aren't clipped flat by the svg edge.
+function graphSvg(r: GraphRow, H: number, X: (i: number) => number, top = false): string {
+  const mid = H / 2, y0 = top ? 1 : 0;
   const paths = r.before.map((h, i) => {
     if (!h) return '';
-    if (i === r.lane) return `<path d="M${X(i)} 0V${mid}" stroke="${laneColor(i)}"/>`;
-    if (r.merges.includes(i)) return `<path d="M${X(i)} 0C${X(i)} ${mid} ${X(r.lane)} ${mid / 2} ${X(r.lane)} ${mid}" stroke="${laneColor(i)}"/>`;
-    return `<path d="M${X(i)} 0V${H}" stroke="${laneColor(i)}"/>`;
+    if (i === r.lane) return `<path d="M${X(i)} ${y0}V${mid}" stroke="${laneColor(i)}"/>`;
+    if (r.merges.includes(i)) return `<path d="M${X(i)} ${y0}C${X(i)} ${mid} ${X(r.lane)} ${mid / 2} ${X(r.lane)} ${mid}" stroke="${laneColor(i)}"/>`;
+    return `<path d="M${X(i)} ${y0}V${H}" stroke="${laneColor(i)}"/>`;
   });
   if (r.after[r.lane]) paths.push(`<path d="M${X(r.lane)} ${mid}V${H}" stroke="${laneColor(r.lane)}"/>`);
   for (const f of r.forks) paths.push(`<path d="M${X(r.lane)} ${mid}C${X(r.lane)} ${H} ${X(f)} ${mid} ${X(f)} ${H}" stroke="${laneColor(f)}"/>`);
@@ -10088,7 +10273,7 @@ function detailGraphSvg(r: GraphRow, X: (i: number) => number): string {
   const lines: string[] = [];
   r.after.forEach((h, i) => {
     if (h) {
-      lines.push(`<path d="M${X(i)} -1V101" stroke="${laneColor(i)}" stroke-width="2" vector-effect="non-scaling-stroke"/>`);
+      lines.push(`<path d="M${X(i)} -1V101" stroke="${laneColor(i)}" stroke-width="2" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`);
     }
   });
   return lines.join('');
@@ -10106,13 +10291,13 @@ function renderGraphRows(): string {
   const rows = layoutGraph(gitLog.commits);
   const H = 36, X = (i: number) => 10 + i * 12;
   const width = Math.min(6, Math.max(...rows.map(r => Math.max(r.before.length, r.after.length, r.lane + 1)))) * 12 + 8;
-  return rows.map(r => {
+  return rows.map((r, idx) => {
     const refs = r.c.refs.map(ref => `<span class="ref ${refClass(ref)}">${esc(ref.replace(/^HEAD -> /, '').replace(/^tag: /, ''))}</span>`).join('');
     const open = openCommit === r.c.hash;
     const detail = open ? commitDetailWrapHtml(r, width, X, commitDetails.get(r.c.hash)) : '';
     const tipText = `${r.c.subject} (${r.c.hash.slice(0, 7)} · ${r.c.author} · ${r.c.when})`;
     return `<div class="commit ${open ? 'on' : ''}" data-commit="${r.c.hash}" data-tooltip="${escAttr(tipText)}">
-      <svg width="${width}" height="${H}" fill="none" stroke-width="2">${graphSvg(r, H, X)}</svg>
+      <svg width="${width}" height="${H}" fill="none" stroke-width="2" stroke-linecap="round">${graphSvg(r, H, X, idx === 0)}</svg>
       <div class="msgline"><div>${refs}<span class="subj">${esc(r.c.subject)}</span></div><small>${esc(r.c.author)} · ${esc(r.c.when)}</small></div>
     </div>${detail}`;
   }).join('');
@@ -10131,7 +10316,7 @@ function commitDetailHtml(c: GitCommit, d?: GitCommitDetail): string {
         const { name, ext } = splitFilePath(f.path);
         return `<div class="file" data-open-file="${escAttr(f.path)}" title="${escAttr(f.path)}"><span class="ico">${fileIcon(baseName(f.path))}</span><span class="fp"><span class="fp-name">${esc(name)}</span><span class="fp-ext">${esc(ext)}</span></span><span class="file-stats"><span class="add">+${f.added}</span> <span class="del">−${f.removed}</span></span></div>`;
       }).join('')
-    : '<div class="side-note">Loading changed files…</div>';
+    : '<div class="side-note">Loading changed files</div>';
   return `<div class="commit-detail">
     <div class="cd-msg">${esc(d ? d.message : c.subject)}</div>
     <div class="cd-meta">${esc(d ? d.author : c.author)} · ${esc(d ? d.when : c.when)} · <code>${c.hash.slice(0, 8)}</code></div>
@@ -10141,25 +10326,26 @@ function commitDetailHtml(c: GitCommit, d?: GitCommitDetail): string {
 }
 // Opens or closes one checkpoint's details in place; the rest of the panel is left alone.
 const commitRow = (hash: string) => $(`#scm .commit[data-commit="${hash}"]`);
+// Details open and close by sliding their height (one compositor-friendly Web Animation, not a max-height guess),
+// with the card inside fading a beat behind, so the rows below glide instead of jumping.
+const DETAIL_EASE = 'cubic-bezier(.32, .72, 0, 1)';
+const isDetailEl = (el: Element | null): el is HTMLElement => !!el && (el.classList.contains('commit-detail-row') || el.classList.contains('commit-detail'));
+function slideDetailHeight(el: HTMLElement, from: number, to: number, done?: () => void): void {
+  el.getAnimations().forEach(a => a.cancel());
+  el.style.overflow = 'hidden';
+  const a = el.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 300, easing: DETAIL_EASE, fill: done ? 'forwards' : 'none' });
+  a.onfinish = () => { if (done) done(); else el.style.overflow = ''; };
+}
 function closeCommitDetail(hash: string, instant = false): void {
   const row = commitRow(hash);
   row?.classList.remove('on');
-  const d = row?.nextElementSibling as HTMLElement | null;
-  if ((d?.classList.contains('commit-detail-row') || d?.classList.contains('commit-detail')) && !d.dataset.closing) {
-    if (instant) {
-      d.remove();
-      return;
-    }
-    d.dataset.closing = '1';
-    d.style.overflow = 'hidden';
-    d.style.maxHeight = d.scrollHeight + 'px';
-    const _reflow = d.offsetHeight;
-    d.style.transition = 'max-height .2s cubic-bezier(.16, 1, .3, 1), opacity .18s ease, transform .2s cubic-bezier(.16, 1, .3, 1)';
-    d.style.maxHeight = '0px';
-    d.style.opacity = '0';
-    d.style.transform = 'translateY(-4px)';
-    setTimeout(() => { d.remove(); }, 210);
-  }
+  const d = row?.nextElementSibling ?? null;
+  if (!isDetailEl(d) || d.dataset.closing) return;
+  if (instant) { d.remove(); return; }
+  d.dataset.closing = '1';
+  const card = d.querySelector('.commit-detail') ?? d;
+  card.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px) scale(.985)' }], { duration: 180, easing: 'ease-out', fill: 'forwards' });
+  slideDetailHeight(d, d.getBoundingClientRect().height, 0, () => d.remove());
 }
 function placeCommitDetail(hash: string): void {
   const row = commitRow(hash);
@@ -10172,47 +10358,35 @@ function placeCommitDetail(hash: string): void {
   const holder = document.createElement('div');
   holder.innerHTML = commitDetailWrapHtml(r, width, X, commitDetails.get(hash));
   const fresh = holder.firstElementChild as HTMLElement;
-  const old = row.nextElementSibling as HTMLElement | null;
-  // Loading → loaded swaps the contents only, so the box doesn't animate in twice.
-  if ((old?.classList.contains('commit-detail-row') || old?.classList.contains('commit-detail')) && !old.dataset.closing) {
+  const old = row.nextElementSibling;
+  // Loading → loaded swaps the contents only and slides from the old height to the new one.
+  if (isDetailEl(old) && !old.dataset.closing) {
+    const from = old.getBoundingClientRect().height;
     const card = old.querySelector('.commit-detail') || old;
     const freshCard = fresh.querySelector('.commit-detail') || fresh;
     card.innerHTML = freshCard.innerHTML;
     const graphCol = old.querySelector('.detail-graph-col');
     const freshGraphCol = fresh.querySelector('.detail-graph-col');
-    if (graphCol && freshGraphCol) {
-      graphCol.innerHTML = freshGraphCol.innerHTML;
-    }
-    if (old.style.maxHeight && old.style.maxHeight !== 'none') {
-      old.style.maxHeight = old.scrollHeight + 'px';
-    }
+    if (graphCol && freshGraphCol) graphCol.innerHTML = freshGraphCol.innerHTML;
+    old.getAnimations().forEach(a => a.cancel());
+    const to = old.getBoundingClientRect().height;
+    if (Math.abs(to - from) > 1) slideDetailHeight(old, from, to);
+    card.querySelectorAll<HTMLElement>('.file, .commit-actions').forEach((el, i) =>
+      el.animate([{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], { duration: 220, delay: i * 25, easing: DETAIL_EASE, fill: 'backwards' }));
   } else {
-    if (old?.classList.contains('commit-detail-row') || old?.classList.contains('commit-detail')) old.remove();
-    fresh.style.overflow = 'hidden';
-    fresh.style.maxHeight = '0px';
-    fresh.style.opacity = '0';
-    fresh.style.transform = 'translateY(-4px)';
+    if (isDetailEl(old)) old.remove();
     row.after(fresh);
-    const _reflow = fresh.offsetHeight;
-    const targetH = fresh.scrollHeight;
-    fresh.style.transition = 'max-height .22s cubic-bezier(.16, 1, .3, 1), opacity .2s ease, transform .22s cubic-bezier(.16, 1, .3, 1)';
-    fresh.style.maxHeight = targetH + 'px';
-    fresh.style.opacity = '1';
-    fresh.style.transform = 'translateY(0)';
-    setTimeout(() => {
-      fresh.style.overflow = '';
-      fresh.style.maxHeight = '';
-      fresh.style.opacity = '';
-      fresh.style.transform = '';
-      fresh.style.transition = '';
-    }, 240);
+    slideDetailHeight(fresh, 0, fresh.getBoundingClientRect().height);
+    (fresh.querySelector('.commit-detail') ?? fresh).animate(
+      [{ opacity: 0, transform: 'translateY(-6px) scale(.985)' }, { opacity: 1, transform: 'none' }],
+      { duration: 280, delay: 40, easing: DETAIL_EASE, fill: 'backwards' });
   }
   row.classList.add('on');
 }
 async function toggleCommit(hash: string): Promise<void> {
   const was = openCommit;
   openCommit = openCommit === hash ? null : hash;
-  if (was) closeCommitDetail(was, openCommit !== null);
+  if (was) closeCommitDetail(was);
   if (!openCommit) return;
   placeCommitDetail(hash);
   if (commitDetails.has(hash)) return;
@@ -10247,7 +10421,7 @@ async function commitNow(): Promise<void> {
   renderScm();
   // A checkpoint is committed and pushed in one go (pulling first if the branch is behind).
   if (!gitState.hasRemote) { toast(`Checkpoint saved · ${hash} (no remote to push to yet)`); return; }
-  toast(`Checkpoint saved · ${hash} — pushing…`);
+  toast(`Checkpoint saved · ${hash} — pushing`);
   const behind = !!gitState.behind;
   await gitOp(async () => {
     if (behind) await api.git.sync('pull');
@@ -10284,7 +10458,7 @@ function holdToDelete(btn: HTMLElement, onDone: () => void): void {
     if (timer == null) return;
     clearTimeout(timer); timer = undefined;
     btn.classList.remove('holding');
-    if (early) toast('Keep holding for 5 seconds to delete');
+    if (early) toast(`Keep holding for 5 seconds to ${(btn.getAttribute('aria-label') ?? '').includes('to remove') ? 'remove' : 'delete'}`);
   };
   const start = () => {
     if (timer != null) return;
@@ -10374,8 +10548,8 @@ Object.assign(commands, {
       { label: 'Push', run: () => void gitOp(() => api.git.sync('push'), 'Pushed') },
       { label: 'Fetch', run: () => void gitOp(() => api.git.sync('fetch'), 'Fetched') },
       { sep: true },
-      { label: 'Switch Branch…', run: () => void pickBranch() },
-      { label: 'Create Branch…', run: () => void newBranch() },
+      { label: 'Switch Branch', run: () => void pickBranch() },
+      { label: 'Create Branch', run: () => void newBranch() },
     ], () => btn?.classList.remove('open'), btn);
   },
 });
@@ -10470,7 +10644,7 @@ function boxAgentItems(): MenuItem[] {
       },
     });
   }
-  return [...items, { sep: true }, { label: 'Manage agents…', run: openAgentPicker }];
+  return [...items, { sep: true }, { label: 'Manage agents', run: openAgentPicker }];
 }
 $('#boxModel').onclick = e => {
   const btn = e.currentTarget as HTMLElement;
@@ -10489,8 +10663,8 @@ $('#boxFolder').onclick = e => {
   const r = btn.getBoundingClientRect();
   const choose = (create: boolean) => background(chooseProject(create).then(renderBoxFolder));
   popupMenu(r.left, r.top - 8, [
-    { label: 'Open Folder…', run: () => choose(false) },
-    { label: 'Create New Project…', run: () => choose(true) },
+    { label: 'Open Folder', run: () => choose(false) },
+    { label: 'Create New Project', run: () => choose(true) },
     ...(rootInfo ? [{ sep: true }, { label: 'Close Folder', run: () => background(closeFolderCmd().then(renderBoxFolder)) }] : []),
   ], () => btn.classList.remove('open'));
   const m = $('#menuRoot .menu');
@@ -10709,6 +10883,23 @@ function discordOff(): void {
 /* ================= Modal & misc ================= */
 let modalOnClose: (() => void) | null = null;
 const modalOpen = () => !!document.querySelector('#modalRoot .scrim:not(.closing)');
+// Pop-ups come in Apple-style: the panel settles first and its parts follow one after another (and leave in reverse).
+// Elements already running their own animation (spinners and the like) are left alone.
+function staggerIn(items: Iterable<Element>, from = 0): void {
+  let i = from;
+  for (const el of items) {
+    if (!(el instanceof HTMLElement) || el.classList.contains('stagger-item')) continue;
+    if (getComputedStyle(el).animationName !== 'none') continue;
+    el.style.setProperty('--i', String(i++));
+    el.classList.add('stagger-item');
+  }
+}
+function staggerModal(m: HTMLElement): void {
+  const settings = m.querySelector('.settings-modal');
+  if (settings) { staggerIn(settings.querySelectorAll('.set-nav > *')); staggerIn(settings.querySelectorAll('.set-pane > *'), 2); return; }
+  const kids = [...m.children];
+  staggerIn(kids.length === 1 ? kids[0].children : kids);
+}
 function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () => void, place: 'center' | 'top' = 'center'): void {
   closeModal();
   $$('#modalRoot .scrim.closing').forEach(x => x.remove());
@@ -10721,13 +10912,14 @@ function openModal(html: string, bind?: (m: HTMLElement) => void, onClose?: () =
   const owner = popOwner();
   if (owner) growFrom(m, owner);
   bind?.(m);
+  staggerModal(m);
 }
 function closeModal(): void {
   const scrim = $('#modalRoot .scrim:not(.closing)');
   if (!scrim) return;
   // Play the closing animation on a detached copy so a new modal can open immediately.
   scrim.classList.add('closing');
-  setTimeout(() => scrim.remove(), 320);
+  setTimeout(() => scrim.remove(), 380);
   const cb = modalOnClose; modalOnClose = null; cb?.();
 }
 function bindToasts(root: ParentNode = document): void {
@@ -10839,20 +11031,21 @@ function initTooltip(): void {
 
 /* ================= Init ================= */
 async function boot(): Promise<void> {
-  void Promise.all([
+  void holdSplash(Promise.all([
     document.fonts.load('400 12px Inter'),
     document.fonts.load('500 12px Inter'),
     document.fonts.load('600 11px Inter'),
     document.fonts.load('700 12px Inter'),
-  ]);
+    document.fonts.ready,
+  ]));
   buildMenubar();
   applyLayout();
   showView(layout.view);
   renderTree(); renderTabs(); renderEditor(); renderAgents(); renderPreview(); emptyChat(); renderScm(); renderBranch(); bindToasts(); initTooltip();
-  void refreshGit();
+  void holdSplash(refreshGit());
   renderDetection();
   setVibeArmed(appState.vibeArmed);
-  if (appState.discord) { renderDiscord('off', 'Connecting to Discord…'); queueDiscord(); }
+  if (appState.discord) { renderDiscord('off', 'Connecting to Discord'); queueDiscord(); }
   // The main process remembers who signed in; it wins over the renderer's copy.
   const signed = await api.auth.user().catch(() => null);
   if (signed || isDesktop) { user = signed; appState.user = signed; saveApp(); }
@@ -10869,6 +11062,18 @@ async function boot(): Promise<void> {
   renderBoxFolder();
   // Refresh the tool and agent status in the background; the cached result shows meanwhile.
   if (appState.onboarded) detectTools().catch(() => { /* shown in the setup card */ });
+  // Wait for what the startup above set going, then for every picture on screen (logos, avatar) to be decoded.
+  // Work started by that work (a git refresh queuing another) is caught by looping until nothing new was added.
+  for (let seen = 0; splashWaits && seen < splashWaits.length;) {
+    const batch = splashWaits.slice(seen);
+    seen = splashWaits.length;
+    await Promise.all(batch);
+  }
+  await Promise.all([...document.querySelectorAll<HTMLImageElement>('#ide:not(.hidden) img, #box:not(.hidden) img, #onboard:not(.hidden) img')]
+    .map(img => img.decode().catch(() => undefined)));
+  splashWaits = null;
+  // One frame so the last renders are painted under the splash before it lifts.
+  await new Promise(r => { requestAnimationFrame(() => r(undefined)); setTimeout(r, 100); }); // a hidden window has no frames
 }
 // Opening animation hand-off: the glow and logo are CSS. Once the logo has settled, it glides into the welcome
 // page's logo on a first run, or the splash fades out over the app.

@@ -175,6 +175,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: [`--breeze-version=${app.getVersion()}`],
     },
   });
 
@@ -882,7 +883,7 @@ const AGENTS = [
     paths: () => isWin ? [path.join(APPDATA, 'npm', 'codex.cmd')] : ['/usr/local/bin/codex', '/opt/homebrew/bin/codex'],
   },
   {
-    id: 'claude', name: 'Claude Code', vendor: 'Anthropic', commands: ['claude'],
+    id: 'claude', name: 'Claude Code CLI', vendor: 'Anthropic', commands: ['claude'],
     url: 'https://claude.com/claude-code',
     paths: () => isWin ? [
       path.join(HOME, '.local', 'bin', 'claude.exe'),
@@ -890,7 +891,7 @@ const AGENTS = [
     ] : [path.join(HOME, '.local', 'bin', 'claude'), path.join(HOME, '.claude', 'local', 'claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude'],
   },
 ];
-// Claude Code takes these aliases for --model; "default" leaves the choice to its own settings.
+// Claude Code CLI takes these aliases for --model; "default" leaves the choice to its own settings.
 const CLAUDE_MODELS = ['default', 'opus', 'sonnet', 'haiku'];
 const agentBins = new Map(); // agent id -> executable found by the last scan
 // Folders of the agents found off PATH, so the Terminal panel can run them by name.
@@ -938,6 +939,14 @@ function versionOf(bin) {
   });
 }
 
+// The one terminal command that installs a missing agent, or null where there is none (Antigravity ships as an app).
+function agentInstallCmd(id, platform) {
+  if (id === 'claude') return 'npm install -g @anthropic-ai/claude-code';
+  if (id === 'codex') return 'npm install -g @openai/codex';
+  if (id === 'local') return platform === 'win32' ? 'winget install Ollama.Ollama' : platform === 'darwin' ? 'brew install ollama' : null;
+  return null;
+}
+
 async function locate(commands, paths) {
   const found = await Promise.all(commands.map(which));
   return found.find(Boolean) || paths.find(p => p && fs.existsSync(p)) || null;
@@ -973,7 +982,7 @@ async function detectAgent(a) {
     version = await versionOf(bin);
   }
 
-  return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models };
+  return { id: a.id, name: a.name, vendor: a.vendor, url: a.url, found: !!bin, path: bin, version, models, install: bin ? null : agentInstallCmd(a.id, process.platform) };
 }
 
 // `force` (the Rescan buttons) looks for the compilers again; otherwise the lookup made at startup is reused.
@@ -983,7 +992,7 @@ handle('sys:detect', async (_e, force) => {
   let llm = await llmConfig(true).catch(() => null);
   // A saved server may have been closed since: it only counts as found while it answers and still has the model.
   if (llm) llm = await llmReachable(llm).then(() => llm, () => null);
-  agents.push({ id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [] });
+  agents.push({ id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm?.url ?? null, version: llm?.model ?? null, models: llm?.models ?? [], install: llm ? null : agentInstallCmd('local', process.platform) });
   const tools = await Promise.all([['git', 'Git'], ['node', 'Node.js']].map(async ([cmd, name]) => {
     const bin = await which(cmd);
     return { id: cmd, name, found: !!bin, version: bin ? await versionOf(bin) : null };
@@ -1001,7 +1010,10 @@ handle('sys:openExternal', (_e, url) => openInBrowser(url));
 handle('sys:runCommand', async (_e, cmd) => {
   if (typeof cmd !== 'string') return false;
   const command = cmd.trim();
-  const allowed = ['c', 'py', 'cs', 'java', 'rs'].map(kind => installCmd(kind, process.platform)).filter(Boolean);
+  const allowed = [
+    ...['c', 'py', 'cs', 'java', 'rs'].map(kind => installCmd(kind, process.platform)),
+    ...['claude', 'codex', 'local'].map(id => agentInstallCmd(id, process.platform)),
+  ].filter(Boolean);
   if (!allowed.includes(command)) return false;
   const escaped = command.replaceAll(/[\\"]/g, String.raw`\$&`);
   if (process.platform === 'win32') {
@@ -1254,7 +1266,7 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
     runs.delete(runId);
   }
 }
-// The CLI name for a Breeze effort level: Codex and Claude Code call the top level "xhigh", Breeze shows "Extra".
+// The CLI name for a Breeze effort level: Codex and Claude Code CLI call the top level "xhigh", Breeze shows "Extra".
 const EFFORT_ARGS = { low: 'low', medium: 'medium', high: 'high', extra: 'xhigh' };
 const effortArg = effort => EFFORT_ARGS[String(effort || '').toLowerCase()] || null;
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
@@ -1273,7 +1285,7 @@ function cliArgs(agent, mode, prompt, session) {
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
-// Claude Code in print mode: one JSON event per line. Build mode may edit files without asking; ask and plan
+// Claude Code CLI in print mode: one JSON event per line. Build mode may edit files without asking; ask and plan
 // modes can read and search but every tool that changes files is switched off.
 const NO_SESSION = /No conversation found with session ID/i;
 const CLAUDE_WRITE_TOOLS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'];
@@ -1291,7 +1303,7 @@ function claudeArgs(mode, prompt, session) {
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
-// What each Claude Code tool call looks like in the chat.
+// What each Claude Code CLI tool call looks like in the chat.
 const CLAUDE_TOOLS = {
   Read: i => ['read', `Read ${relOut(i.file_path)}`],
   Edit: i => ['edit', `Edited ${relOut(i.file_path)}`, i.file_path],
@@ -1371,13 +1383,13 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
     child.stdin.end(cli.prompt ?? undefined);
     streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode, retryModel);
   };
-  // Called once when Codex refuses its configured model, or Claude Code can't find the chat to resume.
+  // Called once when Codex refuses its configured model, or Claude Code CLI can't find the chat to resume.
   let retried = false;
   const retryModel = errText => {
     if (!retried && agent === 'claude' && session && NO_SESSION.test(errText)) {
       retried = true;
       session = null;
-      emit(runId, { t: 'note', text: 'Claude Code couldn’t find the earlier conversation, so this message starts a new one.' });
+      emit(runId, { t: 'note', text: 'Claude Code CLI couldn’t find the earlier conversation, so this message starts a new one.' });
       runs.set(runId, run);
       launch();
       return true;
@@ -1994,7 +2006,7 @@ handle('git:genCommitMsg', async (_e, { agent, prompt, model, effort }) => {
 
   if (targetAgent === 'claude') {
     const bin = agentBins.get('claude');
-    if (!bin) throw new Error('Claude Code was not found');
+    if (!bin) throw new Error('Claude Code CLI was not found');
     const targetModel = CLAUDE_MODELS.includes(model) && model !== 'default' ? model : 'haiku';
     const args = ['-p', '--output-format', 'json', '--model', targetModel, '--disallowedTools', ...CLAUDE_WRITE_TOOLS];
     return new Promise((resolve, reject) => {
@@ -2450,16 +2462,38 @@ handle('vibe:status', async () => {
   const states = await Promise.all(ids.map(signedIn));
   return Object.fromEntries(ids.map((id, i) => [id, states[i]]));
 });
-// Opens the site in a Breeze window; resolves with the sign-in state once the user closes it.
-handle('vibe:connect', (_e, id) => {
-  const site = vibeSite(id);
-  return new Promise(resolve => {
-    const w = new BrowserWindow({ parent: win, width: 460, height: 820, title: `Connect ${site.name} — Breeze`, icon: APP_ICON, autoHideMenuBar: true, backgroundColor: '#000000', webPreferences: feedPrefs() });
-    guardFeed(w.webContents);
-    w.loadURL(site.url).catch(logError('connect'));
-    w.on('closed', () => { signedIn(id).then(resolve, () => resolve(false)); });
-  });
+// Feed pages scroll without the default scrollbar.
+const hideScrollbars = wc => wc.on('dom-ready', () => {
+  wc.insertCSS('::-webkit-scrollbar { display: none !important; } html { scrollbar-width: none !important; }').catch(logError('feed css'));
 });
+// Signing in to a feed: the site opens in a rounded view inside the Breeze window, over the renderer's blurred
+// backdrop (renderer passes the frame's bounds). Resolves with the sign-in state once the renderer closes it.
+let connectView = null;
+let connectDone = null;
+function closeConnect() {
+  if (connectView) {
+    win?.contentView.removeChildView(connectView);
+    connectView.webContents.close();
+    connectView = null;
+  }
+  const done = connectDone; connectDone = null; done?.();
+}
+handle('vibe:connect', (_e, id, bounds) => {
+  const site = vibeSite(id);
+  if (!win) return false;
+  closeConnect();
+  connectView = new WebContentsView({ webPreferences: feedPrefs() });
+  connectView.setBorderRadius(14);
+  connectView.setBackgroundColor('#000000');
+  guardFeed(connectView.webContents);
+  hideScrollbars(connectView.webContents);
+  win.contentView.addChildView(connectView);
+  connectView.setBounds(toBounds(bounds));
+  connectView.webContents.loadURL(site.url).catch(logError('connect'));
+  return new Promise(resolve => { connectDone = () => signedIn(id).then(resolve, () => resolve(false)); });
+});
+handle('vibe:connectBounds', (_e, bounds) => connectView?.setBounds(toBounds(bounds)));
+handle('vibe:connectClose', () => closeConnect());
 // Forgets the site's sign-in by removing its cookies from the feed session.
 handle('vibe:disconnect', async (_e, id) => {
   const ses = vibeSession();
@@ -2476,6 +2510,7 @@ handle('vibe:show', (_e, id, bounds) => {
     vibeView.setBorderRadius(16);
     vibeView.setBackgroundColor('#000000');
     guardFeed(vibeView.webContents);
+    hideScrollbars(vibeView.webContents);
     win.contentView.addChildView(vibeView);
   }
   vibeView.setBounds(toBounds(bounds));
