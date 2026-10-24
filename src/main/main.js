@@ -911,7 +911,7 @@ const AGENTS = [
     paths: () => isWin ? [path.join(APPDATA, 'npm', 'codex.cmd')] : ['/usr/local/bin/codex', '/opt/homebrew/bin/codex'],
   },
   {
-    id: 'claude', name: 'Claude Code CLI', vendor: 'Anthropic', commands: ['claude'],
+    id: 'claude', name: 'Claude Code', vendor: 'Anthropic', commands: ['claude'],
     url: 'https://claude.com/claude-code',
     paths: () => isWin ? [
       path.join(HOME, '.local', 'bin', 'claude.exe'),
@@ -919,7 +919,7 @@ const AGENTS = [
     ] : [path.join(HOME, '.local', 'bin', 'claude'), path.join(HOME, '.claude', 'local', 'claude'), '/usr/local/bin/claude', '/opt/homebrew/bin/claude'],
   },
 ];
-// Claude Code CLI takes these aliases for --model; "default" leaves the choice to its own settings.
+// Claude Code takes these aliases for --model; "default" leaves the choice to its own settings.
 const CLAUDE_MODELS = ['default', 'opus', 'sonnet', 'haiku'];
 const agentBins = new Map(); // agent id -> executable found by the last scan
 // Folders of the agents found off PATH, so the Terminal panel can run them by name.
@@ -1279,7 +1279,7 @@ async function runAntigravity(runId, run, { mode, prompt, session, base }) {
     runs.delete(runId);
   }
 }
-// The CLI name for a Breeze effort level: Codex and Claude Code CLI call the top level "xhigh", Breeze shows "Extra".
+// The CLI name for a Breeze effort level: Codex and Claude Code call the top level "xhigh", Breeze shows "Extra".
 const EFFORT_ARGS = { low: 'low', medium: 'medium', high: 'high', extra: 'xhigh' };
 const effortArg = effort => EFFORT_ARGS[String(effort || '').toLowerCase()] || null;
 // Command-line flags for a CLI agent, and the prompt it reads from stdin.
@@ -1298,7 +1298,7 @@ function cliArgs(agent, mode, prompt, session) {
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
-// Claude Code CLI in print mode: one JSON event per line. Build mode may edit files without asking; ask and plan
+// Claude Code in print mode: one JSON event per line. Build mode may edit files without asking; ask and plan
 // modes can read and search but every tool that changes files is switched off.
 const NO_SESSION = /No conversation found with session ID/i;
 const CLAUDE_WRITE_TOOLS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'];
@@ -1316,7 +1316,7 @@ function claudeArgs(mode, prompt, session) {
   const ask = mode === 'plan' ? 'Make a short numbered plan for this request. Do not change any files yet.' : 'Answer without changing any files.';
   return { args, prompt: `${ask}\n\n${prompt}` };
 }
-// What each Claude Code CLI tool call looks like in the chat.
+// What each Claude Code tool call looks like in the chat.
 const CLAUDE_TOOLS = {
   Read: i => ['read', `Read ${relOut(i.file_path)}`],
   Edit: i => ['edit', `Edited ${relOut(i.file_path)}`, i.file_path],
@@ -1401,13 +1401,13 @@ async function startRun(runId, { agent, mode, prompt, session, box }) {
     child.stdin.end(cli.prompt ?? undefined);
     streamCli(runId, run, child, agent === 'claude' ? claudeEvent : codexEvent, mode, retryModel);
   };
-  // Called once when Codex refuses its configured model, or Claude Code CLI can't find the chat to resume.
+  // Called once when Codex refuses its configured model, or Claude Code can't find the chat to resume.
   let retried = false;
   const retryModel = errText => {
     if (!retried && agent === 'claude' && session && NO_SESSION.test(errText)) {
       retried = true;
       session = null;
-      emit(runId, { t: 'note', text: 'Claude Code CLI couldn’t find the earlier conversation, so this message starts a new one.' });
+      emit(runId, { t: 'note', text: 'Claude Code couldn’t find the earlier conversation, so this message starts a new one.' });
       runs.set(runId, run);
       launch();
       return true;
@@ -2003,7 +2003,7 @@ function codexCommitMsg(base, prompt, model, effort) {
 }
 function claudeCommitMsg(base, prompt, model) {
   const bin = agentBins.get('claude');
-  if (!bin) throw new Error('Claude Code CLI was not found');
+  if (!bin) throw new Error('Claude Code was not found');
   const targetModel = CLAUDE_MODELS.includes(model) && model !== 'default' ? model : 'haiku';
   const args = ['-p', '--output-format', 'json', '--model', targetModel, '--disallowedTools', ...CLAUDE_WRITE_TOOLS];
   const finish = out => {

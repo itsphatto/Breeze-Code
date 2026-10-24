@@ -227,8 +227,7 @@ const sfx = (() => {
   let master: GainNode | null = null;
   let lastAt = -Infinity; // when any sound last played, so a button that makes its own sound doesn't also click
 
-  // 50% is about five times the old full level; the curve keeps the low end fine-grained and the limiter the top end clean.
-  const gainFor = (v: number) => Math.pow(v / 100, 1.2) * 6;
+  const gainFor = (v: number) => v / 100;
 
   // Audio may only start after a gesture, so the context is made on the first one.
   function unlock(): void {
@@ -237,14 +236,7 @@ const sfx = (() => {
       ctx = new AudioContext();
       master = ctx.createGain();
       master.gain.value = gainFor(volume);
-      // A soft limiter keeps the louder levels from clipping when several blips overlap.
-      const limit = ctx.createDynamicsCompressor();
-      limit.threshold.value = -4;
-      limit.knee.value = 6;
-      limit.ratio.value = 12;
-      limit.attack.value = 0.002;
-      limit.release.value = 0.1;
-      master.connect(limit).connect(ctx.destination);
+      master.connect(ctx.destination);
     } catch { ctx = null; } // no audio available
   }
   for (const t of ['pointerdown', 'keydown']) addEventListener(t, unlock, { capture: true, passive: true });
@@ -672,7 +664,7 @@ function demoApi(): BreezeApi {
           agents: [
             { id: 'antigravity', name: 'Antigravity', vendor: 'Google DeepMind', url: 'https://antigravity.google/', found: false, path: null, version: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'claude-opus-4-6-thinking', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gpt-oss-120b-medium'] },
             { id: 'codex', name: 'Codex', vendor: 'OpenAI', url: 'https://developers.openai.com/codex/cli', found: false, path: null, version: null, install: 'npm install -g @openai/codex' },
-            { id: 'claude', name: 'Claude Code CLI', vendor: 'Anthropic', url: 'https://claude.com/claude-code', found: false, path: null, version: 'default', models: ['default', 'opus', 'sonnet', 'haiku'], install: 'npm install -g @anthropic-ai/claude-code' },
+            { id: 'claude', name: 'Claude Code', vendor: 'Anthropic', url: 'https://claude.com/claude-code', found: false, path: null, version: 'default', models: ['default', 'opus', 'sonnet', 'haiku'], install: 'npm install -g @anthropic-ai/claude-code' },
             { id: 'local', name: 'Ollama', vendor: 'Ollama, LM Studio or any OpenAI-compatible server', url: 'https://ollama.com/download', api: true, found: !!llm, path: llm ? 'http://127.0.0.1:11434/v1' : null, version: llm, models: llm ? ['llama3.1', 'qwen2.5-coder'] : [] },
           ],
           tools: [{ id: 'git', name: 'Git', found: true, version: null }, { id: 'node', name: 'Node.js', found: true, version: null },
@@ -4733,7 +4725,7 @@ async function reloadText(b: EditorBuffer): Promise<void> {
   const text = r.text.replaceAll('\r\n', '\n');
   if (typingTo.has(b.path)) { typingTo.set(b.path, text); return; } // the running animation heads for the newest text
   if (text === b.saved) { b.disk = undefined; return; }
-  if (isDirty(b)) {
+  if (holdsUserEdits(b)) {
     // Keep the unsaved edits, but remember the disk changed so saving asks before overwriting it.
     if (text === b.text) { b.saved = text; b.disk = undefined; renderTabs(); renderTree(); return; }
     if (b.disk !== text) toast(`${baseName(b.path)} changed on disk. Your unsaved edits are kept.`);
@@ -4753,6 +4745,9 @@ async function reloadText(b: EditorBuffer): Promise<void> {
 const typingTo = new Map<string, string>();   // path -> the text the animation is heading for
 const typingCaret = new Map<string, number>(); // path -> where the agent's caret is while it types
 const sleepMs = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
+// Unsaved edits that agent changes must not overwrite. A blank "edit" (an emptied or restored-empty tab)
+// holds nothing worth keeping, so while an agent works its edits still type out there.
+const holdsUserEdits = (b: EditorBuffer) => isDirty(b) && !(hasAnyActiveRun() && !b.text.trim());
 // Follow the agent to the file it edits, unless the person is busy typing somewhere.
 function mayFollowAgent(): boolean {
   if ($('#ide').classList.contains('hidden') || modalOpen()) return false;
@@ -4798,7 +4793,9 @@ async function typeOut(b: EditorBuffer, after: string): Promise<boolean> {
   followAgentTo(b.path);
   let shown = before, frames = 0;
   for (let i = 0; ; i = Math.min(mid.length, i + step)) {
-    if (b.text !== shown) { // typed over by the person: stop animating; their edit now differs from the disk
+    // Typed over by the person: stop animating; their edit now differs from the disk.
+    // Any other change (no keystroke just now) is taken over by the animation.
+    if (b.text !== shown && Date.now() - lastUserTypeAt < 1500) {
       b.saved = after;
       return false;
     }
@@ -4843,7 +4840,7 @@ api.fs.onChange(paths => background((async () => {
   const changed = paths.map(p => buffers.get(p)).filter((b): b is EditorBuffer => !!b);
   await Promise.all(changed.map(b => {
     if (b.kind === 'image' && b.url?.startsWith('file:')) return reloadImage(b);
-    if (b.kind === 'text' && !isDirty(b)) return reloadText(b);
+    if (b.kind === 'text' && !holdsUserEdits(b)) return reloadText(b);
     return Promise.resolve();
   }));
   if (paths.some(path => path === 'index.html' || path.endsWith('/index.html'))) await refreshLiveShare();
@@ -7941,6 +7938,7 @@ function openMenu(i: number, viaKeyboard = false, pinned = viaKeyboard): void {
   menuPinned = pinned;
   $$('[data-menu]').forEach(b => b.classList.toggle('open', b === btn));
   const m = $('#menuRoot .menu');
+  m.classList.remove('stagger'); // the menu bar keeps the plain drop-down (menuIn), not the staggered unroll
   m.onmouseenter = cancelMenuClose;
   m.onmouseleave = scheduleMenuClose;
 }
@@ -8032,6 +8030,7 @@ function openSubmenu(btn: HTMLElement, it: MenuItem): void {
   const r = btn.getBoundingClientRect();
   const cls = 'menu sub' + (it.subClass ? ` ${it.subClass}` : '');
   const sub = renderMenu(r.right + 4, r.top - 5, it.sub?.() ?? [], cls);
+  if (!btn.closest('.menu')?.classList.contains('stagger')) sub.classList.remove('stagger'); // like its parent menu
   if (btn.closest('.menu.up')) {
     sub.classList.add('up');
     sub.style.top = `${Math.max(8, r.bottom - sub.offsetHeight + 5)}px`;
@@ -8587,7 +8586,7 @@ const TEAM_LINE: Record<string, string> = {
   build: '1 agent on this: <b>Builder</b> makes the changes',
   plan: '2 agents on this: <b>Planner</b> writes a plan, then <b>Builder</b> builds it once you approve',
 };
-// Planner, Builder and Assistant wear the logo of the agent doing the work (Codex, Claude Code CLI…).
+// Planner, Builder and Assistant wear the logo of the agent doing the work (Codex, Claude Code…).
 function roleMark(k: AgentKey): { letter: string; tint: string } {
   const chosen = selectedAgent();
   if (!chosen) return { letter: agentsDef[k].letter, tint: agentsDef[k].tint };
@@ -9708,7 +9707,7 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
 
   try {
     const box = tab.surfaceName === 'box';
-    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code CLI).
+    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
     if (tab.sessionAgent !== agentId) tab.session = null;
     const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.session, box });
     const run: Run = {
@@ -9772,7 +9771,7 @@ async function openAgentFile(path: string): Promise<void> {
   followAgentTo(path);
   // Some agents report the file before writing it: catch a write that landed while it was opening.
   const b = buffers.get(path);
-  if (b?.kind === 'text') for (const ms of [400, 1500]) setTimeout(() => { if (!isDirty(b)) void reloadText(b); }, ms);
+  if (b?.kind === 'text') for (const ms of [400, 1500]) setTimeout(() => { if (!holdsUserEdits(b)) void reloadText(b); }, ms);
 }
 
 function onAgentError(r: Run, ev: AgentEvent, tab: AgentTabState): void {
