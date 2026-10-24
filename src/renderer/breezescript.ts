@@ -21,7 +21,10 @@ interface Agent {
 }
 interface User { name: string; provider: string; login?: string; email?: string | null; avatar?: string | null; }
 type AgentMode = 'plan' | 'build' | 'ask';
-interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done' | 'auth' | 'auth-required'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; url?: string; command?: string; }
+interface AgentEvent { t: 'session' | 'text' | 'plan' | 'tool' | 'file' | 'note' | 'error' | 'done' | 'auth' | 'auth-required' | 'crossing' | 'team-done'; id?: string; model?: string; text?: string; kind?: string; label?: string; path?: string; hint?: string; ok?: boolean; stopped?: boolean; cost?: number; ms?: number; tokens?: number; url?: string; command?: string; agent?: string; owner?: string; blocked?: boolean; error?: string; teamId?: string; changed?: string[]; notes?: Record<string, Record<string, string>>; skipped?: string[]; }
+// Agent teams: one prompt, several agents building in parallel (main process: team.js).
+interface TeamParse { shared: string; tasks: { agentId: string; text: string }[]; unknown: string[]; }
+interface TeamClaimResult { teamId: string; claims: Record<string, string[]>; clashes: { path: string; agents: string[] }[]; failed: string[]; sessions: Record<string, string>; }
 interface AuthEvent { t: 'code' | 'waiting' | 'done' | 'error'; provider?: string; code?: string; uri?: string; user?: User; text?: string; }
 interface GitFile { path: string; x: string; y: string; }
 interface GitStatus { repo: boolean; branch?: string; upstream?: string; ahead?: number; behind?: number; incoming?: string[]; hasCommits?: boolean; hasRemote?: boolean; files?: GitFile[]; ignored?: string[]; }
@@ -97,6 +100,13 @@ interface BreezeApi {
     stop(runId: number): Promise<void>;
     setModel(agent: string, model: string, effort?: string): Promise<boolean>;
     onEvent(cb: (runId: number, ev: AgentEvent) => void): () => void;
+  };
+  team: {
+    parse(text: string): Promise<TeamParse>;
+    claim(opts: { shared: string; members: { agentId: string; task: string; session: string | null }[] }): Promise<TeamClaimResult>;
+    start(opts: { teamId: string; owners: Record<string, string[]> }): Promise<Record<string, number>>;
+    stop(teamId: string): Promise<void>;
+    undo(opts: { teamId: string; path: string }): Promise<void>;
   };
   git: {
     status(): Promise<GitStatus>;
@@ -715,6 +725,13 @@ function demoApi(): BreezeApi {
       async stop() { /* demo runs finish on their own */ },
       async setModel() { return true; },
       onEvent(cb) { agentListeners.push(cb); return () => { }; },
+    },
+    team: {
+      async parse(text) { return { shared: text, tasks: [], unknown: [] }; },
+      async claim() { throw new Error('Teams need the desktop app'); },
+      async start() { throw new Error('Teams need the desktop app'); },
+      async stop() { throw new Error('Teams need the desktop app'); },
+      async undo() { throw new Error('Teams need the desktop app'); },
     },
     git: {
       async status() {
@@ -8691,14 +8708,36 @@ interface AgentTabState {
   panel: HTMLElement;
   runId: number | null;
   run: Run | null;
-  session: string | null;
-  sessionAgent?: string | null; // the agent that started `session`: another agent can't resume it
+  // One resumable session per agent: a session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
+  sessions: Record<string, string>;
   agentId: string;
   uiMode: string;
   promptDraft: string;
   attachments: ImageAttachment[];
   historyId?: string;
   unreadDone?: boolean;
+  lastTeamId?: string;
+  agentTeam?: AgentTeamState;
+}
+
+// A team of agents building in parallel inside one chat tab (the UI is built on this in the next tasks).
+interface AgentTeamState {
+  id: string;
+  runs: Map<number, Run>;
+  pending: number;
+  names: Record<string, string>;
+  stripEl: HTMLElement;
+}
+
+// The tab (and run) a run id belongs to: a tab's own single run, or one member of its agent team.
+function findTabForRun(runId: number): { tab: AgentTabState; run: Run } | null {
+  for (const sName of (['ide', 'box'] as WorkMode[])) {
+    for (const tab of surfaceTabs[sName]) {
+      const run = tab.runId === runId ? tab.run : tab.agentTeam?.runs.get(runId);
+      if (run) return { tab, run };
+    }
+  }
+  return null;
 }
 
 const surfaceTabs: Record<WorkMode, AgentTabState[]> = { ide: [], box: [] };
@@ -8740,8 +8779,7 @@ function createAgentTab(s: Surface, title?: string, initialHtml?: string, sessio
     panel: document.createElement('div'),
     runId: null,
     run: null,
-    session: session ?? null,
-    sessionAgent: session ? appState.agent : null,
+    sessions: session && appState.agent ? { [appState.agent]: session } : {},
     agentId: appState.agent || 'antigravity',
     uiMode: 'build',
     promptDraft: '',
@@ -9208,7 +9246,8 @@ const chatKey = (s: Surface = msgSurface) => `breeze.chat:${chatScope(s)}`;
 const agentSessionKey = (s: Surface = msgSurface) => `breeze.agentSession:${chatScope(s)}:${appState.agent ?? ''}`;
 
 /* ----- Chat history: "New chat" files the current conversation away; the clock button brings one back ----- */
-interface ChatEntry { id: string; title: string; at: number; html: string; agent: string | null; session: string | null; }
+// `sessions` is the current shape; an older entry has `session` (+ `agent`) instead, and openChat turns that into `sessions`.
+interface ChatEntry { id: string; title: string; at: number; html: string; agent: string | null; session: string | null; sessions?: Record<string, string>; }
 const historyKey = (s: Surface) => `breeze.history:${chatScope(s)}`;
 const chatIdKey = (s: Surface) => `breeze.chatId:${chatScope(s)}`;
 const HISTORY_MAX = 30, HISTORY_BYTES = 1_500_000;
@@ -9224,7 +9263,7 @@ function archiveChatTab(s: Surface, tab: AgentTabState): void {
   const id = tab.historyId;
   const first = tab.panel.querySelector('.msg.user .body')?.textContent ?? tab.title ?? 'Chat';
   const title = first.trim().replaceAll(/\s+/g, ' ').slice(0, 64) || tab.title || 'Chat';
-  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: tab.agentId || appState.agent, session: tab.session ?? null };
+  const entry: ChatEntry = { id, title, at: Date.now(), html, agent: tab.agentId || appState.agent, session: tab.sessions[tab.agentId] ?? null, sessions: { ...tab.sessions } };
   let bytes = 0;
   const list = [entry, ...chatHistory(s).filter(e => e.id !== id)].filter(e => (bytes += e.html.length) < HISTORY_BYTES).slice(0, HISTORY_MAX);
   store.set(historyKey(s), list);
@@ -9293,8 +9332,8 @@ function openChat(s: Surface, e: ChatEntry): void {
   const tab = isCurEmpty ? cur : createAgentTab(s, e.title);
   tab.title = e.title;
   tab.historyId = e.id;
-  tab.session = (e.session && e.agent === appState.agent) ? e.session : null;
-  tab.sessionAgent = tab.session ? e.agent : null;
+  // An old entry kept one `session` with the `agent` that started it.
+  tab.sessions = e.sessions ? { ...e.sessions } : (e.session && e.agent ? { [e.agent]: e.session } : {});
   setSavedHtml(tab.panel, e.html);
   $$('[data-live]', tab.panel).forEach(el => { el.outerHTML = '<div class="resolved">Earlier session</div>'; });
   switchAgentTab(s, tab.id);
@@ -9707,9 +9746,8 @@ async function startAgentRun(agentId: string, mode: AgentMode, prompt: string, u
 
   try {
     const box = tab.surfaceName === 'box';
-    // A session belongs to the agent that started it (a Codex thread id means nothing to Claude Code).
-    if (tab.sessionAgent !== agentId) tab.session = null;
-    const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.session, box });
+    // Each agent resumes only its own session (a Codex thread id means nothing to Claude Code).
+    const id = await api.agent.run({ agent: agentId, mode, prompt, session: tab.sessions[agentId] ?? null, box });
     const run: Run = {
       id,
       tabId: tab.id,
@@ -9787,10 +9825,9 @@ function onFirstReply(r: Run, tab: AgentTabState): void {
 }
 
 const AGENT_EVENTS: Partial<Record<AgentEvent['t'], (r: Run, ev: AgentEvent, tab: AgentTabState) => void>> = {
-  session: (_r, ev, tab) => {
+  session: (r, ev, tab) => {
     if (ev.id) {
-      tab.session = ev.id;
-      tab.sessionAgent = tab.agentId;
+      tab.sessions[r.agent] = ev.id;
       store.set(agentSessionKey(SURFACES[tab.surfaceName]), ev.id);
     }
   },
@@ -9850,13 +9887,9 @@ function handleAgentEvent(r: Run, ev: AgentEvent, tab: AgentTabState): void {
 
 const earlyEvents: [number, AgentEvent][] = [];
 api.agent.onEvent((runId, ev) => {
-  let foundTab: AgentTabState | undefined;
-  for (const sName of (['ide', 'box'] as WorkMode[])) {
-    const t = surfaceTabs[sName].find(x => x.runId === runId);
-    if (t) { foundTab = t; break; }
-  }
-  if (foundTab?.run) {
-    handleAgentEvent(foundTab.run, ev, foundTab);
+  const found = findTabForRun(runId);
+  if (found) {
+    handleAgentEvent(found.run, ev, found.tab);
   } else if (earlyEvents.length < 200) {
     earlyEvents.push([runId, ev]);
   }
