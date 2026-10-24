@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { cleanRel, parseClaim, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief, snapshot, addToSnapshot, restore, changedSince } = require('../src/main/team');
+const { cleanRel, parseClaim, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief, snapshot, addToSnapshot, restore, changedSince, TeamCoordinator } = require('../src/main/team');
 
 /* ----- Claims and ownership ----- */
 test('parseClaim reads the last json block', () => {
@@ -242,4 +242,307 @@ test('restore will not remove a folder that took the place of an absent file', a
   put(root, 'new.js/inner.txt', 'x');
   await assert.rejects(restore(root, 'new.js', snap), /not a file/);
   assert.equal(fs.existsSync(path.join(root, 'new.js', 'inner.txt')), true);
+});
+
+/* ----- TeamCoordinator ----- */
+// Runs get ids 1, 2, …; timers wait until the test fires them.
+function fakeDeps() {
+  let next = 1;
+  const d = { runs: [], stopped: [], events: [], timers: [] };
+  d.startRun = opts => { const id = next++; d.runs.push({ id, opts }); return id; };
+  d.stopRun = id => d.stopped.push(id);
+  d.emit = (runId, ev) => d.events.push({ runId, ev });
+  d.setTimeout = (fn, ms) => { const h = { fn, ms }; d.timers.push(h); return h; };
+  d.clearTimeout = h => { d.timers = d.timers.filter(x => x !== h); };
+  d.fire = ms => {
+    const due = d.timers.filter(h => h.ms === ms);
+    d.timers = d.timers.filter(h => !due.includes(h));
+    due.forEach(h => h.fn());
+  };
+  d.of = type => d.events.filter(e => e.ev.t === type);
+  return d;
+}
+
+const teamMembers = () => [
+  { agentId: 'claude', name: 'Claude', task: 'build the UI' },
+  { agentId: 'codex', name: 'Codex', task: 'build the API' },
+];
+
+function newTeam(t, files = {}) {
+  const root = tempProject(t);
+  for (const [rel, data] of Object.entries(files)) put(root, rel, data);
+  const deps = fakeDeps();
+  const co = new TeamCoordinator({ id: 'team-1', root, shared: 'A todo app', members: teamMembers(), deps });
+  return { root, deps, co };
+}
+
+// Claims finish with nothing claimed (claim runs 1 and 2), then the build starts with `owners` (claude 3, codex 4).
+async function building(t, owners, files) {
+  const team = newTeam(t, files);
+  const claimed = team.co.claim();
+  team.co.observe(1, { t: 'done', ok: true });
+  team.co.observe(2, { t: 'done', ok: true });
+  await claimed;
+  team.ids = await team.co.start(owners);
+  return team;
+}
+const read = (root, rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+
+function assertCrossing(ev, rel, agent, owner) {
+  assert.equal(ev.t, 'crossing');
+  assert.equal(ev.path, rel);
+  assert.equal(ev.agent, agent);
+  assert.equal(ev.owner, owner);
+}
+
+test('observe hides claim-phase events', async t => {
+  const { co } = newTeam(t);
+  const claimed = co.claim();
+  assert.equal(co.hasRun(1), true);
+  assert.equal(co.observe(1, { t: 'text', text: 'x' }), true);
+  co.observe(1, { t: 'done', ok: true });
+  co.observe(2, { t: 'done', ok: true });
+  await claimed;
+  const ids = await co.start({});
+  assert.equal(co.hasRun(ids.claude), true);
+  assert.equal(co.observe(ids.claude, { t: 'text' }), false);
+  assert.equal(co.hasRun(99), false);
+});
+
+test('claim collects paths, sessions and failures', async t => {
+  const { co } = newTeam(t);
+  const claimed = co.claim();
+  co.observe(1, { t: 'session', id: 's1' });
+  co.observe(1, { t: 'text', text: 'Mine:\n```json\n{"paths":["web/"]}\n```' });
+  co.observe(1, { t: 'done', ok: true });
+  co.observe(2, { t: 'done', ok: false });
+  assert.deepEqual(await claimed, { claims: { claude: ['web/'], codex: [] }, clashes: [], failed: ['codex'], sessions: { claude: 's1' } });
+});
+
+test('claim runs are read-only and get the claim prompt', async t => {
+  const { co, deps } = newTeam(t);
+  co.claim();
+  const [claude] = deps.runs;
+  assert.equal(claude.opts.agent, 'claude');
+  assert.equal(claude.opts.mode, 'ask');
+  assert.ok(claude.opts.prompt.includes('```json'));
+  assert.equal(claude.opts.team.coordinator, co);
+  assert.equal(claude.opts.team.agentId, 'claude');
+});
+
+test('claim times out', async t => {
+  const { co, deps } = newTeam(t);
+  const claimed = co.claim({ timeoutMs: 10 });
+  co.observe(1, { t: 'done', ok: true });
+  deps.fire(10);
+  assert.deepEqual(deps.stopped, [2]);
+  const result = await claimed;
+  assert.deepEqual(result.failed, ['codex']);
+  // the stopped run's late done is still hidden and does not count toward the build
+  assert.equal(co.observe(2, { t: 'done', ok: false, stopped: true }), true);
+  const ids = await co.start({});
+  co.observe(ids.claude, { t: 'done', ok: true });
+  await co.settled();
+  assert.equal(deps.of('team-done').length, 0);
+});
+
+test('start rejects before claim resolves and when called twice', async t => {
+  const { co } = newTeam(t);
+  await assert.rejects(co.start({}));
+  const claimed = co.claim();
+  await assert.rejects(co.start({}));
+  co.observe(1, { t: 'done', ok: true });
+  co.observe(2, { t: 'done', ok: true });
+  await claimed;
+  await co.start({});
+  await assert.rejects(co.start({}));
+});
+
+test('start uses the brief and resumes the claim session', async t => {
+  const { co, deps } = newTeam(t);
+  const claimed = co.claim();
+  co.observe(1, { t: 'session', id: 's1' });
+  co.observe(1, { t: 'text', text: '```json\n{"paths":["web/"]}\n```' });
+  co.observe(1, { t: 'done', ok: true });
+  co.observe(2, { t: 'done', ok: true });
+  await claimed;
+  const ids = await co.start({});
+  const { opts } = deps.runs.find(r => r.id === ids.claude);
+  assert.equal(opts.agent, 'claude');
+  assert.equal(opts.mode, 'build');
+  assert.equal(opts.session, 's1');
+  assert.equal(opts.team.agentId, 'claude');
+  assert.equal(opts.team.coordinator, co);
+  assert.ok(opts.prompt.includes('You own: web/'));
+  assert.equal(co.owners['web/'], 'claude');
+});
+
+test('start lets owners decide clashes', async t => {
+  const { co } = newTeam(t);
+  const claimed = co.claim();
+  co.observe(1, { t: 'text', text: '```json\n{"paths":["package.json"]}\n```' });
+  co.observe(2, { t: 'text', text: '```json\n{"paths":["package.json","server/"]}\n```' });
+  co.observe(1, { t: 'done', ok: true });
+  co.observe(2, { t: 'done', ok: true });
+  assert.deepEqual((await claimed).clashes, [{ path: 'package.json', agents: ['claude', 'codex'] }]);
+  await co.start({ 'package.json': 'codex' });
+  assert.deepEqual(co.owners, { 'package.json': 'codex', 'server/': 'codex' });
+});
+
+test('restores a crossing and emits it', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  put(root, 'web/a.js', 'hacked');
+  assert.equal(co.observe(ids.codex, { t: 'file', path: 'web/a.js' }), false);
+  await co.settled();
+  assert.equal(read(root, 'web/a.js'), 'orig');
+  const crossings = deps.of('crossing');
+  assert.equal(crossings.length, 1);
+  assert.equal(crossings[0].runId, ids.codex);
+  assertCrossing(crossings[0].ev, 'web/a.js', 'codex', 'claude');
+  assert.equal(crossings[0].ev.error, undefined);
+});
+
+test('restores again after 300 ms', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  put(root, 'web/a.js', 'hacked');
+  co.observe(ids.codex, { t: 'file', path: 'web/a.js' });
+  await co.settled();
+  put(root, 'web/a.js', 'late');
+  deps.fire(300);
+  await co.settled();
+  assert.equal(read(root, 'web/a.js'), 'orig');
+});
+
+test('crossing into a new file in an owned folder deletes it', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/': 'claude' }, { 'web/a.js': 'a' });
+  put(root, 'web/new.js', 'intruder');
+  co.observe(ids.codex, { t: 'file', path: 'web/new.js' });
+  await co.settled();
+  assert.equal(fs.existsSync(path.join(root, 'web/new.js')), false);
+  assertCrossing(deps.of('crossing')[0].ev, 'web/new.js', 'codex', 'claude');
+});
+
+test('a failed restore is emitted with its error', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/new.js': 'claude' });
+  put(root, 'web/new.js/inner.txt', 'x'); // a folder where the absent file was
+  co.observe(ids.codex, { t: 'file', path: 'web/new.js' });
+  await co.settled();
+  const { ev } = deps.of('crossing')[0];
+  assertCrossing(ev, 'web/new.js', 'codex', 'claude');
+  assert.match(ev.error, /not a file/);
+});
+
+test('normalises absolute and backslash paths', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  put(root, 'web/a.js', 'hacked');
+  co.observe(ids.codex, { t: 'file', path: path.join(root, 'web', 'a.js') });
+  await co.settled();
+  assert.equal(read(root, 'web/a.js'), 'orig');
+  put(root, 'web/a.js', 'hacked');
+  co.observe(ids.codex, { t: 'file', path: 'web\\a.js' });
+  await co.settled();
+  assert.equal(read(root, 'web/a.js'), 'orig');
+  const crossings = deps.of('crossing');
+  assert.equal(crossings.length, 2);
+  for (const { ev } of crossings) assertCrossing(ev, 'web/a.js', 'codex', 'claude');
+});
+
+test('two reports of the same crossing both restore', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  put(root, 'web/a.js', 'hacked');
+  co.observe(ids.codex, { t: 'file', path: 'web/a.js' });
+  co.observe(ids.codex, { t: 'file', path: 'web/a.js' });
+  await co.settled();
+  assert.equal(read(root, 'web/a.js'), 'orig');
+  assert.equal(deps.of('crossing').length, 2);
+});
+
+test('team-done fires when a member fails', async t => {
+  const { deps, co, ids } = await building(t, {});
+  co.observe(ids.claude, { t: 'done', ok: true });
+  co.observe(ids.codex, { t: 'done', ok: false });
+  co.observe(ids.codex, { t: 'done', ok: false }); // a repeat does not fire it twice
+  await co.settled();
+  const done = deps.of('team-done');
+  assert.deepEqual(done.map(e => e.runId).sort(), [ids.claude, ids.codex].sort());
+  assert.equal(done[0].ev.teamId, 'team-1');
+});
+
+test('team-done lists untraced changes and notes', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/': 'claude', 'server/x.js': 'codex' }, { 'web/a.js': 'a', 'server/x.js': 'one' });
+  put(root, 'server/x.js', 'two');
+  put(root, 'web/a.js', 'traced');
+  co.observe(ids.claude, { t: 'file', path: 'web/a.js' });
+  co.observe(ids.claude, { t: 'text', text: 'Done.\nFor Codex: add a route' });
+  co.observe(ids.claude, { t: 'done', ok: true });
+  co.observe(ids.codex, { t: 'done', ok: true });
+  await co.settled();
+  const { ev } = deps.of('team-done')[0];
+  assert.equal(ev.t, 'team-done');
+  assert.equal(ev.teamId, 'team-1');
+  assert.deepEqual(ev.changed, ['server/x.js']);
+  assert.deepEqual(ev.notes.claude, { Codex: 'add a route' });
+  assert.deepEqual(ev.notes.codex, {});
+  assert.deepEqual(ev.skipped, []);
+});
+
+test('first-touch file is claimed and snapshotted', async t => {
+  const { root, deps, co, ids } = await building(t, {});
+  put(root, 'new.js', 'codex version');
+  co.observe(ids.codex, { t: 'file', path: 'new.js' });
+  await co.settled();
+  assert.equal(co.owners['new.js'], 'codex');
+  assert.equal(deps.of('crossing').length, 0);
+  put(root, 'new.js', 'claude version');
+  co.observe(ids.claude, { t: 'file', path: 'new.js' });
+  await co.settled();
+  assertCrossing(deps.of('crossing')[0].ev, 'new.js', 'claude', 'codex');
+  assert.equal(read(root, 'new.js'), 'codex version');
+});
+
+test('foreignOwner claims first touch and names a teammate owner', async t => {
+  const { co } = await building(t, { 'web/': 'claude' });
+  assert.equal(await co.foreignOwner('codex', 'web/a.js'), 'claude');
+  assert.equal(await co.foreignOwner('claude', 'web/a.js'), null);
+  assert.equal(await co.foreignOwner('codex', 'server/x.js'), null);
+  assert.equal(co.owners['server/x.js'], 'codex');
+  assert.equal(await co.foreignOwner('claude', 'server/x.js'), 'codex');
+});
+
+test('owner edits refresh the snapshot', async t => {
+  const { root, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  put(root, 'web/a.js', 'v2');
+  co.observe(ids.claude, { t: 'file', path: 'web/a.js' });
+  await co.settled();
+  put(root, 'web/a.js', 'hacked');
+  co.observe(ids.codex, { t: 'file', path: 'web/a.js' });
+  await co.settled();
+  assert.equal(read(root, 'web/a.js'), 'v2');
+});
+
+test('undo restores a file from the snapshot', async t => {
+  const { root, co } = await building(t, { 'server/x.js': 'codex' }, { 'server/x.js': 'one' });
+  put(root, 'server/x.js', 'two');
+  await co.undo('server/x.js');
+  assert.equal(read(root, 'server/x.js'), 'one');
+});
+
+test('stop stops every run and team-done still fires', async t => {
+  const { root, deps, co, ids } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  put(root, 'web/a.js', 'hacked');
+  co.observe(ids.codex, { t: 'file', path: 'web/a.js' });
+  await co.settled();
+  co.observe(ids.claude, { t: 'done', ok: true });
+  co.stop();
+  assert.deepEqual(deps.stopped, [ids.codex]);
+  assert.equal(deps.timers.length, 0); // the 300 ms re-check is cancelled
+  co.observe(ids.codex, { t: 'done', ok: false, stopped: true });
+  await co.settled();
+  assert.equal(deps.of('team-done').length, 2);
+});
+
+test('undo after stop rejects', async t => {
+  const { co } = await building(t, { 'web/a.js': 'claude' }, { 'web/a.js': 'orig' });
+  co.stop();
+  await assert.rejects(co.undo('web/a.js'), { message: 'That team has finished.' });
 });

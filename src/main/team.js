@@ -5,6 +5,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { blockedRel } = require('./guard');
+const { shortName } = require('./mentions');
 
 /* ----- Claims and ownership ----- */
 // `p` as a clean project-relative path, or null when it is empty, outside `root`, or off limits to agents.
@@ -251,8 +252,274 @@ async function changedSince(root, snap) {
   return changed;
 }
 
+/* ----- Team coordinator ----- */
+// Drives one team: a read-only claim run per member, then one build run each, with ownership enforced on every
+// `file` event. It has no Electron; main.js passes `deps` and feeds every run event to `observe`.
+const RECHECK_MS = 300; // a write can land after the first restore (Codex reports before it finishes)
+const FINISHED = 'That team has finished.';
+const inSkippedDir = rel => rel.split('/').some(part => SKIP_DIRS.has(part)); // never snapshotted, so never restored
+
+class TeamCoordinator {
+  constructor({ id, root, shared, members, deps }) {
+    this.id = id;
+    this.root = root;
+    this.shared = shared;
+    this.members = members.map(m => ({ ...m, name: m.name || shortName({ id: m.agentId, name: m.agentId }) }));
+    this.deps = deps;
+    this.owners = {}; // rel -> agentId; main.js reads it for claudeDenyArgs
+    this.runs = new Map(); // runId -> { agentId, phase: 'claim'|'build', lastText, done }
+    this.phase = 'new'; // new -> claiming -> claimed -> starting -> building
+    this.stopped = false;
+    this.sessions = {};
+    this.claims = null;
+    this.snap = null;
+    this.startOwners = {}; // owners as the build started, before any first-touch claims
+    this.buildRuns = {}; // agentId -> build runId
+    this.reported = new Map(); // agentId -> Set of rels its `file` events named
+    this.crossed = new Set();
+    this.timers = new Set();
+    this.pending = new Set();
+    this.lanes = new Map(); // rel -> the tail of that path's queue, so restores of one file never overlap
+    this.finished = false;
+    this.onClaimDone = null;
+  }
+
+  get team() { return { shared: this.shared, members: this.members }; }
+
+  hasRun(runId) { return this.runs.has(runId); }
+
+  claim({ timeoutMs = 60000 } = {}) {
+    if (this.stopped) return Promise.reject(new Error(FINISHED));
+    if (this.phase !== 'new') return Promise.reject(new Error('That team has already claimed its files.'));
+    this.phase = 'claiming';
+    return new Promise(resolve => {
+      const left = new Map(); // agentId -> timeout handle
+      const claims = {};
+      const failed = new Set();
+      this.onClaimDone = (agentId, paths) => {
+        if (!left.has(agentId)) return; // already timed out or done
+        this.#cancel(left.get(agentId));
+        left.delete(agentId);
+        if (paths) claims[agentId] = paths; else failed.add(agentId);
+        if (left.size) return;
+        this.claims = Object.fromEntries(this.members.map(m => [m.agentId, claims[m.agentId] ?? []]));
+        this.phase = 'claimed';
+        resolve({
+          claims: this.claims,
+          clashes: findClashes(this.claims),
+          failed: this.members.map(m => m.agentId).filter(a => failed.has(a)),
+          sessions: { ...this.sessions },
+        });
+      };
+      for (const m of this.members) {
+        const runId = this.deps.startRun({
+          agent: m.agentId, mode: 'ask', prompt: claimPrompt(m, this.team), session: m.session,
+          team: { coordinator: this, agentId: m.agentId },
+        });
+        this.runs.set(runId, { agentId: m.agentId, phase: 'claim', lastText: '', done: false });
+        left.set(m.agentId, this.#later(timeoutMs, () => {
+          this.#stopRun(runId);
+          this.onClaimDone(m.agentId, null);
+        }));
+      }
+    });
+  }
+
+  async start(owners = {}) {
+    if (this.stopped) throw new Error(FINISHED);
+    if (this.phase === 'new' || this.phase === 'claiming') throw new Error('The team has not finished claiming its files.');
+    if (this.phase !== 'claimed') throw new Error('That team has already started.');
+    this.phase = 'starting';
+    const merged = {};
+    for (const m of this.members) {
+      for (const p of this.claims[m.agentId]) if (!Object.hasOwn(merged, p)) merged[p] = m.agentId;
+    }
+    for (const [p, agentId] of Object.entries(owners ?? {})) {
+      const rel = cleanRel(p);
+      if (rel && this.members.some(m => m.agentId === agentId)) merged[rel] = agentId;
+    }
+    try {
+      this.snap = await snapshot(this.root, Object.keys(merged));
+    } catch (err) {
+      this.phase = 'claimed';
+      throw err;
+    }
+    if (this.stopped) throw new Error(FINISHED);
+    this.owners = merged;
+    this.startOwners = { ...merged };
+    this.phase = 'building';
+    const ids = {};
+    for (const m of this.members) {
+      const runId = this.deps.startRun({
+        agent: m.agentId, mode: 'build', prompt: buildBrief(m, this.team, this.owners),
+        session: this.sessions[m.agentId] ?? m.session, team: { coordinator: this, agentId: m.agentId },
+      });
+      this.runs.set(runId, { agentId: m.agentId, phase: 'build', lastText: '', done: false });
+      this.buildRuns[m.agentId] = runId;
+      ids[m.agentId] = runId;
+    }
+    return ids;
+  }
+
+  // True when the event must not reach the renderer. Any work it starts is tracked for `settled()`.
+  observe(runId, ev) {
+    const run = this.runs.get(runId);
+    if (!run || !ev) return false;
+    if (run.phase === 'claim') {
+      if (run.done) return true;
+      if (ev.t === 'text') run.lastText = String(ev.text ?? '');
+      else if (ev.t === 'session' && ev.id) this.sessions[run.agentId] = ev.id;
+      else if (ev.t === 'done') {
+        run.done = true;
+        this.onClaimDone?.(run.agentId, ev.ok ? parseClaim(run.lastText) : null);
+      }
+      return true;
+    }
+    if (ev.t === 'text') run.lastText = String(ev.text ?? '');
+    else if (ev.t === 'file') {
+      const rel = cleanRel(ev.path, this.root);
+      if (rel && !rel.endsWith('/')) {
+        if (!this.reported.has(run.agentId)) this.reported.set(run.agentId, new Set());
+        this.reported.get(run.agentId).add(rel);
+        this.#track(this.#inLane(rel, () => this.#onFile(runId, run.agentId, rel)));
+      }
+    } else if (ev.t === 'done' && !run.done) {
+      run.done = true;
+      if (this.members.every(m => this.runs.get(this.buildRuns[m.agentId])?.done)) this.#track(this.#finish());
+    }
+    return false;
+  }
+
+  // The owner of `rel` when it is a teammate of `agentId`, else null. An unowned path becomes `agentId`'s.
+  async foreignOwner(agentId, rel) {
+    const r = cleanRel(rel, this.root);
+    if (!r) return null;
+    const wasOwned = ownerOf(this.owners, r) !== null;
+    const owner = claimFirstTouch(this.owners, r, agentId);
+    if (!wasOwned && this.snap) await addToSnapshot(this.snap, this.root, r);
+    return owner === agentId ? null : owner;
+  }
+
+  async undo(rel) {
+    if (this.stopped || !this.snap) throw new Error(FINISHED);
+    const r = cleanRel(rel, this.root);
+    if (!r) throw new Error(`${rel} is outside the project`);
+    return this.#inLane(r, () => restore(this.root, r, this.snap));
+  }
+
+  stop() {
+    if (this.stopped) return;
+    this.stopped = true;
+    for (const h of this.timers) this.deps.clearTimeout(h);
+    this.timers.clear();
+    for (const [runId, run] of this.runs) if (!run.done) this.#stopRun(runId);
+  }
+
+  // Resolves once every restore, snapshot read and team-done check started so far has finished (tests await it).
+  async settled() {
+    while (this.pending.size) await Promise.all([...this.pending]);
+  }
+
+  async #onFile(runId, agentId, rel) {
+    let owner;
+    try { owner = await this.foreignOwner(agentId, rel); } catch {
+      owner = ownerOf(this.owners, rel);
+      if (owner === agentId) owner = null;
+    }
+    const snap = this.snap;
+    if (!owner) return this.#refresh(rel);
+    // Owned at the start but missing from the snapshot, which listed every owned file: it did not exist then.
+    if (ownerOf(this.startOwners, rel) !== null && !snap.files.has(rel) && !snap.skipped.includes(rel) && !inSkippedDir(rel)) {
+      snap.files.set(rel, null);
+    }
+    this.crossed.add(rel);
+    const ev = { t: 'crossing', path: rel, agent: agentId, owner };
+    if (!snap.files.has(rel)) {
+      ev.error = snap.skipped.includes(rel) ? `${rel} is over 2 MB, so no copy was kept` : `${rel} had no saved copy`;
+    } else {
+      try { await restore(this.root, rel, snap); } catch (err) { ev.error = err.message; }
+    }
+    this.deps.emit(runId, ev);
+    if (ev.error || this.stopped) return;
+    this.#later(RECHECK_MS, () => this.#track(this.#inLane(rel, async () => {
+      try { await restore(this.root, rel, snap); } catch (err) {
+        this.deps.emit(runId, { t: 'crossing', path: rel, agent: agentId, owner, error: err.message });
+      }
+    })));
+  }
+
+  // The owner changed `rel`: keep its latest version, so a later crossing restores that and not the start.
+  async #refresh(rel) {
+    const snap = this.snap;
+    if (!snap || await throughLink(this.root, rel)) return;
+    const { data, big } = await readEntry(absOf(this.root, rel));
+    const i = snap.skipped.indexOf(rel);
+    if (big) {
+      snap.files.delete(rel);
+      if (i < 0) snap.skipped.push(rel);
+    } else if (data !== undefined) {
+      snap.files.set(rel, data);
+      if (i >= 0) snap.skipped.splice(i, 1);
+    }
+  }
+
+  async #finish() {
+    if (this.finished) return;
+    this.finished = true;
+    await Promise.all([...this.lanes.values()]);
+    const ev = { t: 'team-done', teamId: this.id, changed: [], notes: {}, skipped: [...this.snap.skipped] };
+    try {
+      const untraced = rel => !this.crossed.has(rel) && !this.reported.get(ownerOf(this.owners, rel))?.has(rel);
+      ev.changed = (await changedSince(this.root, this.snap)).filter(untraced);
+    } catch (err) {
+      ev.error = err.message;
+    }
+    for (const m of this.members) {
+      const others = this.members.filter(o => o.agentId !== m.agentId).map(o => o.name);
+      ev.notes[m.agentId] = notesFor(this.runs.get(this.buildRuns[m.agentId]).lastText, others);
+    }
+    for (const m of this.members) this.deps.emit(this.buildRuns[m.agentId], { ...ev });
+  }
+
+  // Runs `fn` after every earlier job queued for `rel`.
+  #inLane(rel, fn) {
+    const job = (this.lanes.get(rel) ?? Promise.resolve()).then(fn);
+    const tail = job.catch(() => {});
+    this.lanes.set(rel, tail);
+    tail.then(() => { if (this.lanes.get(rel) === tail) this.lanes.delete(rel); });
+    return job;
+  }
+
+  #track(promise) {
+    const p = promise.catch(() => {}).finally(() => this.pending.delete(p));
+    this.pending.add(p);
+    return p;
+  }
+
+  #later(ms, fn) {
+    const h = this.deps.setTimeout(() => {
+      this.timers.delete(h);
+      if (!this.stopped) fn();
+    }, ms);
+    this.timers.add(h);
+    return h;
+  }
+
+  #cancel(h) {
+    if (this.timers.delete(h)) this.deps.clearTimeout(h);
+  }
+
+  #stopRun(runId) {
+    const run = this.runs.get(runId);
+    if (!run || run.stopping) return;
+    run.stopping = true;
+    this.deps.stopRun(runId);
+  }
+}
+
 module.exports = {
   cleanRel, parseClaim, covers, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor,
   claimPrompt, buildBrief,
   snapshot, addToSnapshot, restore, changedSince,
+  TeamCoordinator,
 };
