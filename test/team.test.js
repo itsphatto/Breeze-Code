@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { cleanRel, parseClaim, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor } = require('../src/main/team');
+const { cleanRel, parseClaim, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief } = require('../src/main/team');
 
 /* ----- Claims and ownership ----- */
 test('parseClaim reads the last json block', () => {
@@ -82,4 +82,33 @@ test('notesFor', () => {
     { Codex: 'add /api/todos', Claude: 'use port 3001' },
   );
   assert.deepEqual(notesFor('Done.', ['Codex']), {});
+});
+
+/* ----- Prompts ----- */
+const team = {
+  shared: 'A todo app',
+  members: [
+    { agentId: 'claude', name: 'Claude', task: 'build the UI' },
+    { agentId: 'codex', name: 'Codex', task: 'build the API' },
+  ],
+};
+
+test('claimPrompt asks for a json block and no edits', () => {
+  const p = claimPrompt(team.members[0], team);
+  assert.ok(p.includes('build the UI'));
+  assert.ok(p.includes('A todo app'));
+  assert.ok(p.includes('Codex: build the API'));
+  assert.ok(p.includes('```json'));
+  assert.ok(p.includes('{"paths": ['));
+  assert.ok(p.includes('Do not change any files'));
+});
+
+test("buildBrief lists own and teammates' paths", () => {
+  const brief = buildBrief(team.members[0], team, { 'web/': 'claude', 'server/': 'codex' });
+  assert.ok(brief.includes('You own: web/'));
+  assert.ok(brief.includes('Do not edit: server/ (Codex)'));
+  assert.ok(brief.includes('For Codex:'));
+  const none = buildBrief(team.members[0], team, {});
+  assert.ok(none.includes('You own: any file no teammate owns'));
+  assert.ok(!none.includes('Do not edit'));
 });

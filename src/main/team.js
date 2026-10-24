@@ -107,4 +107,45 @@ function notesFor(text, names) {
   return out;
 }
 
-module.exports = { cleanRel, parseClaim, covers, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor };
+/* ----- Prompts ----- */
+// `member` is { agentId, name, task }; `team` is { shared, members } with every member, `member` included.
+const teammatesOf = (member, team) => team.members.filter(m => m.agentId !== member.agentId);
+
+function teamIntro(member, team) {
+  const mates = teammatesOf(member, team).map(m => `${m.name}: ${m.task}`).join('; ');
+  return [
+    'You are on a team of coding agents working in this project at the same time.',
+    `Shared context: ${team.shared || 'none'}`,
+    `Your task: ${member.task}`,
+    `Teammates: ${mates || 'none'}`,
+  ];
+}
+
+// Asked before any work starts: which files will this agent touch? No edits yet.
+function claimPrompt(member, team) {
+  return [
+    ...teamIntro(member, team),
+    'Before anyone starts, list the files and folders you expect to create or edit for YOUR task only.',
+    'Folders end with "/". Do not change any files now. Reply with only this block:',
+    '```json',
+    '{"paths": ["path/one", "folder/"]}',
+    '```',
+  ].join('\n');
+}
+
+// The brief an agent works from once ownership is settled. `owners` maps path -> agentId.
+function buildBrief(member, team, owners) {
+  const nameOf = id => team.members.find(m => m.agentId === id)?.name || id;
+  const own = Object.keys(owners).filter(p => owners[p] === member.agentId);
+  const others = Object.keys(owners).filter(p => owners[p] !== member.agentId).map(p => `${p} (${nameOf(owners[p])})`);
+  const asks = teammatesOf(member, team).map(m => `"For ${m.name}:"`).join(' or ');
+  return [
+    ...teamIntro(member, team),
+    `You own: ${own.join(', ') || 'any file no teammate owns'}`,
+    ...(others.length ? [`Do not edit: ${others.join(', ')}`] : []),
+    'Files no one owns belong to whoever edits them first.',
+    `If you need a change in a teammate's files, don't make it. At the end of your final message add a line ${asks || '"For <Name>:"'} followed by what you need.`,
+  ].join('\n');
+}
+
+module.exports = { cleanRel, parseClaim, covers, findClashes, ownerOf, claimFirstTouch, claudeDenyArgs, notesFor, claimPrompt, buildBrief };
